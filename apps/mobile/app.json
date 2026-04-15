@@ -13,14 +13,23 @@
       "backgroundColor": "#00418f"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Ứng dụng cần quyền camera để thực hiện cuộc gọi video.",
+        "NSMicrophoneUsageDescription": "Ứng dụng cần quyền microphone để thực hiện cuộc gọi âm thanh và video."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo_white.png",
         "backgroundColor": "#00418f"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "favicon": "./assets/logo_white.png"

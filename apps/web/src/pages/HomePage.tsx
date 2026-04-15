@@ -4,21 +4,118 @@ import api from '../services/api';
 import { Link } from 'react-router-dom';
 import ProfileModal from '../components/ProfileModal';
 
+type Friendship = {
+  sender_id: string;
+  receiver_id: string;
+  status: 'pending' | 'accepted';
+};
+
+type ReactionMap = Record<string, Record<string, string[]>>;
+type UserProfile = {
+  email: string;
+  fullName?: string;
+  fullname?: string;
+  avatarUrl?: string;
+};
+type Attachment = {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl?: string;
+  fileUrl?: string;
+  file?: File;
+};
+
+const REACTION_OPTIONS = ['❤️', '👍', '😂', '😮', '😢', '😡'];
+const MAX_FILE_KB = 10240;
+const MAX_FILE_BYTES = MAX_FILE_KB * 1024;
+const MAX_ATTACHMENTS_PER_MESSAGE = 8;
+
+const getFileIcon = (mimeType?: string, fileName?: string) => {
+  const lowerName = (fileName || '').toLowerCase();
+  const lowerMime = (mimeType || '').toLowerCase();
+  if (lowerMime.includes('pdf') || lowerName.endsWith('.pdf')) return 'picture_as_pdf';
+  if (lowerMime.includes('word') || lowerName.endsWith('.doc') || lowerName.endsWith('.docx')) return 'description';
+  if (lowerMime.includes('excel') || lowerName.endsWith('.xls') || lowerName.endsWith('.xlsx')) return 'table_chart';
+  if (lowerMime.includes('zip') || lowerName.endsWith('.zip') || lowerName.endsWith('.rar')) return 'folder_zip';
+  if (lowerMime.includes('audio')) return 'audio_file';
+  if (lowerMime.includes('video')) return 'video_file';
+  if (lowerMime.startsWith('image/')) return 'image';
+  return 'draft';
+};
+
+const formatFileSize = (size?: number) => {
+  if (!size || Number.isNaN(size)) return '--';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const chatGet = async (path: string, params?: any) => {
+  try {
+    return await api.get(`/chat${path}`, { params });
+  } catch {
+    return await api.get(`/api/chat${path}`, { params });
+  }
+};
+
+const chatPost = async (path: string, body: any) => {
+  try {
+    return await api.post(`/chat${path}`, body);
+  } catch {
+    return await api.post(`/api/chat${path}`, body);
+  }
+};
+
+const chatPatch = async (path: string, body: any) => {
+  try {
+    return await api.patch(`/chat${path}`, body);
+  } catch {
+    return await api.patch(`/api/chat${path}`, body);
+  }
+};
+
+const chatUpload = async (file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    return await api.post('/chat/uploads', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  } catch {
+    return await api.post('/api/chat/uploads', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  }
+};
+
 const HomePage: React.FC = () => {
-  const { user, logout, socket, refreshUser } = useAuth();
+  const { user, logout, socket } = useAuth();
   
   // STATE MANAGEMENT giống cấu trúc Zalo
   const [activeTab, setActiveTab] = useState<'chat' | 'contacts' | 'notifications' | 'cloud'>('chat');
   const [selectedChat, setSelectedChat] = useState<any | null>(null);
   const [conversations, setConversations] = useState<any[]>([]);
+  const [friendships, setFriendships] = useState<Friendship[]>([]);
+  const [loadingFriends, setLoadingFriends] = useState(false);
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [messageReactions, setMessageReactions] = useState<ReactionMap>({});
+  const [conversationPreviewMap, setConversationPreviewMap] = useState<Record<string, string>>({});
+  const [userProfiles, setUserProfiles] = useState<Record<string, UserProfile>>({});
+  const [replyTarget, setReplyTarget] = useState<any | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ message: any; x: number; y: number } | null>(null);
+  const [reactionPicker, setReactionPicker] = useState<{ messageId: string; x: number; y: number } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Profile & Settings state
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const profileLoadingRef = useRef<Set<string>>(new Set());
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -31,84 +128,564 @@ const HomePage: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const upsertConversationLastMessage = (convId: string, content?: string) => {
+    setConversations((prev) => {
+      const index = prev.findIndex((conv) => conv.id === convId);
+      if (index === -1) return prev;
+
+      const next = [...prev];
+      const target = next[index];
+      const updated = {
+        ...target,
+        lastMessage: content || target.lastMessage || '',
+        updatedAt: new Date().toISOString(),
+      };
+
+      next.splice(index, 1);
+      next.unshift(updated);
+      return next;
+    });
+  };
+
+  const getMessagePreview = (message: any) => {
+    if (!message) return 'Tin nhắn';
+    if (message.recalled) return 'Tin nhắn đã được thu hồi';
+    if (Array.isArray(message.media) && message.media.length > 0) return '[Hình ảnh]';
+    if (Array.isArray(message.files) && message.files.length > 0) return '[Tệp đính kèm]';
+    return String(message.content || 'Tin nhắn');
+  };
+
+  const normalizeAttachment = (item: any) => {
+    const name = item?.name || item?.fileName || 'Tệp';
+    const mimeType = item?.mimeType || item?.fileType || 'application/octet-stream';
+    const size = Number(item?.size || 0);
+    const dataUrl = item?.dataUrl || item?.fileUrl || item?.url || '';
+    return { name, mimeType, size, dataUrl };
+  };
+
+  const getConversationPreview = (conv: any) => {
+    const seeded = conversationPreviewMap[conv.id];
+    if (seeded) return seeded;
+    const raw = String(conv?.lastMessage || '');
+    if (!raw) return 'Chưa có tin nhắn';
+    if (raw.startsWith('MSG#')) return 'Đang tải nội dung...';
+    return raw;
+  };
+
+  const getDisplayName = (email?: string) => {
+    if (!email) return 'Người dùng';
+    if (email === user?.email) return user?.fullName || user?.fullname || 'Bạn';
+    const profile = userProfiles[email];
+    return profile?.fullName || profile?.fullname || email;
+  };
+
+  const getDisplayAvatar = (email?: string) => {
+    if (!email) return '/logo_blue.png';
+    if (email === user?.email) return user?.avatarUrl || '/logo_blue.png';
+    return userProfiles[email]?.avatarUrl || '/logo_blue.png';
+  };
+
+  const normalizeConversation = (conv: any) => {
+    if (conv?.type !== 'direct') return conv;
+    const partner =
+      conv.partner ||
+      (Array.isArray(conv.members)
+        ? conv.members.find((member: string) => member !== user?.email)
+        : undefined);
+
+    return {
+      ...conv,
+      partner,
+      name: conv.name || getDisplayName(partner),
+      avatar: conv.avatar || getDisplayAvatar(partner),
+    };
+  };
+
+  const loadUserProfile = async (email?: string) => {
+    if (!email || email === user?.email || userProfiles[email]) return;
+    if (profileLoadingRef.current.has(email)) return;
+
+    profileLoadingRef.current.add(email);
+    try {
+      const res = await chatGet('/friends/search', { email });
+      if (res.data?.found && res.data?.user) {
+        setUserProfiles((prev) => ({
+          ...prev,
+          [email]: res.data.user,
+        }));
+      }
+    } catch (err) {
+      console.error('Error loading profile:', err);
+    } finally {
+      profileLoadingRef.current.delete(email);
+    }
+  };
+
+  const openContextMenuForMessage = (message: any, x: number, y: number) => {
+    setContextMenu({ message, x, y });
+    setReactionPicker({ messageId: message.id, x, y: y - 42 });
+  };
+
+  const closeOverlays = () => {
+    setContextMenu(null);
+    setReactionPicker(null);
+  };
+
+  const getReactionData = (message: any) => messageReactions[message.id] || {};
+
+  const getCurrentUserReaction = (message: any) => {
+    if (!user?.email) return undefined;
+    const reactions = getReactionData(message);
+    return Object.entries(reactions).find(([, users]) => users.includes(user.email))?.[0];
+  };
+
+  const getReactionSummary = (message: any) => {
+    const reactions = getReactionData(message);
+    return Object.entries(reactions).filter(([, users]) => users.length > 0).slice(0, 3);
+  };
+
+  const handlePickFiles = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+    acceptType: 'image' | 'file',
+  ) => {
+    const picked = Array.from(event.target.files || []);
+    if (picked.length === 0) return;
+
+    try {
+      if (attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+        alert(`Mỗi tin nhắn tối đa ${MAX_ATTACHMENTS_PER_MESSAGE} tệp.`);
+        return;
+      }
+
+      const tooLarge = picked.find((item) => item.size > MAX_FILE_BYTES);
+      if (tooLarge) {
+        alert(`Tệp quá lớn. Tối đa ${MAX_FILE_KB} KB mỗi tệp.`);
+        return;
+      }
+
+      const normalized = acceptType === 'image'
+        ? picked.filter((item) => item.type.startsWith('image/'))
+        : picked;
+
+      if (normalized.length === 0) {
+        alert('Không tìm thấy tệp hợp lệ để gửi.');
+        return;
+      }
+
+      const converted: Attachment[] = [];
+      for (const file of normalized.slice(0, MAX_ATTACHMENTS_PER_MESSAGE - attachments.length)) {
+        const dataUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
+        converted.push({
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size,
+          dataUrl,
+          file,
+        });
+      }
+
+      setAttachments((prev) => [...prev, ...converted]);
+    } catch (err) {
+      console.error('Failed to process attachments', err);
+      alert('Không thể xử lý tệp. Vui lòng thử lại.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const toggleReaction = async (message: any, emoji: string) => {
+    if (!user?.email || !selectedChat?.id) return;
+    const messageId = message.id;
+    const currentEmoji = getCurrentUserReaction(message);
+    const action = currentEmoji === emoji ? 'remove' : 'add';
+
+    try {
+      const res = await chatPatch(
+        `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
+        {
+          action: 'react',
+          reactAction: action,
+          emoji,
+          previousEmoji: currentEmoji,
+        },
+      );
+
+      const updatedMessage = res.data;
+      setMessages((prev) => prev.map((item) => (item.id === messageId ? updatedMessage : item)));
+      setMessageReactions((prev) => ({ ...prev, [messageId]: updatedMessage.reactions || {} }));
+
+      if (socket && updatedMessage) {
+        socket.emit('sendMessage', { convId: selectedChat.id, message: updatedMessage });
+      }
+    } catch (err) {
+      console.error('Failed to update reaction', err);
+    } finally {
+      closeOverlays();
+    }
+  };
+
+  const pinMessage = async (message: any) => {
+    if (!selectedChat?.id) return;
+    try {
+      const res = await chatPatch(
+        `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(message.id)}`,
+        { action: 'pin' },
+      );
+      const updatedMessage = res.data;
+      setMessages((prev) => prev.map((item) => (item.id === message.id ? updatedMessage : item)));
+      if (socket && updatedMessage) {
+        socket.emit('sendMessage', { convId: selectedChat.id, message: updatedMessage });
+      }
+    } catch (err) {
+      console.error('Failed to pin message', err);
+    } finally {
+      closeOverlays();
+    }
+  };
+
+  const unpinMessage = async (messageId: string) => {
+    if (!selectedChat?.id) return;
+    try {
+      const res = await chatPatch(
+        `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
+        { action: 'unpin' },
+      );
+      const updatedMessage = res.data;
+      setMessages((prev) => prev.map((item) => (item.id === messageId ? updatedMessage : item)));
+      if (socket && updatedMessage) {
+        socket.emit('sendMessage', { convId: selectedChat.id, message: updatedMessage });
+      }
+    } catch (err) {
+      console.error('Failed to unpin message', err);
+    } finally {
+      closeOverlays();
+    }
+  };
+
+  const recallMessage = async (messageId: string) => {
+    if (!selectedChat?.id) return;
+    try {
+      const res = await chatPatch(
+        `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
+        { action: 'recall' },
+      );
+      const updatedMessage = res.data;
+      setMessages((prev) => prev.map((message) => (message.id === messageId ? updatedMessage : message)));
+
+      setConversationPreviewMap((prev) => ({
+        ...prev,
+        [selectedChat.id]: 'Tin nhắn đã được thu hồi',
+      }));
+
+      upsertConversationLastMessage(selectedChat.id, 'Tin nhắn đã được thu hồi');
+
+      setMessageReactions((prev) => {
+        const next = { ...prev };
+        delete next[messageId];
+        return next;
+      });
+
+      if (socket && updatedMessage) {
+        socket.emit('sendMessage', { convId: selectedChat.id, message: updatedMessage });
+      }
+    } catch (err) {
+      console.error('Failed to recall message', err);
+    } finally {
+      closeOverlays();
+    }
+  };
+
+  const startReply = (message: any) => {
+    setReplyTarget({
+      id: message.id,
+      senderId: message.senderId,
+      content: getMessagePreview(message),
+    });
+    closeOverlays();
+  };
+
   // FETCH CONVERSATIONS ON LOAD
   useEffect(() => {
-    if (!user) return;
-    
-    // Refresh user metadata to get latest avatarUrl/fullName
-    refreshUser();
+    if (!user?.email) return;
 
     const fetchConversations = async () => {
       try {
         // Fetch inbox / group matches for this user
-        const res = await api.get('/chat/conversations');
-        setConversations(res.data);
+        const res = await chatGet('/conversations');
+        const normalized = (Array.isArray(res.data) ? res.data : []).map(normalizeConversation);
+        setConversations(normalized);
+
+        const previewSeed: Record<string, string> = {};
+        normalized.forEach((conv: any) => {
+          const raw = String(conv.lastMessage || '');
+          if (!raw) {
+            previewSeed[conv.id] = 'Chưa có tin nhắn';
+          } else if (!raw.startsWith('MSG#')) {
+            previewSeed[conv.id] = raw;
+          }
+        });
+        setConversationPreviewMap(previewSeed);
+
+        // Some records store lastMessage as message id (MSG#...), hydrate with latest content.
+        normalized
+          .filter((conv: any) => String(conv.lastMessage || '').startsWith('MSG#'))
+          .forEach(async (conv: any) => {
+            try {
+              const latestRes = await chatGet(`/conversations/${encodeURIComponent(conv.id)}/messages`, { limit: 1 });
+              const latestMessages = latestRes.data?.messages || [];
+              const latest = latestMessages[latestMessages.length - 1];
+              setConversationPreviewMap((prev) => ({
+                ...prev,
+                [conv.id]: latest ? getMessagePreview(latest) : 'Chưa có tin nhắn',
+              }));
+            } catch {
+              setConversationPreviewMap((prev) => ({
+                ...prev,
+                [conv.id]: 'Chưa có tin nhắn',
+              }));
+            }
+          });
       } catch (err) {
         console.error('Error fetching conversations:', err);
       }
     };
     fetchConversations();
-  }, [user]);
+  }, [user?.email]);
+
+  useEffect(() => {
+    conversations.forEach((conv) => {
+      if (conv.type === 'direct') {
+        const partner =
+          conv.partner ||
+          (Array.isArray(conv.members)
+            ? conv.members.find((member: string) => member !== user?.email)
+            : undefined);
+        if (partner) loadUserProfile(partner);
+      }
+    });
+  }, [conversations, user?.email]);
+
+  useEffect(() => {
+    messages.forEach((message) => {
+      if (message.senderId && message.senderId !== user?.email) {
+        loadUserProfile(message.senderId);
+      }
+    });
+  }, [messages, user?.email]);
 
   // SOCKET: RECEIVE MESSAGES REAL-TIME
   useEffect(() => {
     if (!socket) return;
     
     const handleReceiveMessage = (msg: any) => {
+      if (!msg?.id) return;
+      const incomingConvId = msg.conversationId || msg.convId;
+      if (!incomingConvId) return;
+
       // Append if we are viewing this chat right now
-      if (selectedChat?.id === msg.conversationId) {
-        setMessages(prev => [...prev, msg]);
+      if (selectedChat?.id === incomingConvId) {
+        setMessages((prev) => {
+          const existed = prev.some((item) => item.id === msg.id);
+          if (existed) {
+            return prev.map((item) => (item.id === msg.id ? msg : item));
+          }
+          return [...prev, msg];
+        });
       }
-      
-      // Update lastMessage in the left sidebar
-      setConversations(prev => prev.map(conv => 
-        conv.id === msg.conversationId 
-          ? { ...conv, lastMessage: msg.content, updatedAt: new Date().toISOString() }
-          : conv
-      ));
+
+      if (msg.reactions && typeof msg.reactions === 'object') {
+        setMessageReactions((prev) => ({ ...prev, [msg.id]: msg.reactions }));
+      }
+
+      setConversationPreviewMap((prev) => ({
+        ...prev,
+        [incomingConvId]: getMessagePreview(msg),
+      }));
+
+      upsertConversationLastMessage(incomingConvId, getMessagePreview(msg));
     };
 
     socket.on('receiveMessage', handleReceiveMessage);
     return () => {
       socket.off('receiveMessage', handleReceiveMessage);
     };
-  }, [socket, selectedChat]);
+  }, [socket, selectedChat?.id]);
 
   // AUTO-SCROLL TO BOTTOM OF CHAT
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const fetchFriendships = async () => {
+    setLoadingFriends(true);
+    try {
+      const res = await chatGet('/friends');
+      setFriendships(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error('Error fetching friends:', err);
+      setFriendships([]);
+    } finally {
+      setLoadingFriends(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!user?.email || activeTab !== 'contacts') return;
+    fetchFriendships();
+  }, [user?.email, activeTab]);
+
   // SWITCH CHAT: FETCH MESSAGES & JOIN ROOM
   const handleSelectChat = async (chat: any) => {
-    setSelectedChat(chat);
-    if (!chat) return;
+    const normalizedChat = normalizeConversation(chat);
+    setSelectedChat(normalizedChat);
+    setReplyTarget(null);
+    closeOverlays();
+    if (!normalizedChat) return;
+
+    if (normalizedChat.type === 'direct' && normalizedChat.partner) {
+      loadUserProfile(normalizedChat.partner);
+    }
 
     // Join Socket Room
     if (socket) {
-      socket.emit('join_room', { convId: chat.id });
+      socket.emit('join_room', { convId: normalizedChat.id });
     }
 
     try {
-      const res = await api.get(`/chat/conversations/${encodeURIComponent(chat.id)}/messages`);
-      setMessages(res.data.messages || []);
+      const res = await chatGet(`/conversations/${encodeURIComponent(normalizedChat.id)}/messages`);
+      const loadedMessages = res.data.messages || [];
+      setMessages(loadedMessages);
+      const last = loadedMessages[loadedMessages.length - 1];
+      if (last) {
+        setConversationPreviewMap((prev) => ({
+          ...prev,
+          [normalizedChat.id]: getMessagePreview(last),
+        }));
+      }
+      const seedReactions: ReactionMap = {};
+      loadedMessages.forEach((message: any) => {
+        if (message.reactions && typeof message.reactions === 'object') {
+          seedReactions[message.id] = message.reactions;
+        }
+      });
+      setMessageReactions(seedReactions);
     } catch (err) {
       console.error('Failed to load messages', err);
     }
   };
 
+  const handleOpenDirectChat = async (friendEmail: string) => {
+    try {
+      const directRes = await chatPost('/conversations/direct', { targetEmail: friendEmail });
+      const convId = directRes.data?.id;
+      if (!convId) return;
+
+      const existing = conversations.find((item) => item.id === convId);
+      const directChat = normalizeConversation(existing || {
+        id: convId,
+        name: getDisplayName(friendEmail),
+        avatar: getDisplayAvatar(friendEmail),
+        partner: friendEmail,
+        type: 'direct',
+      });
+
+      if (!existing) {
+        setConversations((prev) => [directChat, ...prev]);
+      }
+
+      setActiveTab('chat');
+      await handleSelectChat(directChat);
+    } catch (err) {
+      console.error('Failed to open direct chat', err);
+    }
+  };
+
   // SEND A TEXT MESSAGE
   const handleSendMessage = async () => {
-    if (!inputText.trim() || !selectedChat) return;
+    if ((!inputText.trim() && attachments.length === 0) || !selectedChat) return;
     try {
-      await api.post(`/chat/conversations/${encodeURIComponent(selectedChat.id)}/messages`, {
-        content: inputText
+      const trimmedInput = inputText.trim();
+      const uploadedAttachments: Attachment[] = [];
+      for (const item of attachments) {
+        if (item.file) {
+          const uploadRes = await chatUpload(item.file);
+          uploadedAttachments.push(uploadRes.data);
+        } else {
+          uploadedAttachments.push(item);
+        }
+      }
+
+      const imageAttachments = uploadedAttachments.filter((item) => item.mimeType.startsWith('image/'));
+      const fileAttachments = uploadedAttachments.filter((item) => !item.mimeType.startsWith('image/'));
+
+      const res = await chatPost(`/conversations/${encodeURIComponent(selectedChat.id)}/messages`, {
+        content: trimmedInput || (imageAttachments.length > 0 ? '[Hình ảnh]' : '[Tệp đính kèm]'),
+        media: imageAttachments.map((item) => ({
+          name: item.name,
+          fileName: item.name,
+          mimeType: item.mimeType,
+          fileType: item.mimeType,
+          size: item.size,
+          fileUrl: item.fileUrl || item.dataUrl,
+          dataUrl: item.fileUrl || item.dataUrl,
+        })),
+        files: fileAttachments.map((item) => ({
+          name: item.name,
+          fileName: item.name,
+          mimeType: item.mimeType,
+          fileType: item.mimeType,
+          size: item.size,
+          fileUrl: item.fileUrl || item.dataUrl,
+          dataUrl: item.fileUrl || item.dataUrl,
+        })),
+        replyTo: replyTarget || undefined,
       });
-      // Emitting through API which will broadcast via Gateway
-      // Let the socket handleReceiveMessage append it to our local state
+
+      const createdMessage = {
+        ...(res.data || {}),
+        content: res.data?.content || trimmedInput || (imageAttachments.length > 0 ? '[Hình ảnh]' : '[Tệp đính kèm]'),
+        media: res.data?.media || imageAttachments,
+        files: res.data?.files || fileAttachments,
+        replyTo: replyTarget || undefined,
+      };
+      if (createdMessage?.id) {
+        // Update immediately, then socket event will be deduplicated by id.
+        setMessages((prev) => {
+          const existed = prev.some((item) => item.id === createdMessage.id);
+          return existed ? prev : [...prev, createdMessage];
+        });
+
+        if (socket) {
+          socket.emit('sendMessage', {
+            convId: selectedChat.id,
+            message: {
+              ...createdMessage,
+              conversationId: createdMessage.conversationId || selectedChat.id,
+            },
+          });
+        }
+      }
+
+      upsertConversationLastMessage(
+        selectedChat.id,
+        createdMessage?.content || trimmedInput,
+      );
+      setConversationPreviewMap((prev) => ({
+        ...prev,
+        [selectedChat.id]: createdMessage?.content || trimmedInput,
+      }));
+
       setInputText('');
+      attachments.forEach((item) => {
+        if (item.dataUrl && item.dataUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(item.dataUrl);
+        }
+      });
+      setAttachments([]);
+      setReplyTarget(null);
     } catch (err) {
       console.error('Failed to send message', err);
+      alert('Không gửi được tin nhắn kèm tệp. Vui lòng kiểm tra dung lượng tệp hoặc cấu hình upload S3.');
     }
   };
 
@@ -132,8 +709,34 @@ const HomePage: React.FC = () => {
     );
   };
 
+  const acceptedFriends = friendships
+    .filter((item) => item.status === 'accepted')
+    .map((item) => (item.sender_id === user?.email ? item.receiver_id : item.sender_id));
+
+  const activePinnedMessages = messages
+    .filter((message) => message.pinned)
+    .sort((a, b) => String(b.pinnedAt || '').localeCompare(String(a.pinnedAt || '')))
+    .slice(0, 3);
+
+  const conversationFiles = messages
+    .flatMap((message) => {
+      const media = Array.isArray(message.media)
+        ? message.media.map((item: any) => ({ ...normalizeAttachment(item), createdAt: message.createdAt }))
+        : [];
+      const files = Array.isArray(message.files)
+        ? message.files.map((item: any) => ({ ...normalizeAttachment(item), createdAt: message.createdAt }))
+        : [];
+      return [...media, ...files];
+    })
+    .filter((item) => !!item.dataUrl)
+    .slice()
+    .reverse();
+
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-surface text-on-surface antialiased font-['Plus_Jakarta_Sans']">
+    <div
+      className="flex h-screen w-full overflow-hidden bg-surface text-on-surface antialiased font-['Plus_Jakarta_Sans'] border border-outline-variant/20"
+      onClick={closeOverlays}
+    >
       
       {/* COLUMN 1: SideNavBar (80px wide) */}
       <aside className="fixed left-0 top-0 h-full z-50 w-20 flex flex-col items-center py-6 bg-gradient-to-br from-[#0058bc] to-[#00418f] shadow-[0px_20px_40px_rgba(0,65,143,0.06)] shrink-0">
@@ -250,7 +853,7 @@ const HomePage: React.FC = () => {
       />
 
       {/* COLUMN 2: List Panel (320px) */}
-      <section className="ml-20 w-[320px] bg-white bg-surface-container-lowest h-full flex flex-col z-10 border-r border-outline-variant/20 shrink-0">
+      <section className="ml-20 w-[320px] bg-white bg-surface-container-lowest h-full flex flex-col z-10 border-r border-outline-variant/30 shrink-0">
         {/* Search Header */}
         <div className="p-4 space-y-4">
           <div className="flex items-center gap-2">
@@ -262,9 +865,9 @@ const HomePage: React.FC = () => {
                 type="text"
               />
             </div>
-            <button className="p-2 hover:bg-surface-container rounded-xl transition-colors">
+            <Link to="/friends" className="p-2 hover:bg-surface-container rounded-xl transition-colors">
               <span className="material-symbols-outlined text-on-surface-variant focus-within:text-primary text-[20px]">person_add</span>
-            </button>
+            </Link>
             <button className="p-2 hover:bg-surface-container rounded-xl transition-colors">
               <span className="material-symbols-outlined text-on-surface-variant focus-within:text-primary text-[20px]">group_add</span>
             </button>
@@ -296,7 +899,16 @@ const HomePage: React.FC = () => {
               conversations.map((chat) => {
                 const isSelected = selectedChat?.id === chat.id;
                 // Nếu là direct chat thì avatar/name sẽ lôi từ partner mapping (tạm dùng tên mặc định nếu thiếu)
-                const chatName = chat.name || chat.partner || chat.id.substring(0,6);
+                const partnerEmail =
+                  chat.type === 'direct'
+                    ? chat.partner || (Array.isArray(chat.members) ? chat.members.find((member: string) => member !== user?.email) : undefined)
+                    : undefined;
+                const chatName =
+                  chat.type === 'direct'
+                    ? getDisplayName(partnerEmail)
+                    : chat.name || chat.id.substring(0, 6);
+                const chatAvatar =
+                  chat.type === 'direct' ? getDisplayAvatar(partnerEmail) : (chat.avatar || '/logo_blue.png');
                 return (
                   <div 
                     key={chat.id}
@@ -306,7 +918,7 @@ const HomePage: React.FC = () => {
                     }`}
                   >
                     <div className="relative shrink-0">
-                      <img className="w-12 h-12 rounded-full object-cover shadow-sm bg-surface-container" alt={chatName} src={chat.avatar || '/logo_blue.png'} />
+                      <img className="w-12 h-12 rounded-full object-cover shadow-sm bg-surface-container" alt={chatName} src={chatAvatar} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-center mb-0.5">
@@ -314,7 +926,7 @@ const HomePage: React.FC = () => {
                       </div>
                       <div className="flex justify-between items-center">
                         <div className="flex items-center gap-1 overflow-hidden">
-                          <p className={`text-[13px] truncate text-on-surface-variant`}>{chat.lastMessage || 'Chưa có tin nhắn'}</p>
+                          <p className={`text-[13px] truncate text-on-surface-variant`}>{getConversationPreview(chat)}</p>
                         </div>
                       </div>
                     </div>
@@ -322,11 +934,34 @@ const HomePage: React.FC = () => {
                 );
               })
             )
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-50 mt-10">
-              <span className="material-symbols-outlined text-6xl mb-4 text-outline">construction</span>
-              <p className="font-bold text-on-surface">Tính năng đang phát triển</p>
+          ) : loadingFriends ? (
+            <div className="text-center p-8 opacity-60 mt-10">
+              <p className="font-medium text-[13px] text-on-surface">Đang tải danh sách bạn bè...</p>
             </div>
+          ) : acceptedFriends.length === 0 ? (
+            <div className="text-center p-8 opacity-50 mt-10">
+              <p className="font-medium text-[13px] text-on-surface">Bạn chưa có bạn bè nào</p>
+            </div>
+          ) : (
+            acceptedFriends.map((friendEmail) => (
+              <div
+                key={friendEmail}
+                onClick={() => handleOpenDirectChat(friendEmail)}
+                className="flex items-center gap-3 p-3 rounded-[16px] transition-all hover:bg-surface-container/70 cursor-pointer"
+              >
+                <div className="relative shrink-0">
+                  <img
+                    className="w-12 h-12 rounded-full object-cover shadow-sm bg-surface-container"
+                    alt={friendEmail}
+                    src="/logo_blue.png"
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-[14px] text-on-surface truncate">{friendEmail}</p>
+                  <p className="text-[12px] text-on-surface-variant truncate">Nhấn để mở trò chuyện riêng</p>
+                </div>
+              </div>
+            ))
           )}
         </div>
       </section>
@@ -361,17 +996,19 @@ const HomePage: React.FC = () => {
         // ACTIVE CHAT SCREEN
         <>
           {/* COLUMN 3: Main Chat Window */}
-          <main className="flex-1 flex flex-col bg-[#f7f9fb] overflow-hidden relative shadow-[inset_1px_0_0_rgba(0,0,0,0.05)]">
+          <main className="flex-1 flex flex-col bg-[#f7f9fb] overflow-hidden relative shadow-[inset_1px_0_0_rgba(0,0,0,0.05)] border-r border-outline-variant/20">
             {/* Chat Header */}
             <header className="h-16 flex items-center justify-between px-6 bg-white/80 backdrop-blur-xl border-b border-outline-variant/15 z-20 shrink-0">
               <div className="flex items-center gap-3">
                 <img 
                   className="w-10 h-10 rounded-full object-cover bg-surface-container" 
                   alt="Avatar" 
-                  src={selectedChat.avatar}
+                  src={selectedChat.type === 'direct' ? getDisplayAvatar(selectedChat.partner) : selectedChat.avatar}
                 />
                 <div>
-                  <h2 className="font-bold text-on-surface leading-tight text-[15px]">{selectedChat.name}</h2>
+                  <h2 className="font-bold text-on-surface leading-tight text-[15px]">
+                    {selectedChat.type === 'direct' ? getDisplayName(selectedChat.partner) : selectedChat.name}
+                  </h2>
                   <div className="flex items-center gap-1 text-[12px] text-on-surface-variant font-medium">
                     {selectedChat.type === 'group' ? (
                       <>
@@ -395,14 +1032,26 @@ const HomePage: React.FC = () => {
               </div>
             </header>
 
-            {/* Pinned Message Strip (Only for Groups as demo) */}
-            {selectedChat.type === 'group' && (
-              <div className="px-6 py-2.5 bg-white/50 backdrop-blur-md flex items-center gap-3 border-b border-outline-variant/10 shrink-0 cursor-pointer hover:bg-white/80 transition-colors">
-                <span className="material-symbols-outlined text-primary text-[18px]">push_pin</span>
-                <div className="flex-1 text-[13px] truncate">
-                  <span className="font-bold text-primary mr-2">Tin nhắn ghim:</span>Deadline nộp báo cáo cuối kỳ vào ngày 25/12. Mọi người chú ý!
-                </div>
-                <button className="material-symbols-outlined text-on-surface-variant text-[18px]">keyboard_arrow_down</button>
+            {activePinnedMessages.length > 0 && (
+              <div className="px-6 py-2.5 bg-white/70 backdrop-blur-md border-b border-outline-variant/20 shrink-0 space-y-2">
+                {activePinnedMessages.map((message) => (
+                  <div key={`pin-${message.id}`} className="flex items-center gap-3 rounded-xl bg-surface-container-lowest border border-outline-variant/20 px-3 py-2">
+                    <span className="material-symbols-outlined text-primary text-[18px]">push_pin</span>
+                    <div className="flex-1 text-[13px] truncate">
+                      <span className="font-bold text-primary mr-2">Đã ghim:</span>
+                      {getMessagePreview(message)}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        unpinMessage(message.id);
+                      }}
+                      className="text-[11px] px-2 py-1 rounded-lg border border-outline-variant/30 hover:bg-surface-container"
+                    >
+                      Bỏ ghim
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -419,33 +1068,177 @@ const HomePage: React.FC = () => {
               ) : (
                 messages.map((message) => {
                   const isMe = message.senderId === user?.email;
+                  const reactionSummary = getReactionSummary(message);
+                  const isRecalled = !!message.recalled;
                   
                   if (isMe) {
                     return (
-                      <div key={message.id} className="flex items-end justify-end gap-3 mt-auto group">
-                        <button className="opacity-0 group-hover:opacity-100 p-2 hover:bg-surface-container rounded-full transition-all text-on-surface-variant mb-4"><span className="material-symbols-outlined text-[18px]">more_vert</span></button>
+                      <div
+                        key={message.id}
+                        className="flex items-end justify-end gap-3 mt-auto group"
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          openContextMenuForMessage(message, e.clientX, e.clientY);
+                        }}
+                      >
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            openContextMenuForMessage(message, rect.left, rect.top - 8);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-2 hover:bg-surface-container rounded-full transition-all text-on-surface-variant mb-4"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">more_vert</span>
+                        </button>
                         <div className="max-w-[75%]">
-                          <div className="bg-primary-container text-on-primary-container rounded-[20px] rounded-tr-none p-4 shadow-sm shadow-primary/10">
-                            <p className="text-[15px] leading-relaxed">{message.content}</p>
+                          <div className="bg-primary-container text-on-primary-container rounded-[20px] rounded-tr-none p-4 shadow-sm shadow-primary/10 border border-primary/20">
+                            {message.replyTo && (
+                              <div className="mb-2 rounded-lg bg-white/60 text-on-surface p-2 text-[12px] border border-white/80">
+                                <p className="font-semibold">Trả lời {message.replyTo.senderId || 'tin nhắn'}</p>
+                                <p className="truncate">{message.replyTo.content}</p>
+                              </div>
+                            )}
+                            <p className={`text-[15px] leading-relaxed ${isRecalled ? 'italic opacity-70' : ''}`}>{message.content}</p>
+                            {(Array.isArray(message.media) || Array.isArray(message.files)) && (
+                              <div className="mt-2 space-y-2">
+                                {(Array.isArray(message.media) ? message.media : []).map((item: any, index: number) => {
+                                  const file = normalizeAttachment(item);
+                                  return (
+                                    <img
+                                      key={`me-media-${message.id}-${index}`}
+                                      src={file.dataUrl}
+                                      alt={file.name}
+                                      className="max-h-56 rounded-lg border border-primary/20"
+                                    />
+                                  );
+                                })}
+                                {(Array.isArray(message.files) ? message.files : []).map((item: any, index: number) => {
+                                  const file = normalizeAttachment(item);
+                                  return (
+                                    <a
+                                      key={`me-file-${message.id}-${index}`}
+                                      href={file.dataUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="flex items-center gap-2 rounded-lg bg-white/70 text-on-surface p-2 border border-primary/20"
+                                    >
+                                      <span className="material-symbols-outlined text-[18px]">{getFileIcon(file.mimeType, file.name)}</span>
+                                      <div className="min-w-0">
+                                        <p className="text-[12px] font-semibold truncate">{file.name}</p>
+                                        <p className="text-[11px] text-on-surface-variant">{formatFileSize(file.size)}</p>
+                                      </div>
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
+                          {reactionSummary.length > 0 && (
+                            <div className="mt-1 flex justify-end gap-1">
+                              {reactionSummary.map(([emoji, users]) => (
+                                <button
+                                  key={`${message.id}-${emoji}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleReaction(message, emoji);
+                                  }}
+                                  className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-outline-variant/30"
+                                >
+                                  {emoji} {users.length}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
                   } else {
                     return (
-                      <div key={message.id} className="flex items-start gap-3 max-w-[80%] group">
+                      <div
+                        key={message.id}
+                        className="flex items-start gap-3 max-w-[80%] group"
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          openContextMenuForMessage(message, e.clientX, e.clientY);
+                        }}
+                      >
                         <img 
                           className="w-9 h-9 rounded-full mt-1 object-cover bg-surface-container" 
                           alt="Avatar" 
-                          src="/logo_blue.png"
+                          src={getDisplayAvatar(message.senderId)}
                         />
                         <div>
-                          {selectedChat.type === 'group' && <span className="text-[12px] font-bold ml-1 mb-1 block text-on-surface-variant">{message.senderId}</span>}
-                          <div className="bg-white rounded-[20px] rounded-tl-none p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] border border-outline-variant/10">
-                            <p className="text-[15px] leading-relaxed text-on-surface">{message.content}</p>
+                          {selectedChat.type === 'group' && <span className="text-[12px] font-bold ml-1 mb-1 block text-on-surface-variant">{getDisplayName(message.senderId)}</span>}
+                          <div className="bg-white rounded-[20px] rounded-tl-none p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] border border-outline-variant/25">
+                            {message.replyTo && (
+                              <div className="mb-2 rounded-lg bg-surface-container-low p-2 text-[12px] border border-outline-variant/20">
+                                <p className="font-semibold">Trả lời {message.replyTo.senderId || 'tin nhắn'}</p>
+                                <p className="truncate">{message.replyTo.content}</p>
+                              </div>
+                            )}
+                            <p className={`text-[15px] leading-relaxed text-on-surface ${isRecalled ? 'italic opacity-70' : ''}`}>{message.content}</p>
+                            {(Array.isArray(message.media) || Array.isArray(message.files)) && (
+                              <div className="mt-2 space-y-2">
+                                {(Array.isArray(message.media) ? message.media : []).map((item: any, index: number) => {
+                                  const file = normalizeAttachment(item);
+                                  return (
+                                    <img
+                                      key={`other-media-${message.id}-${index}`}
+                                      src={file.dataUrl}
+                                      alt={file.name}
+                                      className="max-h-56 rounded-lg border border-outline-variant/25"
+                                    />
+                                  );
+                                })}
+                                {(Array.isArray(message.files) ? message.files : []).map((item: any, index: number) => {
+                                  const file = normalizeAttachment(item);
+                                  return (
+                                    <a
+                                      key={`other-file-${message.id}-${index}`}
+                                      href={file.dataUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="flex items-center gap-2 rounded-lg bg-surface-container-lowest p-2 border border-outline-variant/25"
+                                    >
+                                      <span className="material-symbols-outlined text-[18px]">{getFileIcon(file.mimeType, file.name)}</span>
+                                      <div className="min-w-0">
+                                        <p className="text-[12px] font-semibold truncate">{file.name}</p>
+                                        <p className="text-[11px] text-on-surface-variant">{formatFileSize(file.size)}</p>
+                                      </div>
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
+                          {reactionSummary.length > 0 && (
+                            <div className="mt-1 flex gap-1">
+                              {reactionSummary.map(([emoji, users]) => (
+                                <button
+                                  key={`${message.id}-${emoji}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleReaction(message, emoji);
+                                  }}
+                                  className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-outline-variant/30"
+                                >
+                                  {emoji} {users.length}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <button className="opacity-0 group-hover:opacity-100 p-2 hover:bg-surface-container rounded-full transition-all self-center text-on-surface-variant"><span className="material-symbols-outlined text-[18px]">more_vert</span></button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            openContextMenuForMessage(message, rect.left, rect.top - 8);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-2 hover:bg-surface-container rounded-full transition-all self-center text-on-surface-variant"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">more_vert</span>
+                        </button>
                       </div>
                     );
                   }
@@ -459,10 +1252,73 @@ const HomePage: React.FC = () => {
             <footer className="bg-white/80 backdrop-blur-xl border-t border-outline-variant/20 px-6 py-4 shrink-0">
               <div className="flex items-center gap-1.5 mb-3 px-1">
                 <button className="p-2 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant hover:text-primary"><span className="material-symbols-outlined text-[22px]">mood</span></button>
-                <button className="p-2 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant hover:text-primary"><span className="material-symbols-outlined text-[22px]">image</span></button>
-                <button className="p-2 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant hover:text-primary"><span className="material-symbols-outlined text-[22px]">attach_file</span></button>
+                <button
+                  onClick={() => imageInputRef.current?.click()}
+                  className="p-2 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant hover:text-primary"
+                >
+                  <span className="material-symbols-outlined text-[22px]">image</span>
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-2 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant hover:text-primary"
+                >
+                  <span className="material-symbols-outlined text-[22px]">attach_file</span>
+                </button>
                 <button className="p-2 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant hover:text-primary"><span className="material-symbols-outlined text-[22px]">alternate_email</span></button>
               </div>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => handlePickFiles(e, 'image')}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => handlePickFiles(e, 'file')}
+              />
+              {attachments.length > 0 && (
+                <div className="mb-3 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-2 flex flex-wrap gap-2">
+                  {attachments.map((item, index) => (
+                    <div key={`attach-${index}`} className="flex items-center gap-2 px-2 py-1 rounded-lg bg-white border border-outline-variant/20">
+                      <span className="material-symbols-outlined text-[16px]">{getFileIcon(item.mimeType, item.name)}</span>
+                      <span className="text-[12px] max-w-[220px] truncate">{item.name}</span>
+                      <button
+                        onClick={() =>
+                          setAttachments((prev) => {
+                            const target = prev[index];
+                            if (target?.dataUrl && target.dataUrl.startsWith('blob:')) {
+                              URL.revokeObjectURL(target.dataUrl);
+                            }
+                            return prev.filter((_, idx) => idx !== index);
+                          })
+                        }
+                        className="text-[11px] px-1.5 rounded hover:bg-surface-container"
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {replyTarget && (
+                <div className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-semibold text-primary">Đang trả lời {replyTarget.senderId || 'tin nhắn'}</p>
+                    <p className="text-[12px] text-on-surface-variant truncate">{replyTarget.content}</p>
+                  </div>
+                  <button
+                    onClick={() => setReplyTarget(null)}
+                    className="text-[11px] px-2 py-1 rounded-lg border border-outline-variant/30 hover:bg-surface-container"
+                  >
+                    Hủy
+                  </button>
+                </div>
+              )}
               <div className="flex items-end gap-3 bg-surface-container-lowest border border-outline-variant/30 rounded-[24px] p-2 pr-2.5 focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/40 transition-all shadow-sm">
                 <textarea 
                   value={inputText}
@@ -493,9 +1349,11 @@ const HomePage: React.FC = () => {
               <img 
                 className="w-24 h-24 rounded-full mx-auto shadow-xl shadow-primary/10 mb-5 object-cover ring-4 ring-white" 
                 alt="Avatar" 
-                src={selectedChat.avatar}
+                src={selectedChat.type === 'direct' ? getDisplayAvatar(selectedChat.partner) : selectedChat.avatar}
               />
-              <h3 className="font-extrabold text-primary text-[18px] px-2">{selectedChat.name}</h3>
+              <h3 className="font-extrabold text-primary text-[18px] px-2">
+                {selectedChat.type === 'direct' ? getDisplayName(selectedChat.partner) : selectedChat.name}
+              </h3>
               {selectedChat.type === 'group' && <p className="text-on-surface-variant mt-1 font-medium text-sm tracking-wide">Khoa Công nghệ thông tin</p>}
               
               <div className="flex justify-center gap-6 mt-8">
@@ -544,18 +1402,84 @@ const HomePage: React.FC = () => {
                   <button className="material-symbols-outlined text-outline hover:text-primary transition-colors cursor-pointer text-[20px] bg-surface-container hover:bg-primary/10 p-1 rounded-full">expand_more</button>
                 </div>
                 <div className="space-y-3">
-                  <div className="flex items-center gap-3 hover:bg-surface-container p-2 -mx-2 rounded-xl transition-all cursor-pointer group">
-                    <div className="w-11 h-11 rounded-[14px] bg-[#fff0f0] flex items-center justify-center text-red-500 shadow-sm"><span className="material-symbols-outlined text-[20px]">picture_as_pdf</span></div>
-                    <div className="flex-1 overflow-hidden">
-                      <p className="font-bold text-on-surface text-[13px] truncate group-hover:text-primary">Quy_dinh_nhom.pdf</p>
-                      <span className="text-[11px] font-medium text-on-surface-variant tracking-wide block mt-0.5">2.1 MB • Hôm qua</span>
-                    </div>
-                  </div>
+                  {conversationFiles.length === 0 ? (
+                    <p className="text-[12px] text-on-surface-variant">Chưa có tệp nào trong cuộc hội thoại này.</p>
+                  ) : (
+                    conversationFiles.slice(0, 10).map((item, index) => (
+                      <a
+                        key={`history-file-${index}`}
+                        href={item.dataUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-3 hover:bg-surface-container p-2 -mx-2 rounded-xl transition-all cursor-pointer group"
+                      >
+                        <div className="w-11 h-11 rounded-[14px] bg-surface-container-highest flex items-center justify-center text-on-surface-variant shadow-sm">
+                          <span className="material-symbols-outlined text-[20px]">{getFileIcon(item.mimeType, item.name)}</span>
+                        </div>
+                        <div className="flex-1 overflow-hidden">
+                          <p className="font-bold text-on-surface text-[13px] truncate group-hover:text-primary">{item.name}</p>
+                          <span className="text-[11px] font-medium text-on-surface-variant tracking-wide block mt-0.5">
+                            {formatFileSize(item.size)} • {item.createdAt ? new Date(item.createdAt).toLocaleString('vi-VN') : '--'}
+                          </span>
+                        </div>
+                      </a>
+                    ))
+                  )}
                 </div>
               </section>
             </div>
           </aside>
         </>
+      )}
+
+      {reactionPicker && (
+        <div
+          className="fixed bg-white rounded-full shadow-lg px-2 py-1 flex gap-1 z-[1000] border border-outline-variant/30"
+          style={{ left: reactionPicker.x, top: reactionPicker.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {REACTION_OPTIONS.map((emoji) => (
+            <button
+              key={`floating-${reactionPicker.messageId}-${emoji}`}
+              onClick={() => {
+                const targetMessage = messages.find((item) => item.id === reactionPicker.messageId);
+                if (targetMessage) toggleReaction(targetMessage, emoji);
+              }}
+              className="text-[18px] hover:scale-110 transition-transform"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {contextMenu && (
+        <div
+          className="fixed bg-white border border-outline-variant/30 rounded-xl shadow-lg p-2 z-[1001] min-w-[180px] text-[12px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => pinMessage(contextMenu.message)}
+            className="block w-full text-left px-2 py-1 hover:bg-surface-container rounded"
+          >
+            Ghim tin nhắn
+          </button>
+          <button
+            onClick={() => startReply(contextMenu.message)}
+            className="block w-full text-left px-2 py-1 hover:bg-surface-container rounded"
+          >
+            Trả lời
+          </button>
+          {contextMenu.message?.senderId === user?.email && !contextMenu.message?.recalled && (
+            <button
+              onClick={() => recallMessage(contextMenu.message.id)}
+              className="block w-full text-left px-2 py-1 hover:bg-surface-container rounded"
+            >
+              Thu hồi
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

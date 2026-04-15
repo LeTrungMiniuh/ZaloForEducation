@@ -12,6 +12,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import SessionsPage from './pages/SessionsPage';
 import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
+import FriendRequestForm from './pages/FriendRequestForm';
 import './App.css';
 
 // Component bảo vệ Route
@@ -86,6 +87,14 @@ const AppContent: React.FC = () => {
                   <SettingsPage />
                 </PrivateRoute>
               } 
+            />
+            <Route 
+              path="/friends" 
+              element={
+                <PrivateRoute>
+                  <FriendRequestForm />
+                </PrivateRoute>
+              }
             />
             <Route path="*" element={<Navigate to="/" />} />
         </Routes>
