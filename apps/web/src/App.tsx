@@ -6,7 +6,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import SplashScreen from './components/SplashScreen';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-import HomePage from './pages/HomePage';
 import LandingPage from './pages/LandingPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import SessionsPage from './pages/SessionsPage';
@@ -29,20 +28,22 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return user ? <Navigate to="/chat" /> : <>{children}</>;
 };
 
+// Import Layouts & Pages
+import MainLayout from './components/layout/MainLayout';
+import ChatPage from './pages/chat/ChatPage';
+import ContactPage from './pages/contacts/ContactPage';
+import { NotificationPage, CloudPage } from './pages/notifications/NotificationPage';
+
 const AppContent: React.FC = () => {
   const { loading } = useAuth();
   const [showSplash, setShowSplash] = useState(true);
 
   useEffect(() => {
-    // Luôn hiển thị Splash tối thiểu 2s để tạo cảm giác Premium
     const timer = setTimeout(() => {
       if (!loading) {
         setShowSplash(false);
       }
     }, 2000);
-
-    // Nếu loading xong nhưng timer chưa xong thì timer sẽ handle
-    // Nếu timer xong nhưng loading chưa xong thì useEffect [loading] sẽ handle
     return () => clearTimeout(timer);
   }, [loading]);
 
@@ -52,51 +53,28 @@ const AppContent: React.FC = () => {
       
       <div className={`app-container ${showSplash ? 'opacity-0' : 'opacity-100 transition-opacity duration-1000 delay-500'}`}>
         <Routes>
+          {/* Public Routes */}
           <Route path="/" element={<LandingPage />} />
-            <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-            <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
-            <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
-            <Route 
-              path="/chat" 
-              element={
-                <PrivateRoute>
-                  <HomePage />
-                </PrivateRoute>
-              } 
-            />
-            <Route 
-              path="/sessions" 
-              element={
-                <PrivateRoute>
-                  <SessionsPage />
-                </PrivateRoute>
-              } 
-            />
-            <Route 
-              path="/profile" 
-              element={
-                <PrivateRoute>
-                  <ProfilePage />
-                </PrivateRoute>
-              } 
-            />
-            <Route 
-              path="/settings" 
-              element={
-                <PrivateRoute>
-                  <SettingsPage />
-                </PrivateRoute>
-              } 
-            />
-            <Route 
-              path="/friends" 
-              element={
-                <PrivateRoute>
-                  <FriendRequestForm />
-                </PrivateRoute>
-              }
-            />
-            <Route path="*" element={<Navigate to="/" />} />
+          <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+          <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
+          <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
+
+          {/* Authenticated Routes with MainLayout */}
+          <Route element={<PrivateRoute><MainLayout /></PrivateRoute>}>
+            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/contacts" element={<ContactPage />} />
+            <Route path="/notifications" element={<NotificationPage />} />
+            <Route path="/cloud" element={<CloudPage />} />
+            
+            {/* These pages now have the Sidebar too */}
+            <Route path="/sessions" element={<SessionsPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/friends" element={<FriendRequestForm />} />
+          </Route>
+
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>
     </>

@@ -56,6 +56,13 @@
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-10px); }
   }
+  @keyframes pulseHighlight {
+    0% { background-color: rgba(254, 243, 199, 0); }
+    30% { background-color: rgba(254, 243, 199, 1); }
+    100% { background-color: rgba(254, 243, 199, 0); }
+  }
+
+  --animate-pulse-highlight: pulseHighlight 2s ease-in-out;
 }
 
 :root {

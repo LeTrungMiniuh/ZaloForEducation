@@ -2,6 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { userService } from '../services/userService';
 import Swal from 'sweetalert2';
+import { 
+  X, 
+  Camera, 
+  Edit3, 
+  User, 
+  Cake, 
+  Phone, 
+  MapPin, 
+  Mail,
+  Loader2
+} from 'lucide-react';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -33,13 +44,10 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
     }
   }, [isOpen]);
 
-  // FIX 7: Đồng bộ hóa Modal với dữ liệu thực tế từ AuthContext (Socket update)
   useEffect(() => {
     if (user && isOpen) {
-      console.log('[ProfileModal] Syncing with latest user from context:', user);
       setProfile((prev: any) => ({ ...prev, ...user }));
       
-      // Chỉ cập nhật formData nếu KHÔNG đang trong chế độ chỉnh sửa (để tránh ghi đè dữ liệu user đang nhập)
       if (!isEditing) {
         setFormData(prev => ({
           ...prev,
@@ -138,7 +146,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
             onClick={onClose}
             className="absolute top-4 right-4 text-white hover:bg-white/20 p-2 rounded-full transition-colors"
           >
-            <span className="material-symbols-outlined">close</span>
+            <X size={24} />
           </button>
 
           <button 
@@ -146,7 +154,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
             className="absolute bottom-4 right-4 bg-white/20 hover:bg-white/40 backdrop-blur-md text-white p-2 rounded-full transition-colors border border-white/30"
             title="Đổi ảnh bìa"
           >
-            <span className="material-symbols-outlined text-sm">photo_camera</span>
+            <Camera size={18} />
           </button>
           <input type="file" ref={bgInputRef} className="hidden" onChange={(e) => handleFileUpload(e, 'background')} accept="image/*" />
         </div>
@@ -166,13 +174,13 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                 className="absolute bottom-1 right-1 bg-primary text-white p-2 rounded-full border-2 border-white shadow-lg hover:scale-110 active:scale-95 transition-all"
                 title="Đổi ảnh đại diện"
               >
-                <span className="material-symbols-outlined text-[18px]">photo_camera</span>
+                <Camera size={18} />
               </button>
               <input type="file" ref={avatarInputRef} className="hidden" onChange={(e) => handleFileUpload(e, 'avatar')} accept="image/*" />
               
               {uploading && (
                 <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center">
-                  <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <Loader2 size={32} className="text-white animate-spin" />
                 </div>
               )}
             </div>
@@ -218,7 +226,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                   onClick={() => setIsEditing(true)}
                   className="flex items-center gap-1.5 text-primary bg-primary/5 hover:bg-primary/10 px-4 py-1.5 rounded-full transition-all text-xs font-bold"
                 >
-                  <span className="material-symbols-outlined text-[16px]">edit</span> Chỉnh sửa
+                  <Edit3 size={14} /> Chỉnh sửa
                 </button>
               ) : (
                 <div className="flex items-center gap-2">
@@ -241,7 +249,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5">
               <div className="flex items-center gap-4 group">
                 <div className="w-10 h-10 rounded-2xl bg-surface-container flex items-center justify-center text-on-surface-variant shrink-0">
-                  <span className="material-symbols-outlined">person</span>
+                  <User size={20} />
                 </div>
                 <div className="flex-1">
                   <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Giới tính</p>
@@ -264,14 +272,13 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
 
               <div className="flex items-center gap-4 group">
                 <div className="w-10 h-10 rounded-2xl bg-surface-container flex items-center justify-center text-on-surface-variant shrink-0">
-                  <span className="material-symbols-outlined">cake</span>
+                  <Cake size={20} />
                 </div>
                 <div className="flex-1">
                   <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Ngày sinh</p>
                   {!isEditing ? (
                     <p className="font-bold text-on-surface">{formData.dataOfBirth || 'Chưa cập nhật'}</p>
                   ) : (
-                    <div className="flex gap-2 mt-1">
                     <div className="flex gap-2 mt-1">
                       <input 
                         type="text"
@@ -316,14 +323,13 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                         placeholder="YYYY"
                       />
                     </div>
-                    </div>
                   )}
                 </div>
               </div>
 
               <div className="flex items-center gap-4 group">
                 <div className="w-10 h-10 rounded-2xl bg-surface-container flex items-center justify-center text-on-surface-variant shrink-0">
-                  <span className="material-symbols-outlined">call</span>
+                  <Phone size={20} />
                 </div>
                 <div className="flex-1">
                   <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Số điện thoại</p>
@@ -343,7 +349,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
 
               <div className="flex items-center gap-4 group">
                 <div className="w-10 h-10 rounded-2xl bg-surface-container flex items-center justify-center text-on-surface-variant shrink-0">
-                  <span className="material-symbols-outlined">location_on</span>
+                  <MapPin size={20} />
                 </div>
                 <div className="flex-1">
                   <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Địa chỉ</p>
@@ -363,7 +369,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
 
               <div className="flex items-center gap-4 group">
                 <div className="w-10 h-10 rounded-2xl bg-surface-container flex items-center justify-center text-on-surface-variant shrink-0">
-                  <span className="material-symbols-outlined">mail</span>
+                  <Mail size={20} />
                 </div>
                 <div className="flex-1">
                   <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Email</p>

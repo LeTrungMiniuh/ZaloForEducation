@@ -4,6 +4,7 @@ import { DynamoDBService } from '../../infrastructure/dynamodb.service';
 import { S3Service } from '../../infrastructure/s3.service';
 import { ChatGateway } from '../chat/chat.gateway';
 import { validateDobStrict } from '../../infrastructure/utils/date.util';
+import { RedisService } from '../../infrastructure/redis.service';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ export class UserService {
     private readonly s3Service: S3Service,
     private readonly db: DynamoDBService,
     private readonly chatGateway: ChatGateway,
+    private readonly redisService: RedisService,
   ) {}
 
   // ── Private helpers ─────────────────────────────────────────────────────────
@@ -56,6 +58,7 @@ export class UserService {
       bio: record.bio ?? '',
       avatarUrl,
       backgroundUrl,
+      status: record.status || 'offline',
       createdAt: record.createdAt ?? '',
       updatedAt: record.updatedAt ?? '',
     };
@@ -68,7 +71,21 @@ export class UserService {
     if (!record) {
       throw new NotFoundException('Không tìm thấy thông tin người dùng.');
     }
-    return { profile: this.normalizeProfile(record) };
+    
+    const profile = this.normalizeProfile(record);
+    
+    // Check real-time presence in Redis (Normalize email to lowercase)
+    const normalizedEmail = email.toLowerCase();
+    const presenceKey = `presence:${normalizedEmail}`;
+    const isOnline = await this.redisService.get(presenceKey);
+    
+    console.log(`[UserService] Presence CHECK for ${normalizedEmail} -> ${isOnline}`);
+    
+    if (isOnline === 'online') {
+      profile.status = 'online' as any;
+    }
+
+    return { profile };
   }
 
   async updateUserProfile(email: string, input: UpdateProfileInput) {

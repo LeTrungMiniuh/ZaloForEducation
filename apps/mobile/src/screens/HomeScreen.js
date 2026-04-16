@@ -23,6 +23,7 @@ import Alert from '../utils/Alert';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../utils/api';
 import SocketService from '../utils/socket';
+import { useChatStore } from '../store/chatStore';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 const REACTION_OPTIONS = ['❤️', '👍', '😂', '😮', '😢', '😡'];
@@ -141,21 +142,30 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
   const insets = useSafeAreaInsets();
   const { user, profileVersion, checkSessionStatus } = useAuth();
 
+  // ZUSTAND STORE
+  const {
+    conversations,
+    activeConvId,
+    messages,
+    isLoadingMessages,
+    fetchConversations,
+    setActiveConversation,
+    sendMessageOptimistic,
+    addMessage,
+    updateMessage,
+    setConversations
+  } = useChatStore();
+
   const [activeTab, setActiveTab] = useState(initialTab || 'messages');
-  const [conversations, setConversations] = useState([]);
+  const [inputText, setInputText] = useState('');
+  const [attachments, setAttachments] = useState([]);
+  const [sending, setSending] = useState(false);
   const [friendships, setFriendships] = useState([]);
-  const [loadingConversations, setLoadingConversations] = useState(false);
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [friendSearchEmail, setFriendSearchEmail] = useState('');
   const [friendSearchLoading, setFriendSearchLoading] = useState(false);
   const [friendSearchResult, setFriendSearchResult] = useState(null);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
-
-  const [selectedChat, setSelectedChat] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [inputText, setInputText] = useState('');
-  const [attachments, setAttachments] = useState([]);
-  const [sending, setSending] = useState(false);
 
   const [conversationPreviewMap, setConversationPreviewMap] = useState({});
   const [messageReactions, setMessageReactions] = useState({});
@@ -165,6 +175,9 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
 
   const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
+
+  // Derived State
+  const selectedChat = conversations.find(c => c.id === activeConvId);
 
   useEffect(() => {
     if (checkSessionStatus) checkSessionStatus();
@@ -400,10 +413,11 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
 
   const handleSelectChat = async (chat) => {
     const normalizedChat = normalizeConversation(chat);
-    setSelectedChat(normalizedChat);
+    if (!normalizedChat) return;
+
+    setActiveConversation(normalizedChat.id);
     setReplyTarget(null);
     closeMessageAction();
-    if (!normalizedChat) return;
 
     if (normalizedChat.type === 'direct' && normalizedChat.partner) {
       loadUserProfile(normalizedChat.partner);
@@ -412,26 +426,6 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
     if (SocketService.socket) {
       SocketService.socket.emit('join_room', { convId: normalizedChat.id });
     }
-
-    const res = await chatGet(`/conversations/${encodeURIComponent(normalizedChat.id)}/messages`);
-    const loadedMessages = res?.messages || res?.data?.messages || [];
-    setMessages(loadedMessages);
-
-    const last = loadedMessages[loadedMessages.length - 1];
-    if (last) {
-      setConversationPreviewMap((prev) => ({
-        ...prev,
-        [normalizedChat.id]: getMessagePreview(last),
-      }));
-    }
-
-    const seedReactions = {};
-    loadedMessages.forEach((message) => {
-      if (message.reactions && typeof message.reactions === 'object') {
-        seedReactions[message.id] = message.reactions;
-      }
-    });
-    setMessageReactions(seedReactions);
   };
 
   const handleOpenDirectChat = async (friendEmail) => {
@@ -439,23 +433,8 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
     const convId = directRes?.id || directRes?.data?.id;
     if (!convId) return;
 
-    const existing = conversations.find((item) => item.id === convId);
-    const directChat = normalizeConversation(
-      existing || {
-        id: convId,
-        name: getDisplayName(friendEmail),
-        avatar: getDisplayAvatar(friendEmail),
-        partner: friendEmail,
-        type: 'direct',
-      },
-    );
-
-    if (!existing) {
-      setConversations((prev) => [directChat, ...prev]);
-    }
-
     setActiveTab('messages');
-    await handleSelectChat(directChat);
+    handleSelectChat({ id: convId, type: 'direct', partner: friendEmail });
   };
 
   const getReactionData = (message) => messageReactions[message.id] || {};
@@ -489,7 +468,7 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
     );
 
     const updatedMessage = res?.data || res;
-    setMessages((prev) => prev.map((item) => (item.id === messageId ? updatedMessage : item)));
+    updateMessage(messageId, updatedMessage);
     setMessageReactions((prev) => ({ ...prev, [messageId]: updatedMessage.reactions || {} }));
 
     if (SocketService.socket && updatedMessage) {
@@ -597,76 +576,66 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
     setSending(true);
     try {
       const trimmedInput = inputText.trim();
-      const uploadedAttachments = [];
-
-      for (const item of attachments) {
-        if (item.file) {
-          const uploadRes = await chatUpload(item.file);
-          if (!uploadRes.ok) throw new Error('UPLOAD_FAILED');
-          uploadedAttachments.push(uploadRes.data);
-        } else {
-          uploadedAttachments.push(item);
-        }
-      }
-
-      const imageAttachments = uploadedAttachments.filter((item) => String(item.mimeType || '').startsWith('image/'));
-      const fileAttachments = uploadedAttachments.filter((item) => !String(item.mimeType || '').startsWith('image/'));
-
-      const payload = {
-        content: trimmedInput || (imageAttachments.length > 0 ? '[Hình ảnh]' : '[Tệp đính kèm]'),
-        media: imageAttachments.map((item) => ({
-          name: item.name,
-          fileName: item.name,
-          mimeType: item.mimeType,
-          fileType: item.mimeType,
-          size: item.size,
-          fileUrl: item.fileUrl || item.dataUrl,
-          dataUrl: item.fileUrl || item.dataUrl,
-        })),
-        files: fileAttachments.map((item) => ({
-          name: item.name,
-          fileName: item.name,
-          mimeType: item.mimeType,
-          fileType: item.mimeType,
-          size: item.size,
-          fileUrl: item.fileUrl || item.dataUrl,
-          dataUrl: item.fileUrl || item.dataUrl,
-        })),
-        replyTo: replyTarget || undefined,
-      };
-
-      const res = await chatPost(`/conversations/${encodeURIComponent(selectedChat.id)}/messages`, payload);
-      const createdMessage = res?.data || res;
-
-      if (createdMessage?.id) {
-        setMessages((prev) => {
-          const existed = prev.some((item) => item.id === createdMessage.id);
-          return existed ? prev : [...prev, createdMessage];
-        });
-
-        if (SocketService.socket) {
-          SocketService.socket.emit('sendMessage', {
-            convId: selectedChat.id,
-            message: {
-              ...createdMessage,
-              conversationId: createdMessage.conversationId || selectedChat.id,
-            },
-          });
-        }
-      }
-
-      upsertConversationLastMessage(selectedChat.id, getMessagePreview(createdMessage));
-      setConversationPreviewMap((prev) => ({
-        ...prev,
-        [selectedChat.id]: getMessagePreview(createdMessage),
-      }));
-
+      const currentAttachments = [...attachments];
+      
+      // Reset UI early
       setInputText('');
       setAttachments([]);
       setReplyTarget(null);
+
+      if (currentAttachments.length > 0) {
+        // --- MULTIMEDIA FLOW ---
+        const { compressImage } = await import('../utils/imageUtils');
+        
+        const uploadedAttachments = await Promise.all(
+          currentAttachments.map(async (item) => {
+            let fileToUpload = item.file;
+            
+            // Client-side Compression for Images
+            if (fileToUpload.type?.startsWith('image/')) {
+              try {
+                const compressed = await compressImage(fileToUpload.uri);
+                fileToUpload = {
+                  ...fileToUpload,
+                  uri: compressed.uri,
+                };
+              } catch (e) {
+                console.warn('Compression failed', e);
+              }
+            }
+            
+            const uploadRes = await chatUpload(fileToUpload);
+            if (!uploadRes.ok) throw new Error('UPLOAD_FAILED');
+            return uploadRes.data;
+          })
+        );
+
+        const imageAttachments = uploadedAttachments.filter((f) => f.fileType?.startsWith('image/') || f.mimeType?.startsWith('image/'));
+        const fileAttachments = uploadedAttachments.filter((f) => !imageAttachments.includes(f));
+
+        const res = await chatPost(`/conversations/${selectedChat.id}/messages`, {
+          content: trimmedInput || (imageAttachments.length > 0 ? '[Hình ảnh]' : '[Tệp đính kèm]'),
+          media: imageAttachments,
+          files: fileAttachments,
+          replyTo: replyTarget || undefined,
+        });
+
+        addMessage(res.data);
+      } else {
+        // --- OPTIMISTIC TEXT FLOW ---
+        await sendMessageOptimistic(selectedChat.id, user.email, trimmedInput);
+      }
+      
+      // Update Preview
+      setConversationPreviewMap((prev) => ({
+        ...prev,
+        [selectedChat.id]: trimmedInput || '[Đa phương tiện]',
+      }));
+      upsertConversationLastMessage(selectedChat.id, trimmedInput || '[Đa phương tiện]');
+
     } catch (err) {
       console.error('Send message failed', err);
-      Alert.alert('Lỗi', 'Không gửi được tin nhắn kèm tệp. Vui lòng thử lại.');
+      Alert.alert('Lỗi', 'Không gửi được tin nhắn. Vui lòng thử lại.');
     } finally {
       setSending(false);
     }
@@ -709,7 +678,7 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
 
   useEffect(() => {
     fetchConversations();
-  }, [user?.email]);
+  }, [user?.email, fetchConversations]);
 
   useEffect(() => {
     if (activeTab === 'friends') {
@@ -742,35 +711,35 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
 
     const handleReceiveMessage = (msg) => {
       if (!msg?.id) return;
+      
+      // Zustand handles duplication, sorting, and caching
+      addMessage(msg);
+
       const incomingConvId = msg.conversationId || msg.convId;
-      if (!incomingConvId) return;
-
-      if (selectedChat?.id === incomingConvId) {
-        setMessages((prev) => {
-          const existed = prev.some((item) => item.id === msg.id);
-          if (existed) {
-            return prev.map((item) => (item.id === msg.id ? msg : item));
-          }
-          return [...prev, msg];
-        });
+      if (incomingConvId) {
+        setConversationPreviewMap((prev) => ({
+          ...prev,
+          [incomingConvId]: getMessagePreview(msg),
+        }));
+        upsertConversationLastMessage(incomingConvId, getMessagePreview(msg));
       }
+    };
 
-      if (msg.reactions && typeof msg.reactions === 'object') {
-        setMessageReactions((prev) => ({ ...prev, [msg.id]: msg.reactions }));
-      }
-
-      setConversationPreviewMap((prev) => ({
-        ...prev,
-        [incomingConvId]: getMessagePreview(msg),
-      }));
-      upsertConversationLastMessage(incomingConvId, getMessagePreview(msg));
+    const handlePresenceUpdate = (data) => {
+      setUserProfiles(prev => {
+        if (!prev[data.email]) return prev;
+        return { ...prev, [data.email]: { ...prev[data.email], status: data.status } };
+      });
     };
 
     socket.on('receiveMessage', handleReceiveMessage);
+    socket.on('presence_update', handlePresenceUpdate);
+
     return () => {
       socket.off('receiveMessage', handleReceiveMessage);
+      socket.off('presence_update', handlePresenceUpdate);
     };
-  }, [selectedChat?.id, user?.email]);
+  }, [socket, addMessage]);
 
   useEffect(() => {
     if (messagesScrollRef.current) {
