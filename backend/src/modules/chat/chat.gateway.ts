@@ -64,8 +64,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { convId: string },
     @ConnectedSocket() client: Socket,
   ): void {
-    client.join(data.convId);
-    console.log(`Client ${client.id} joined room: ${data.convId}`);
+    if (!data.convId) return;
+    const room = data.convId.toLowerCase(); // Chuẩn hóa room
+    client.join(room);
+    this.logger.log(`[SOCKET] Client ${client.id} joined room: ${room}`);
   }
 
   @SubscribeMessage("join_identity")
@@ -85,6 +87,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (deviceId) {
         client.join(deviceId);
       }
+
+      this.logger.log(`[SOCKET] User ${normalizedEmail} identified. Joined rooms: [${userRoom}], [${deviceId || 'no-device'}]`);
 
       // Update Presence to Online
       const presenceKey = `presence:${normalizedEmail}`;
@@ -130,7 +134,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // Gửi thông báo đăng xuất tới thiết bị đích (Đã gia cố để đảm bảo nhận được ở mọi màn hình)
   notifyForceLogout(email: string, targetDeviceId: string, reason?: string) {
-    const userRoom = `user#${email}`;
+    const normalizedEmail = email.toLowerCase();
+    const userRoom = `user#${normalizedEmail}`;
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
 

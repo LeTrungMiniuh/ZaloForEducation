@@ -124,15 +124,20 @@ export class ChatController {
       body.replyTo,
     );
 
+    const normalizedConvId = convId.toLowerCase();
+
     // 1. BROADCAST REAL-TIME VIA SOCKET
-    this.chatGateway.server.to(convId).emit('receiveMessage', res);
+    this.chatGateway.server.to(normalizedConvId).emit('receiveMessage', res);
+    console.log(`[SOCKET] Broadcasted to room: ${normalizedConvId}`);
 
     // 2. BROADCAST REAL-TIME TO ALL MEMBERS' PERSONAL ROOMS (For conversation list updates)
     const convMetadata = await this.chatService.getConversationMetadata(convId);
     if (convMetadata && convMetadata.members) {
       for (const member of convMetadata.members) {
         // Emit to user#email room so all their devices update the "tab" preview
-        this.chatGateway.server.to(`user#${member.toLowerCase()}`).emit('receiveMessage', res);
+        const userRoom = `user#${member.toLowerCase()}`;
+        this.chatGateway.server.to(userRoom).emit('receiveMessage', res);
+        console.log(`[SOCKET] Broadcasted to user room: ${userRoom}`);
       }
     }
 

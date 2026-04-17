@@ -43,9 +43,10 @@ export class CallGateway {
     @ConnectedSocket() client: Socket,
   ) {
     if (!data?.convId || !data?.toEmail) return;
-    this.logger.log(`[Invite] ${data.fromEmail} → ${data.toEmail} (${data.callType})`);
+    const targetRoom = `user#${data.toEmail.toLowerCase()}`;
+    this.logger.log(`[Invite] ${data.fromEmail} → ${data.toEmail} (${data.callType}) - Broadcasting to: ${targetRoom}`);
 
-    this.server.to(`user#${data.toEmail}`).emit('call:incoming', {
+    this.server.to(targetRoom).emit('call:incoming', {
       convId: data.convId,
       fromEmail: data.fromEmail,
       callerProfile: data.callerProfile,
@@ -62,8 +63,9 @@ export class CallGateway {
     @MessageBody() data: { convId: string; toEmail: string },
   ) {
     if (!data?.convId || !data?.toEmail) return;
-    this.logger.log(`[PeerJoined] notifying ${data.toEmail}`);
-    this.server.to(`user#${data.toEmail}`).emit('call:peer_joined', { convId: data.convId });
+    const targetRoom = `user#${data.toEmail.toLowerCase()}`;
+    this.logger.log(`[PeerJoined] notifying ${data.toEmail} at room: ${targetRoom}`);
+    this.server.to(targetRoom).emit('call:peer_joined', { convId: data.convId });
   }
 
   /**
@@ -77,9 +79,12 @@ export class CallGateway {
     if (!data?.convId) return;
     this.logger.log(`[Hangup] ${data.convId}`);
     if (data.toEmail) {
-      this.server.to(`user#${data.toEmail}`).emit('call:hangup', { convId: data.convId });
+      const targetRoom = `user#${data.toEmail.toLowerCase()}`;
+      this.logger.log(`[Hangup] emitting to room: ${targetRoom}`);
+      this.server.to(targetRoom).emit('call:hangup', { convId: data.convId });
     } else {
-      // Fallback broadcast (không nên dùng)
+      // Fallback broadcast
+      this.logger.warn(`[Hangup] No toEmail provided for hangup. Broadcasting to all (fallback).`);
       this.server.emit('call:hangup', { convId: data.convId });
     }
   }
@@ -92,8 +97,9 @@ export class CallGateway {
     @MessageBody() data: { convId: string; toEmail: string; fromProfile: any },
   ) {
     if (!data?.convId || !data?.toEmail) return;
-    this.logger.log(`[UpgradeRequest] → ${data.toEmail}`);
-    this.server.to(`user#${data.toEmail}`).emit('call:upgrade_request', {
+    const targetRoom = `user#${data.toEmail.toLowerCase()}`;
+    this.logger.log(`[UpgradeRequest] → ${data.toEmail} - Broadcasting to: ${targetRoom}`);
+    this.server.to(targetRoom).emit('call:upgrade_request', {
       convId: data.convId,
       fromProfile: data.fromProfile,
     });
@@ -105,8 +111,9 @@ export class CallGateway {
     @MessageBody() data: { convId: string; toEmail: string },
   ) {
     if (!data?.convId || !data?.toEmail) return;
-    this.logger.log(`[UpgradeAccepted] → ${data.toEmail}`);
-    this.server.to(`user#${data.toEmail}`).emit('call:upgrade_accepted', { convId: data.convId });
+    const targetRoom = `user#${data.toEmail.toLowerCase()}`;
+    this.logger.log(`[UpgradeAccepted] → ${data.toEmail} - Broadcasting to: ${targetRoom}`);
+    this.server.to(targetRoom).emit('call:upgrade_accepted', { convId: data.convId });
   }
 
   /** B → A: Từ chối upgrade video */
@@ -115,7 +122,8 @@ export class CallGateway {
     @MessageBody() data: { convId: string; toEmail: string },
   ) {
     if (!data?.convId || !data?.toEmail) return;
-    this.logger.log(`[UpgradeDeclined] → ${data.toEmail}`);
-    this.server.to(`user#${data.toEmail}`).emit('call:upgrade_declined', { convId: data.convId });
+    const targetRoom = `user#${data.toEmail.toLowerCase()}`;
+    this.logger.log(`[UpgradeDeclined] → ${data.toEmail} - Broadcasting to: ${targetRoom}`);
+    this.server.to(targetRoom).emit('call:upgrade_declined', { convId: data.convId });
   }
 }
