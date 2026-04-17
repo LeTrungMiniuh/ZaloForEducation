@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useChatStore } from '../store/chatStore';
+import { useCallStore } from '../store/callStore';
+import { leaveCurrentSession } from './useChime';
 import { getMessagePreview } from '../utils/chatUtils';
 
 export const useSocketListeners = () => {
@@ -107,7 +109,61 @@ export const useSocketListeners = () => {
       ));
     };
 
-    // Socket listeners
+    // ── Call Events ──────────────────────────────────────────────────────────
+    const handleCallIncoming = (data: any) => {
+      console.log('[Socket] call:incoming', data);
+      useCallStore.getState().setIncomingCall(
+        data.convId,
+        data.callerProfile, // This goes into 'peer' parameter
+        data.callType || 'audio',
+        data.fromEmail,
+      );
+    };
+
+    const handleCallHangup = async (data: any) => {
+      const currentConvId = useCallStore.getState().conversationId;
+      if (!data?.convId || data.convId === currentConvId) {
+        console.log('[Socket] call:hangup — releasing hardware');
+        await leaveCurrentSession();
+        useCallStore.getState().resetCall();
+      }
+    };
+
+    const handleCallPeerJoined = (data: any) => {
+      const currentConvId = useCallStore.getState().conversationId;
+      if (!data?.convId || data.convId === currentConvId) {
+        console.log('[Socket] call:peer_joined');
+        useCallStore.getState().setPeerJoined(true);
+      }
+    };
+
+    const handleUpgradeRequest = (data: any) => {
+      const currentConvId = useCallStore.getState().conversationId;
+      if (!data?.convId || data.convId === currentConvId) {
+        useCallStore.getState().setIncomingUpgradeRequest(true);
+        useCallStore.getState().setUpgradeRequesterEmail(data.fromProfile?.email ?? null);
+      }
+    };
+
+    const handleUpgradeAccepted = async (data: any) => {
+      const currentConvId = useCallStore.getState().conversationId;
+      if (!data?.convId || data.convId === currentConvId) {
+        const { toggleCamera } = await import('./useChime');
+        useCallStore.getState().setCallType('video');
+        useCallStore.getState().setCameraOn(true);
+        useCallStore.getState().setUpgradeRequestPending(false);
+        await toggleCamera(true);
+      }
+    };
+
+    const handleUpgradeDeclined = (data: any) => {
+      const currentConvId = useCallStore.getState().conversationId;
+      if (!data?.convId || data.convId === currentConvId) {
+        useCallStore.getState().setUpgradeRequestPending(false);
+      }
+    };
+
+    // Socket listeners — Chat
     socket.on('receiveMessage', handleReceiveMessage);
     socket.on('history_cleared', handleHistoryCleared);
     socket.on('conversation_marked_read', handleConversationRead);
@@ -116,6 +172,13 @@ export const useSocketListeners = () => {
     socket.on('message_recalled', handleMessageRecalled);
     socket.on('message_pinned', handleMessagePinned);
     socket.on('PIN_UPDATE', handlePinUpdate);
+    // Socket listeners — Call
+    socket.on('call:incoming', handleCallIncoming);
+    socket.on('call:hangup', handleCallHangup);
+    socket.on('call:peer_joined', handleCallPeerJoined);
+    socket.on('call:upgrade_request', handleUpgradeRequest);
+    socket.on('call:upgrade_accepted', handleUpgradeAccepted);
+    socket.on('call:upgrade_declined', handleUpgradeDeclined);
 
     return () => {
       socket.off('receiveMessage', handleReceiveMessage);
@@ -126,6 +189,12 @@ export const useSocketListeners = () => {
       socket.off('message_recalled', handleMessageRecalled);
       socket.off('message_pinned', handleMessagePinned);
       socket.off('PIN_UPDATE', handlePinUpdate);
+      socket.off('call:incoming', handleCallIncoming);
+      socket.off('call:hangup', handleCallHangup);
+      socket.off('call:peer_joined', handleCallPeerJoined);
+      socket.off('call:upgrade_request', handleUpgradeRequest);
+      socket.off('call:upgrade_accepted', handleUpgradeAccepted);
+      socket.off('call:upgrade_declined', handleUpgradeDeclined);
     };
   }, [socket, user, activeConvId, addMessage, markAsRead, setLocalRead, localClearHistory, setUserProfiles, updateMessage]);
 };

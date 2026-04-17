@@ -15,6 +15,7 @@
     "kill-port": "powershell -Command \"Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }\""
   },
   "dependencies": {
+    "@aws-sdk/client-chime-sdk-meetings": "^3.1031.0",
     "@aws-sdk/client-cognito-identity-provider": "^3.550.0",
     "@aws-sdk/client-dynamodb": "^3.550.0",
     "@aws-sdk/lib-dynamodb": "^3.1028.0",

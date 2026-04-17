@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import IncomingCallModal from './components/call/IncomingCallModal';
+import CallOverlay from './components/call/CallOverlay';
+import ChimeSessionManager from './components/call/ChimeSessionManager';
 
 import SplashScreen from './components/SplashScreen';
 import LoginPage from './pages/LoginPage';
@@ -77,6 +80,12 @@ const AppContent: React.FC = () => {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>
+
+      {/* Call UI — Luôn có trong DOM để Chime audio/video có thể bind bất cứ lúc nào */}
+      <ChimeSessionManager />
+      <IncomingCallModal />
+      <CallOverlay />
+      <audio id="chime-audio" autoPlay className="hidden" />
     </>
   );
 }

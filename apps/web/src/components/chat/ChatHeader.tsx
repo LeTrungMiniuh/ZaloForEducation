@@ -2,6 +2,7 @@ import React from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import { getDisplayName, getDisplayAvatar } from '../../utils/chatUtils';
+import { useCallActions } from '../../hooks/useCallActions';
 import { 
   Search, 
   Video, 
@@ -21,6 +22,7 @@ interface ChatHeaderProps {
 const ChatHeader: React.FC<ChatHeaderProps> = ({ onToggleInfo, isInfoOpen }) => {
   const { user } = useAuth();
   const { conversations, activeConvId, userProfiles, loadUserProfile } = useChatStore();
+  const { startCall } = useCallActions();
   
   const activeChat = conversations.find(c => c.id === activeConvId);
   if (!activeChat) return null;
@@ -68,8 +70,22 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({ onToggleInfo, isInfoOpen }) => 
         
         <div className="flex items-center gap-1.5">
           <button className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary"><Search size={20} /></button>
-          <button className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary"><Video size={20} /></button>
-          <button className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary"><Phone size={20} /></button>
+          <button
+            onClick={() => startCall('video')}
+            disabled={activeChat.type !== 'direct'}
+            title={activeChat.type !== 'direct' ? 'Chỉ hỗ trợ gọi 1:1' : 'Gọi video'}
+            className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <Video size={20} />
+          </button>
+          <button
+            onClick={() => startCall('audio')}
+            disabled={activeChat.type !== 'direct'}
+            title={activeChat.type !== 'direct' ? 'Chỉ hỗ trợ gọi 1:1' : 'Gọi thoại'}
+            className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <Phone size={20} />
+          </button>
           <div className="w-px h-6 bg-outline-variant/20 mx-1" />
           <button
             onClick={onToggleInfo}
