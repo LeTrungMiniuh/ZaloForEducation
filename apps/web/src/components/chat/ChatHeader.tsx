@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import { getDisplayName, getDisplayAvatar } from '../../utils/chatUtils';
@@ -6,9 +7,7 @@ import {
   Search, 
   Video, 
   Phone, 
-  PanelRightOpen, 
-  Pin, 
-  X 
+  PanelRightOpen
 } from 'lucide-react';
 
 import PinnedHeader from './PinnedHeader';
@@ -19,6 +18,7 @@ interface ChatHeaderProps {
 }
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({ onToggleInfo, isInfoOpen }) => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { conversations, activeConvId, userProfiles, loadUserProfile } = useChatStore();
   
@@ -45,14 +45,23 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({ onToggleInfo, isInfoOpen }) => 
 
   const isOnline = partnerEmail ? userProfiles[partnerEmail]?.status === 'online' : false;
 
+  const handleOpenProfile = () => {
+    if (!partnerEmail) return;
+    navigate(`/profile?email=${encodeURIComponent(partnerEmail)}`);
+  };
+
   return (
     <>
-      <header className="h-16 flex items-center justify-between px-6 bg-white/90 backdrop-blur-xl border-b border-outline-variant/15 z-20 shrink-0">
+      <header className="h-16 flex items-center justify-between px-6 bg-white/90 dark:bg-surface-container/90 backdrop-blur-xl border-b border-outline-variant/15 dark:border-outline-variant/30 z-20 shrink-0">
         <div className="flex items-center gap-4">
-          <div className="relative group cursor-pointer">
-            <img className="w-11 h-11 rounded-full object-cover bg-surface-container ring-2 ring-white shadow-sm group-hover:ring-primary/20 transition-all" alt="" src={chatAvatar} />
+          <div
+            className={`relative group ${partnerEmail ? 'cursor-pointer' : ''}`}
+            onClick={handleOpenProfile}
+            title={partnerEmail ? 'Xem trang cá nhân' : undefined}
+          >
+            <img className="w-11 h-11 rounded-full object-cover bg-surface-container ring-2 ring-white dark:ring-surface-container-high shadow-sm group-hover:ring-primary/20 transition-all" alt="" src={chatAvatar} />
             {isOnline && (
-              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full shadow-sm animate-pulse"></div>
+              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-surface-container rounded-full shadow-sm animate-pulse"></div>
             )}
           </div>
           <div className="flex flex-col">

@@ -175,23 +175,7 @@ export class MessageService {
         if (reactions[payload.emoji].length === 0)
           delete reactions[payload.emoji];
       } else {
-        const currentEmoji = Object.entries(reactions).find(([, users]) =>
-          users.includes(userEmail),
-        )?.[0];
-
-        const previousEmoji = payload.previousEmoji || currentEmoji;
-        if (previousEmoji && previousEmoji !== payload.emoji) {
-          const prevUsers = reactions[previousEmoji] || [];
-          reactions[previousEmoji] = prevUsers.filter(
-            (email) => email !== userEmail,
-          );
-          if (reactions[previousEmoji].length === 0)
-            delete reactions[previousEmoji];
-        }
-
-        reactions[payload.emoji] = Array.from(
-          new Set([...(reactions[payload.emoji] || []), userEmail]),
-        );
+        reactions[payload.emoji] = [...(reactions[payload.emoji] || []), userEmail];
       }
 
       await this.db.docClient.send(

@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    Keyboard,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -14,6 +13,7 @@ import {
     TextInput,
     TouchableOpacity,
     TouchableWithoutFeedback,
+    useWindowDimensions,
     View
 } from 'react-native';
 import { Colors, Shadows, Typography } from '../constants/Theme';
@@ -37,67 +37,85 @@ const DEFAULT_SETTINGS = {
 
 const SECTION_SPACING = 14;
 
-function SettingRow({ icon, title, subtitle, rightElement, onPress, divider = false }) {
+function SettingRow({ icon, title, subtitle, rightElement, onPress, divider = false, compact = false }) {
   return (
     <TouchableOpacity
       activeOpacity={onPress ? 0.8 : 1}
       onPress={onPress}
       disabled={!onPress}
-      style={[styles.row, divider && styles.rowDivider]}
+      style={[
+        styles.row,
+        compact && styles.rowCompact,
+        divider && styles.rowDivider,
+      ]}
     >
-      <View style={styles.rowIconBox}>
-        <Text style={styles.rowIcon}>{icon}</Text>
+      <View style={[styles.rowIconBox, compact && styles.rowIconBoxCompact]}>
+        <Text style={[styles.rowIcon, compact && styles.rowIconCompact]}>{icon}</Text>
       </View>
       <View style={styles.rowBody}>
-        <Text style={styles.rowTitle}>{title}</Text>
-        {!!subtitle && <Text style={styles.rowSubtitle}>{subtitle}</Text>}
+        <Text style={[styles.rowTitle, compact && styles.rowTitleCompact]}>{title}</Text>
+        {!!subtitle && <Text style={[styles.rowSubtitle, compact && styles.rowSubtitleCompact]}>{subtitle}</Text>}
       </View>
       <View style={styles.rowRight}>{rightElement}</View>
     </TouchableOpacity>
   );
 }
 
-function Section({ title, subtitle, children }) {
+function Section({ title, subtitle, children, compact = false, cardRadius = 22 }) {
   return (
-    <View style={styles.sectionCard}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+    <View style={[styles.sectionCard, { borderRadius: cardRadius }]}> 
+      <View style={[styles.sectionHeader, compact && styles.sectionHeaderCompact]}>
+        <Text style={[styles.sectionTitle, compact && styles.sectionTitleCompact]}>{title}</Text>
+        {!!subtitle && <Text style={[styles.sectionSubtitle, compact && styles.sectionSubtitleCompact]}>{subtitle}</Text>}
       </View>
       {children}
     </View>
   );
 }
 
-function Chip({ label, active, onPress }) {
+function Chip({ label, active, onPress, compact = false }) {
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.chip, active && styles.chipActive]}>
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.chip, compact && styles.chipCompact, active && styles.chipActive]}>
+      <Text style={[styles.chipText, compact && styles.chipTextCompact, active && styles.chipTextActive]}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-function PillToggle({ value, onValueChange }) {
+function PillToggle({ value, onValueChange, compact = false }) {
   return (
     <TouchableOpacity
       activeOpacity={0.9}
       onPress={onValueChange}
-      style={[styles.pillToggle, value ? styles.pillToggleOn : styles.pillToggleOff]}
+      style={[
+        styles.pillToggle,
+        compact && styles.pillToggleCompact,
+        value ? styles.pillToggleOn : styles.pillToggleOff,
+      ]}
       accessibilityRole="switch"
       accessibilityState={{ checked: value }}
     >
-      <View style={[styles.pillToggleKnob, value ? styles.pillToggleKnobOn : styles.pillToggleKnobOff]} />
+      <View
+        style={[
+          styles.pillToggleKnob,
+          compact && styles.pillToggleKnobCompact,
+          value ? (compact ? styles.pillToggleKnobOnCompact : styles.pillToggleKnobOn) : styles.pillToggleKnobOff,
+        ]}
+      />
     </TouchableOpacity>
   );
 }
 
 export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout }) {
+  const { width } = useWindowDimensions();
   const storage = useMemo(() => AsyncStorage.default || AsyncStorage, []);
   const { requestLockAccount, confirmLockAccount, requestDeleteAccount, confirmDeleteAccount } = useAuth();
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [lockModalVisible, setLockModalVisible] = useState(false);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const isCompact = width < 380;
+  const horizontalPadding = width < 360 ? 12 : 16;
+  const cardRadius = isCompact ? 18 : 22;
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -183,26 +201,41 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
         </View>
       </LinearGradient>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.profileSummary}>
-          <View style={styles.summaryBadge}>
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.scrollContent, { paddingHorizontal: horizontalPadding }]}
+      >
+        <View style={[styles.profileSummary, { borderRadius: cardRadius, padding: isCompact ? 12 : 16 }]}>
+          <View
+            style={[
+              styles.summaryBadge,
+              {
+                width: isCompact ? 48 : 56,
+                height: isCompact ? 48 : 56,
+                borderRadius: isCompact ? 14 : 18,
+                marginRight: isCompact ? 10 : 12,
+              },
+            ]}
+          >
             <Text style={styles.summaryIcon}>settings</Text>
           </View>
           <View style={styles.summaryTextWrap}>
-            <Text style={styles.summaryTitle}>Tùy chỉnh trải nghiệm mobile</Text>
-            <Text style={styles.summaryText}>
+            <Text style={[styles.summaryTitle, { fontSize: isCompact ? 15 : 17 }]}>Tùy chỉnh trải nghiệm mobile</Text>
+            <Text style={[styles.summaryText, { fontSize: isCompact ? 12 : 13, lineHeight: isCompact ? 17 : 19 }]}>
               Các thay đổi ở đây được lưu trên thiết bị và đồng bộ theo tài khoản khi có hỗ trợ backend.
             </Text>
           </View>
         </View>
 
-        <Section title="Account and security" subtitle="Thiết bị, mật khẩu và bảo mật">
+        <Section title="Account and security" subtitle="Thiết bị, mật khẩu và bảo mật" compact={isCompact} cardRadius={cardRadius}>
           <SettingRow
             icon="security"
             title="Quản lý thiết bị đăng nhập"
             subtitle="Xem và đăng xuất phiên đang hoạt động"
             rightElement={<Text style={styles.chevron}>chevron_right</Text>}
             onPress={() => onNavigate('sessions')}
+            compact={isCompact}
           />
           <SettingRow
             icon="lock"
@@ -211,6 +244,7 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             rightElement={<Text style={styles.chevron}>chevron_right</Text>}
             onPress={() => onNavigate('change-password')} 
             divider
+            compact={isCompact}
           />
           <SettingRow
             icon="verified_user"
@@ -220,8 +254,10 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
               <PillToggle
                 value={settings.lockApp}
                 onValueChange={() => toggleSwitch('lockApp')}
+                compact={isCompact}
               />
             }
+            compact={isCompact}
           />
           <SettingRow
             icon="lock_person"
@@ -230,6 +266,7 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             rightElement={<Text style={styles.chevronDanger}>chevron_right</Text>}
             onPress={() => setLockModalVisible(true)}
             divider
+            compact={isCompact}
           />
           <SettingRow
             icon="delete_forever"
@@ -237,10 +274,11 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             subtitle="Xóa vĩnh viễn toàn bộ dữ liệu"
             rightElement={<Text style={styles.chevronDanger}>chevron_right</Text>}
             onPress={() => setDeleteModalVisible(true)}
+            compact={isCompact}
           />
         </Section>
 
-        <Section title="Privacy" subtitle="Ai nhìn thấy dữ liệu cá nhân của bạn">
+        <Section title="Privacy" subtitle="Ai nhìn thấy dữ liệu cá nhân của bạn" compact={isCompact} cardRadius={cardRadius}>
           <SettingRow
             icon="visibility"
             title="Trạng thái hoạt động"
@@ -249,8 +287,10 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
               <PillToggle
                 value={settings.showOnlineStatus}
                 onValueChange={() => toggleSwitch('showOnlineStatus')}
+                compact={isCompact}
               />
             }
+            compact={isCompact}
           />
           <SettingRow
             icon="contact_phone"
@@ -260,9 +300,11 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
               <PillToggle
                 value={settings.allowSearchByPhone}
                 onValueChange={() => toggleSwitch('allowSearchByPhone')}
+                compact={isCompact}
               />
             }
             divider
+            compact={isCompact}
           />
           <SettingRow
             icon="badge"
@@ -272,12 +314,14 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
               <PillToggle
                 value={settings.syncContacts}
                 onValueChange={() => toggleSwitch('syncContacts')}
+                compact={isCompact}
               />
             }
+            compact={isCompact}
           />
         </Section>
 
-        <Section title="Notifications" subtitle="Âm thanh, rung và nhắc nhở">
+        <Section title="Notifications" subtitle="Âm thanh, rung và nhắc nhở" compact={isCompact} cardRadius={cardRadius}>
           <SettingRow
             icon="notifications"
             title="Thông báo"
@@ -286,8 +330,10 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
               <PillToggle
                 value={settings.notifications}
                 onValueChange={() => toggleSwitch('notifications')}
+                compact={isCompact}
               />
             }
+            compact={isCompact}
           />
           <SettingRow
             icon="message"
@@ -297,9 +343,11 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
               <PillToggle
                 value={settings.messageSound}
                 onValueChange={() => toggleSwitch('messageSound')}
+                compact={isCompact}
               />
             }
             divider
+            compact={isCompact}
           />
           <SettingRow
             icon="phone_in_talk"
@@ -309,12 +357,14 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
               <PillToggle
                 value={settings.callVibrate}
                 onValueChange={() => toggleSwitch('callVibrate')}
+                compact={isCompact}
               />
             }
+            compact={isCompact}
           />
         </Section>
 
-        <Section title="Messages" subtitle="Tin nhắn, media và lưu trữ">
+        <Section title="Messages" subtitle="Tin nhắn, media và lưu trữ" compact={isCompact} cardRadius={cardRadius}>
           <SettingRow
             icon="forum"
             title="Lưu media về máy"
@@ -323,8 +373,10 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
               <PillToggle
                 value={settings.saveMediaToDevice}
                 onValueChange={() => toggleSwitch('saveMediaToDevice')}
+                compact={isCompact}
               />
             }
+            compact={isCompact}
           />
           <SettingRow
             icon="backup"
@@ -333,6 +385,7 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             rightElement={<Text style={styles.chevron}>chevron_right</Text>}
             onPress={handleRestore}
             divider
+            compact={isCompact}
           />
           <SettingRow
             icon="delete_forever"
@@ -340,31 +393,33 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             subtitle="Xóa cài đặt lưu trên thiết bị"
             rightElement={<Text style={styles.chevronDanger}>chevron_right</Text>}
             onPress={handleClearLocalData}
+            compact={isCompact}
           />
         </Section>
 
-        <Section title="Theme and language" subtitle="Giao diện hiển thị">
-          <Text style={styles.optionLabel}>Theme</Text>
+        <Section title="Theme and language" subtitle="Giao diện hiển thị" compact={isCompact} cardRadius={cardRadius}>
+          <Text style={[styles.optionLabel, { fontSize: isCompact ? 13 : 14 }]}>Theme</Text>
           <View style={styles.choiceRow}>
-            <Chip label="System" active={settings.themeMode === 'system'} onPress={() => handleThemeChange('system')} />
-            <Chip label="Light" active={settings.themeMode === 'light'} onPress={() => handleThemeChange('light')} />
-            <Chip label="Dark" active={settings.themeMode === 'dark'} onPress={() => handleThemeChange('dark')} />
+            <Chip label="System" active={settings.themeMode === 'system'} onPress={() => handleThemeChange('system')} compact={isCompact} />
+            <Chip label="Light" active={settings.themeMode === 'light'} onPress={() => handleThemeChange('light')} compact={isCompact} />
+            <Chip label="Dark" active={settings.themeMode === 'dark'} onPress={() => handleThemeChange('dark')} compact={isCompact} />
           </View>
 
-          <Text style={[styles.optionLabel, { marginTop: SECTION_SPACING }]}>Language</Text>
+          <Text style={[styles.optionLabel, { marginTop: SECTION_SPACING, fontSize: isCompact ? 13 : 14 }]}>Language</Text>
           <View style={styles.choiceRow}>
-            <Chip label="Tiếng Việt" active={settings.language === 'vi'} onPress={() => handleLanguageChange('vi')} />
-            <Chip label="English" active={settings.language === 'en'} onPress={() => handleLanguageChange('en')} />
+            <Chip label="Tiếng Việt" active={settings.language === 'vi'} onPress={() => handleLanguageChange('vi')} compact={isCompact} />
+            <Chip label="English" active={settings.language === 'en'} onPress={() => handleLanguageChange('en')} compact={isCompact} />
           </View>
         </Section>
 
-        <Section title="About Zalo" subtitle="Thông tin ứng dụng và hỗ trợ">
+        <Section title="About Zalo" subtitle="Thông tin ứng dụng và hỗ trợ" compact={isCompact} cardRadius={cardRadius}>
           <SettingRow
             icon="info"
             title="About Zalo"
             subtitle="Phiên bản, điều khoản và cập nhật"
             rightElement={<Text style={styles.chevron}>chevron_right</Text>}
             onPress={handleAbout}
+            compact={isCompact}
           />
           <SettingRow
             icon="support_agent"
@@ -373,6 +428,7 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             rightElement={<Text style={styles.chevron}>chevron_right</Text>}
             onPress={handleSupport}
             divider
+            compact={isCompact}
           />
           <SettingRow
             icon="logout"
@@ -380,6 +436,7 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             subtitle="Thoát khỏi tài khoản hiện tại"
             rightElement={<Text style={styles.chevronDanger}>chevron_right</Text>}
             onPress={onLogout}
+            compact={isCompact}
           />
         </Section>
 
@@ -464,8 +521,11 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   scrollContent: {
-    padding: 16,
+    paddingTop: 16,
     paddingBottom: 28,
+  },
+  scrollView: {
+    flex: 1,
   },
   profileSummary: {
     flexDirection: 'row',
@@ -517,10 +577,18 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 10,
   },
+  sectionHeaderCompact: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
   sectionTitle: {
     ...Typography.heading,
     fontSize: 17,
     color: Colors.onSurface,
+  },
+  sectionTitleCompact: {
+    fontSize: 15,
   },
   sectionSubtitle: {
     ...Typography.body,
@@ -528,12 +596,20 @@ const styles = StyleSheet.create({
     color: Colors.onSurfaceVariant,
     marginTop: 4,
   },
+  sectionSubtitleCompact: {
+    fontSize: 12,
+  },
   row: {
     minHeight: 68,
     paddingHorizontal: 16,
     paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  rowCompact: {
+    minHeight: 58,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   rowDivider: {
     borderBottomWidth: 1,
@@ -548,10 +624,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#edf5ff',
     marginRight: 12,
   },
+  rowIconBoxCompact: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    marginRight: 10,
+  },
   rowIcon: {
     fontFamily: 'Material Symbols Outlined',
     fontSize: 22,
     color: Colors.primary,
+  },
+  rowIconCompact: {
+    fontSize: 20,
   },
   rowBody: {
     flex: 1,
@@ -561,12 +646,19 @@ const styles = StyleSheet.create({
     color: Colors.onSurface,
     fontSize: 15,
   },
+  rowTitleCompact: {
+    fontSize: 14,
+  },
   rowSubtitle: {
     ...Typography.body,
     color: Colors.onSurfaceVariant,
     fontSize: 12,
     marginTop: 3,
     lineHeight: 17,
+  },
+  rowSubtitleCompact: {
+    fontSize: 11,
+    lineHeight: 15,
   },
   rowRight: {
     marginLeft: 12,
@@ -603,6 +695,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: '#f2f5fa',
   },
+  chipCompact: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
   chipActive: {
     backgroundColor: '#dcecff',
   },
@@ -610,6 +706,9 @@ const styles = StyleSheet.create({
     ...Typography.body,
     fontSize: 13,
     color: Colors.onSurfaceVariant,
+  },
+  chipTextCompact: {
+    fontSize: 12,
   },
   chipTextActive: {
     color: Colors.primary,
@@ -620,6 +719,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     position: 'relative',
     overflow: 'hidden',
+  },
+  pillToggleCompact: {
+    width: 62,
+    height: 36,
   },
   pillToggleOn: {
     backgroundColor: '#16ef67',
@@ -644,8 +747,16 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 2,
   },
+  pillToggleKnobCompact: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+  },
   pillToggleKnobOn: {
     left: 36,
+  },
+  pillToggleKnobOnCompact: {
+    left: 30,
   },
   pillToggleKnobOff: {
     left: 2,

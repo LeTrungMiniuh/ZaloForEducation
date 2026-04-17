@@ -32,6 +32,7 @@ interface ChatState {
   fetchMessages: (convId: string, limit?: number) => Promise<void>;
   loadMoreMessages: (convId: string, limit?: number) => Promise<void>;
   sendMessageOptimistic: (convId: string, senderEmail: string, content: string, msgType?: string, attachments?: Attachment[], replyTo?: any) => Promise<void>;
+  createGroupConversation: (name: string, members: string[]) => Promise<any>;
   startDirectChat: (targetEmail: string) => Promise<void>;
   clearHistory: (convId: string) => Promise<void>;
   localClearHistory: (convId: string) => void;
@@ -54,6 +55,8 @@ interface ChatState {
   // Add Friend Modal
   isAddFriendModalOpen: boolean;
   setIsAddFriendModalOpen: (val: boolean) => void;
+  isCreateGroupModalOpen: boolean;
+  setIsCreateGroupModalOpen: (val: boolean) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -76,6 +79,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // Add Friend Modal State
   isAddFriendModalOpen: false,
   setIsAddFriendModalOpen: (val) => set({ isAddFriendModalOpen: val }),
+  isCreateGroupModalOpen: false,
+  setIsCreateGroupModalOpen: (val) => set({ isCreateGroupModalOpen: val }),
   
   // ... existing actions ...
 
@@ -272,6 +277,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  createGroupConversation: async (name, members) => {
+    try {
+      const res = await api.post('/chat/conversations/group', { name, members });
+      // Reload conversations list
+      get().fetchConversations();
+      return res.data;
+    } catch (err) {
+      console.error('Failed to create group', err);
+      throw err;
+    }
+  },
+
   sendMessageOptimistic: async (convId, senderEmail, content, msgType = 'text', attachments = [], replyTo = null) => {
     const tempId = `TEMP#${Date.now()}`;
     const timestamp = new Date().toISOString();
@@ -409,9 +426,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const users = newReactions[emoji] || [];
 
           if (reactAction === 'add') {
-            if (!users.includes(userEmail)) {
-              newReactions[emoji] = [...users, userEmail];
-            }
+            newReactions[emoji] = [...users, userEmail];
           } else {
             newReactions[emoji] = users.filter((e: string) => e !== userEmail);
             if (newReactions[emoji].length === 0) delete newReactions[emoji];

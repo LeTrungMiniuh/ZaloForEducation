@@ -152,7 +152,7 @@ export class ChatController {
   @Post("uploads")
   @UseInterceptors(
     FileInterceptor("file", {
-      limits: { fileSize: 10 * 1024 * 1024 },
+      limits: { fileSize: 100 * 1024 * 1024 }, // Max 100MB for the interceptor
     }),
   )
   async uploadChatFile(@UploadedFile() file: Express.Multer.File) {
@@ -160,14 +160,27 @@ export class ChatController {
       throw new BadRequestException("File is required");
     }
 
+    // Secondary validation by type
+    if (file.mimetype?.startsWith("image/")) {
+      if (file.size > 10 * 1024 * 1024) {
+        throw new BadRequestException("Image size cannot exceed 10MB");
+      }
+    } else if (file.size > 100 * 1024 * 1024) {
+      throw new BadRequestException("File/Video size cannot exceed 100MB");
+    }
+
+    // Fix encoding for Vietnamese filenames
+    const correctName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    file.originalname = correctName;
+
     const folder = file.mimetype?.startsWith("image/")
       ? "chat/images"
       : "chat/files";
     const fileUrl = await this.s3Service.uploadFile(file, folder);
 
     return {
-      name: file.originalname,
-      fileName: file.originalname,
+      name: correctName,
+      fileName: correctName,
       mimeType: file.mimetype || "application/octet-stream",
       fileType: file.mimetype || "application/octet-stream",
       size: file.size,

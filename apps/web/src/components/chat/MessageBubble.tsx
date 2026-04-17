@@ -1,25 +1,24 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import {
+  AlertCircle,
+  Download,
+  FileDigit,
+  FileImage,
+  FileText,
+  Forward,
+  Heart,
+  Loader2,
+  MoreHorizontal,
+  Music,
+  Pin,
+  Quote,
+  Video
+} from 'lucide-react';
 import React, { useState } from 'react';
-import { getDisplayName, getDisplayAvatar, getFileIcon, formatFileSize, normalizeAttachment } from '../../utils/chatUtils';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useChatStore } from '../../store/chatStore';
-import { 
-  Pin, 
-  MoreHorizontal, 
-  Forward, 
-  Quote, 
-  Heart, 
-  Download, 
-  RotateCcw, 
-  Trash2, 
-  CheckCheck, 
-  Loader2, 
-  AlertCircle,
-  FileText,
-  FileImage,
-  Video,
-  Music,
-  FileDigit
-} from 'lucide-react';
+import { formatFileSize, getDisplayAvatar, getDisplayName, normalizeAttachment, truncateFileName } from '../../utils/chatUtils';
 
 interface MessageBubbleProps {
   message: any;
@@ -27,6 +26,7 @@ interface MessageBubbleProps {
   userProfiles: Record<string, any>;
   hideTime?: boolean;
   onReply: (message: any) => void;
+  onForward?: (message: any) => void;
 }
 
 const FLUENT_EMOJI_MAP: Record<string, string> = {
@@ -59,40 +59,38 @@ const FluentEmoji: React.FC<{ emoji: string, className?: string, alt?: string }>
   );
 };
 
-const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, userProfiles, hideTime, onReply }) => {
+const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, userProfiles, onReply, onForward }) => {
+  const navigate = useNavigate();
   const { user } = useAuth();
-  const { patchMessageOptimistic, deleteMessageOptimistic, activeConvId, highlightedMessageId, setPreviewImage } = useChatStore();
+  const { patchMessageOptimistic, activeConvId, highlightedMessageId, setPreviewImage } = useChatStore();
   const isMe = message.senderId === user?.email;
   const isRecalled = !!message.recalled;
   const isPinned = !!message.pinned;
   const isHighlighted = highlightedMessageId === message.id;
 
+  const isVideoMedia = (mediaItem: any) => {
+    const mime = String(mediaItem?.mimeType || mediaItem?.fileType || '').toLowerCase();
+    const name = String(mediaItem?.name || mediaItem?.fileName || mediaItem?.url || mediaItem?.dataUrl || '').toLowerCase();
+    return mime.startsWith('video/') || /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name);
+  };
+
   const bubbleClass = isMe 
     ? 'bg-primary/10 text-on-surface rounded-2xl rounded-tr-none' 
-    : 'bg-white text-on-surface rounded-2xl rounded-tl-none';
+    : 'bg-white dark:bg-surface-container-high text-on-surface rounded-2xl rounded-tl-none';
 
-  const handleReact = (emoji: string) => {
+  const handleReact = (emoji: string, action: 'add' | 'remove' = 'add') => {
     if (!activeConvId) return;
+    
     patchMessageOptimistic(activeConvId, message.id, {
       action: 'react',
-      reactAction: 'add',
+      reactAction: action,
       emoji
     });
   };
 
-  const handleRecall = () => {
-    if (!activeConvId) return;
-    patchMessageOptimistic(activeConvId, message.id, { action: 'recall' });
-  };
-
-  const handlePin = () => {
-    if (!activeConvId) return;
-    patchMessageOptimistic(activeConvId, message.id, { action: isPinned ? 'unpin' : 'pin' });
-  };
-
-  const handleDelete = () => {
-    if (!activeConvId) return;
-    deleteMessageOptimistic(activeConvId, message.id);
+  const handleOpenSenderProfile = () => {
+    if (isMe || !message.senderId) return;
+    navigate(`/profile?email=${encodeURIComponent(message.senderId)}`);
   };
 
   // Helper to render file icon components
@@ -119,9 +117,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
 
     return (
       <div className="flex justify-center my-6 animate-in fade-in zoom-in-95 duration-500 w-full">
-        <div className="bg-surface-container-high/40 px-4 py-1.5 rounded-full backdrop-blur-sm border border-outline-variant/5 shadow-sm">
+        <div className="flex flex-col items-center gap-1">
+          <div className="bg-surface-container-high/40 px-4 py-1.5 rounded-full backdrop-blur-sm border border-outline-variant/5 shadow-sm">
+            <p className="text-[11px] font-bold text-on-surface-variant/70 tracking-tight text-center">
+              {displayContent}
+            </p>
+          </div>
           <p className="text-[11px] font-bold text-on-surface-variant/70 tracking-tight text-center">
-            {displayContent}
+            {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </p>
         </div>
       </div>
@@ -138,7 +141,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
         {!isMe ? (
           <img 
             src={getDisplayAvatar(message.senderId, user, userProfiles)} 
-            className="w-10 h-10 rounded-full object-cover shadow-sm ring-1 ring-black/5" 
+            className="w-10 h-10 rounded-full object-cover shadow-sm ring-1 ring-black/5 cursor-pointer hover:opacity-90 transition-opacity" 
+            onClick={handleOpenSenderProfile}
+            title="Xem trang cá nhân"
             alt="" 
           />
         ) : null}
@@ -173,7 +178,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
                    const rect = e.currentTarget.getBoundingClientRect();
                    onContextMenu(message, rect.left, rect.top);
                  }}
-                 className="w-8 h-8 flex items-center justify-center bg-white border border-outline-variant/30 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
+                 className="w-8 h-8 flex items-center justify-center bg-white dark:bg-surface-container border border-outline-variant/30 dark:border-outline-variant/40 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
                  title="Tùy chọn khác"
                >
                  <MoreHorizontal size={18} className="group-hover/btn:text-primary transition-colors" />
@@ -181,7 +186,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
 
                {/* Share Button */}
                <button 
-                 className="w-8 h-8 flex items-center justify-center bg-white border border-outline-variant/30 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
+                 onClick={() => onForward?.(message)}
+                 className="w-8 h-8 flex items-center justify-center bg-white dark:bg-surface-container border border-outline-variant/30 dark:border-outline-variant/40 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
                  title="Chia sẻ"
                >
                  <Forward size={18} className="group-hover/btn:text-primary transition-colors" />
@@ -190,7 +196,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
                {/* Reply Button */}
                <button 
                  onClick={() => onReply(message)}
-                 className="w-8 h-8 flex items-center justify-center bg-white border border-outline-variant/30 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
+                 className="w-8 h-8 flex items-center justify-center bg-white dark:bg-surface-container border border-outline-variant/30 dark:border-outline-variant/40 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
                  title="Trả lời"
                >
                  <Quote size={18} className="group-hover/btn:text-primary transition-colors" />
@@ -199,14 +205,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
                {/* Reaction Button with Hover Emoji Bar */}
                <div className="relative group/reactbtn">
                  <button 
-                    className="w-8 h-8 flex items-center justify-center bg-white border border-outline-variant/30 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
+                    className="w-8 h-8 flex items-center justify-center bg-white dark:bg-surface-container border border-outline-variant/30 dark:border-outline-variant/40 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
                     title="Thả cảm xúc"
                  >
                    <Heart size={18} className="group-hover/btn:text-error transition-colors" />
                  </button>
 
                  {/* Floating Emoji Bar */}
-                 <div className={`absolute bottom-full mb-2 opacity-0 group-hover/reactbtn:opacity-100 group-hover/reactbtn:translate-y-0 translate-y-2 pointer-events-none group-hover:pointer-events-auto transition-all duration-200 bg-white/95 backdrop-blur-md border border-outline-variant/20 rounded-full flex items-center p-1.5 gap-1 shadow-[0_8px_30px_rgba(0,0,0,0.15)] z-[110] ${isMe ? 'right-0' : 'left-0'}`}>
+                 <div className={`absolute bottom-full mb-2 opacity-0 group-hover/reactbtn:opacity-100 group-hover/reactbtn:translate-y-0 translate-y-2 pointer-events-none group-hover:pointer-events-auto transition-all duration-200 bg-white/95 dark:bg-surface-container/95 backdrop-blur-md border border-outline-variant/20 dark:border-outline-variant/40 rounded-full flex items-center p-1.5 gap-1 shadow-[0_8px_30px_rgba(0,0,0,0.15)] z-[110] ${isMe ? 'right-0' : 'left-0'}`}>
                     {[
                       { e: '👍', label: 'Thích' },
                       { e: '❤️', label: 'Yêu thích' },
@@ -246,15 +252,49 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
 
              {!isRecalled && (
                <div className="mt-2 space-y-2">
-                 {(message.media || []).map((m: any, i: number) => (
-                   <img 
-                     key={i} 
-                     src={m.dataUrl || m.url} 
-                     onClick={() => setPreviewImage(m.dataUrl || m.url, m.fileName || m.name || 'image.png')}
-                     className="max-w-full rounded-xl border border-outline-variant/5 shadow-sm hover:opacity-90 cursor-pointer transition-opacity active:scale-[0.98]" 
-                     alt="" 
-                   />
-                 ))}
+                 {message.media && message.media.length > 0 && (
+                   <div className={
+                     message.media.length === 1 
+                       ? 'flex flex-col gap-2' 
+                       : message.media.length === 2 || message.media.length === 4
+                       ? 'grid grid-cols-2 gap-1.5 max-w-[280px]'
+                       : 'grid grid-cols-3 gap-1.5 max-w-[320px]'
+                   }>
+                    {message.media.map((m: any, i: number) => {
+                      const src = m.dataUrl || m.url;
+                      const isVideo = isVideoMedia(m);
+                      const mediaClass = `${
+                        message.media.length === 1
+                          ? 'max-w-full max-h-[300px] object-contain rounded-2xl'
+                          : 'w-full aspect-square object-cover rounded-[10px]'
+                      } border border-outline-variant/10 shadow-sm transition-opacity backdrop-blur-sm bg-surface-container`;
+
+                      if (isVideo) {
+                        return (
+                          <video
+                            key={i}
+                            src={src}
+                            className={`${mediaClass} hover:opacity-95`}
+                            controls
+                            preload="metadata"
+                            playsInline
+                          />
+                        );
+                      }
+
+                      return (
+                        <img
+                          key={i}
+                          src={src}
+                          onClick={() => setPreviewImage(src, m.fileName || m.name || 'image.png')}
+                          className={`${mediaClass} hover:opacity-90 cursor-pointer active:scale-[0.98]`}
+                          alt=""
+                        />
+                      );
+                    })}
+                   </div>
+                 )}
+                 
                  {(message.files || []).map((f: any, i: number) => {
                    const file = normalizeAttachment(f);
                    
@@ -283,13 +323,13 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
                      <div 
                        key={i} 
                        onClick={handleDownload}
-                       className="flex items-center gap-3 p-3 bg-white/50 border border-outline-variant/10 rounded-xl hover:bg-white transition-all shadow-sm group/file cursor-pointer active:scale-[0.98]"
+                       className="flex items-center gap-3 p-3 w-[270px] md:w-[320px] max-w-full bg-white/50 dark:bg-surface-container-high/70 border border-outline-variant/10 dark:border-outline-variant/40 rounded-xl hover:bg-white dark:hover:bg-surface-container-high transition-all shadow-sm group/file cursor-pointer active:scale-[0.98]"
                      >
                        <div className="w-10 h-10 flex items-center justify-center bg-primary/5 rounded-xl text-primary group-hover/file:bg-primary/10 transition-colors">
                          <FileIconComponent fileName={file.name} />
                        </div>
                        <div className="flex-1 min-w-0">
-                         <p className="text-[14px] font-bold truncate text-on-surface">{file.name}</p>
+                         <p className="text-[14px] font-bold text-on-surface" title={file.name}>{truncateFileName(file.name, 40)}</p>
                          <p className="text-[11px] font-medium opacity-50 uppercase">{formatFileSize(file.size)}</p>
                        </div>
                        <Download size={20} className="ml-2 opacity-40 group-hover:opacity-100 transition-opacity" />
@@ -302,10 +342,16 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
 
           {/* Reactions Row */}
           {message.reactions && Object.keys(message.reactions).length > 0 && !isRecalled && (
-            <div className={`absolute -bottom-3 flex flex-wrap gap-1 ${isMe ? 'right-2' : 'left-2'} z-[5]`}>
-              <div className="flex items-center bg-white shadow-md rounded-full px-1.5 py-0.5 border border-outline-variant/10 gap-1 animate-in zoom-in-50 duration-200">
+            <div className={`absolute -bottom-3 flex flex-wrap gap-1 ${isMe ? 'right-0' : 'left-0'} z-[5]`}>
+              <div className="flex items-center bg-white dark:bg-surface-container-high shadow-md rounded-full px-1.5 py-0.5 border border-outline-variant/10 dark:border-outline-variant/40 gap-1 animate-in zoom-in-50 duration-200">
                 {Object.entries(message.reactions).map(([emoji, users]: [string, any]) => (
-                  <div key={emoji} className="flex items-center gap-0.5 group/emoji relative" title={users.join(', ')}>
+                  <div 
+                    key={emoji} 
+                    className="flex items-center gap-0.5 group/emoji relative cursor-pointer hover:scale-110 active:scale-95 transition-transform" 
+                    title={users.join(', ')}
+                    onClick={() => handleReact(emoji, 'add')}
+                    onContextMenu={(e) => { e.preventDefault(); handleReact(emoji, 'remove'); }}
+                  >
                     <FluentEmoji emoji={emoji} className="w-4 h-4" />
                     <span className="text-[10px] font-extrabold text-on-surface-variant/60">{users.length}</span>
                   </div>
@@ -316,18 +362,26 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
         </div>
 
         {/* Footer Info (Time, Status) */}
-        <div className={`flex items-center gap-2 mt-1.5 px-1 opacity-60 transition-all ${hideTime ? 'max-h-0 opacity-0 overflow-hidden' : 'max-h-4'}`}>
+        <div className="flex items-center gap-2 mt-1.5 px-1 opacity-60 transition-all">
           <span className="text-[10px] font-extrabold uppercase tracking-tight">
             {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
           {isMe && (
-            <div className="flex items-center">
+            <div className="flex items-center ml-1">
               {message.status === 'sending' ? (
-                <Loader2 size={12} className="animate-spin" />
+                <span className="text-[10px] text-on-surface-variant font-medium flex items-center gap-1">
+                  <Loader2 size={10} className="animate-spin" /> Đang gửi...
+                </span>
               ) : message.status === 'error' ? (
-                <AlertCircle size={12} className="text-error" />
+                <span className="text-[10px] text-error font-medium flex items-center gap-1">
+                  <AlertCircle size={10} /> Lỗi
+                </span>
+              ) : message.status === 'read' ? (
+                <span className="text-[10px] text-primary font-bold">Đã xem</span>
+              ) : message.status === 'delivered' ? (
+                <span className="text-[10px] text-outline font-medium">Đã nhận</span>
               ) : (
-                <CheckCheck size={12} className="text-primary" />
+                <span className="text-[10px] text-outline font-medium">Đã gửi</span>
               )}
             </div>
           )}

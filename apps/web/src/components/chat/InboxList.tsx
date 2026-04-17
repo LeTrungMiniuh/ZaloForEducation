@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import { getDisplayName, getDisplayAvatar, isUnread } from '../../utils/chatUtils';
+import CreateGroupModal from './CreateGroupModal';
 
 import { 
   UserPlus, 
@@ -23,7 +24,9 @@ const InboxList: React.FC = () => {
     setActiveConversation,
     loadUserProfile,
     userProfiles,
-    setIsAddFriendModalOpen
+    setIsAddFriendModalOpen,
+    isCreateGroupModalOpen,
+    setIsCreateGroupModalOpen
   } = useChatStore();
 
   const [chatFilter, setChatFilter] = useState<'all' | 'unread'>('all');
@@ -60,7 +63,7 @@ const InboxList: React.FC = () => {
   );
 
   return (
-    <div className="w-[340px] h-full border-r border-outline-variant/30 flex flex-col bg-white shrink-0">
+    <div className="w-[340px] h-full border-r border-outline-variant/30 flex flex-col bg-white dark:bg-surface-container shrink-0">
       {/* Search Header */}
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2">
@@ -78,15 +81,18 @@ const InboxList: React.FC = () => {
            <div className="flex items-center gap-1">
           <button 
             onClick={() => useChatStore.getState().setIsAddFriendModalOpen(true)}
-            className="w-10 h-10 flex items-center justify-center hover:bg-white/60 rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
+            className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
           >
             <UserPlus size={20} />
           </button>
-          <button className="w-10 h-10 flex items-center justify-center hover:bg-white/60 rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95">
+          <button 
+            onClick={() => setIsCreateGroupModalOpen(true)}
+            className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
+          >
             <Users size={20} />
           </button>
           <div className="w-px h-6 bg-outline-variant/10 mx-1" />
-          <button className="w-10 h-10 flex items-center justify-center hover:bg-white/60 rounded-full transition-all text-on-surface-variant hover:text-primary">
+          <button className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary">
             <Menu size={20} />
           </button>
         </div>
@@ -144,7 +150,7 @@ const InboxList: React.FC = () => {
                 <div className="relative shrink-0">
                   <img className="w-12 h-12 rounded-full object-cover shadow-sm bg-surface-container ring-1 ring-black/5" alt={chatName} src={chatAvatar} />
                   {isOnline && (
-                    <div className="absolute top-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full shadow-sm ring-1 ring-black/5 animate-pulse"></div>
+                    <div className="absolute top-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-surface-container rounded-full shadow-sm ring-1 ring-black/5 animate-pulse"></div>
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -170,6 +176,11 @@ const InboxList: React.FC = () => {
           })
         )}
       </div>
+
+      <CreateGroupModal 
+        isOpen={isCreateGroupModalOpen} 
+        onClose={() => setIsCreateGroupModalOpen(false)} 
+      />
     </div>
   );
 };

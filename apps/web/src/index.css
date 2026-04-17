@@ -74,6 +74,43 @@
   color: #00418f;
 }
 
+:root.dark {
+  color-scheme: dark;
+  --color-primary: #b3d9ff;
+  --color-on-primary: #003366;
+  --color-primary-container: #004499;
+  --color-on-primary-container: #b3d9ff;
+
+  --color-secondary: #b3b3b3;
+  --color-on-secondary: #ffffff;
+
+  --color-background: #0a0e27;
+  --color-on-background: #e8eef7;
+  --color-surface: #121621;
+  --color-on-surface: #e8eef7;
+
+  --color-surface-variant: #2a2f42;
+  --color-on-surface-variant: #9ca3b5;
+  --color-outline: #464d5f;
+  --color-outline-variant: #3a3f52;
+
+  --color-surface-container-lowest: #0a0e27;
+  --color-surface-container-low: #1a1e33;
+  --color-surface-container: #1f2438;
+  --color-surface-container-high: #2a2f42;
+  --color-surface-container-highest: #35394d;
+
+  --color-error: #ff8888;
+  --color-on-error: #330000;
+  --color-error-container: #663333;
+  --color-on-error-container: #ff8888;
+}
+
+:root.dark body {
+  background-color: #0a0e27;
+  color: #e8eef7;
+}
+
 body {
   margin: 0;
   display: flex;
@@ -97,12 +134,24 @@ body {
   box-shadow: 0 8px 32px 0 rgba(0, 65, 143, 0.05);
 }
 
+:root.dark .liquid-glass {
+  background: rgba(15, 18, 40, 0.4);
+  border: 1px solid rgba(179, 217, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
 .liquid-glass-strong {
   background: rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(30px);
   -webkit-backdrop-filter: blur(30px);
   border: 1px solid rgba(0, 65, 143, 0.1);
   box-shadow: 0 8px 32px 0 rgba(0, 65, 143, 0.08), inset 0 0 20px 0 rgba(255, 255, 255, 0.5);
+}
+
+:root.dark .liquid-glass-strong {
+  background: rgba(15, 18, 40, 0.6);
+  border: 1px solid rgba(179, 217, 255, 0.15);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4), inset 0 0 20px 0 rgba(179, 217, 255, 0.1);
 }
 
 .signature-gradient {

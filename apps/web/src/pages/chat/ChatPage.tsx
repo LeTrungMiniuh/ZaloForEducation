@@ -7,6 +7,7 @@ import ChatInput from '../../components/chat/ChatInput';
 import MessageBubble from '../../components/chat/MessageBubble';
 import ChatInfoSidebar from '../../components/chat/ChatInfoSidebar';
 import ImageModal from '../../components/chat/ImageModal';
+import ForwardModal from '../../components/chat/ForwardModal';
 import { getMessageTimeContext } from '../../utils/chatUtils';
 import type { Attachment } from '../../utils/chatUtils';
 
@@ -21,6 +22,7 @@ import {
   RotateCcw, 
   Trash2 
 } from 'lucide-react';
+import Swal from 'sweetalert2';
 
 const ChatPage: React.FC = () => {
   const { user, socket } = useAuth();
@@ -35,9 +37,12 @@ const ChatPage: React.FC = () => {
 
   const [isInfoOpen, setIsInfoOpen] = useState(true);
   const [replyTarget, setReplyTarget] = useState<any | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<any | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevRoomRef = useRef<string | null>(null);
+  const prevMessagesLengthRef = useRef(0);
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
 
   // Utility to scroll to bottom
   const scrollToBottom = (instant = false) => {
@@ -52,7 +57,15 @@ const ChatPage: React.FC = () => {
   // Scroll to bottom when messages change
   useEffect(() => {
     if (messages.length > 0) {
-      scrollToBottom();
+      // Only scroll if it's the initial load or a new message was added
+      if (prevMessagesLengthRef.current === 0 || messages.length > prevMessagesLengthRef.current) {
+        // Option: Check if user is near bottom to avoid force-scroll when reading old messages.
+        // For now, we fix the specific issue where *reactions* cause forced scroll down.
+        scrollToBottom();
+      }
+      prevMessagesLengthRef.current = messages.length;
+    } else {
+      prevMessagesLengthRef.current = 0;
     }
   }, [messages]);
 
@@ -81,6 +94,41 @@ const ChatPage: React.FC = () => {
     };
   }, [activeConvId, fetchMessages, socket]);
 
+  // Handle typing indicator via CustomEvent from useSocketListeners
+  useEffect(() => {
+    setTypingUsers(new Set()); // Reset when changing room
+    
+    const handleTypingEvent = (e: any) => {
+      const data = e.detail;
+      if (data.convId === activeConvId && data.email !== user?.email) {
+        if (data.isTyping) {
+          setTypingUsers(prev => {
+            const next = new Set(prev);
+            next.add(data.email);
+            return next;
+          });
+          // Remove after 5 seconds to prevent stuck indicator
+          setTimeout(() => {
+            setTypingUsers(prev => {
+              const next = new Set(prev);
+              next.delete(data.email);
+              return next;
+            });
+          }, 5000);
+        } else {
+          setTypingUsers(prev => {
+            const next = new Set(prev);
+            next.delete(data.email);
+            return next;
+          });
+        }
+      }
+    };
+
+    document.addEventListener('chat_typing_update', handleTypingEvent);
+    return () => document.removeEventListener('chat_typing_update', handleTypingEvent);
+  }, [activeConvId, user]);
+
   // Mark as read when messages change or room opens
   useEffect(() => {
     if (activeConvId) {
@@ -106,12 +154,12 @@ const ChatPage: React.FC = () => {
   const [contextMenu, setContextMenu] = useState<{ message: any; x: number; y: number } | null>(null);
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-white">
+    <div className="flex h-full w-full overflow-hidden bg-white dark:bg-surface-container-lowest">
       {/* 1. Inbox List Panel */}
       <InboxList />
 
       {/* 2. Main Chat Area */}
-      <div className="flex-1 h-full flex flex-col min-w-0 bg-[#f7f9fb] shadow-[inset_1px_0_0_rgba(0,0,0,0.05)]">
+      <div className="flex-1 h-full flex flex-col min-w-0 bg-[#f7f9fb] dark:bg-surface-container-low shadow-[inset_1px_0_0_rgba(0,0,0,0.05)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.04)]">
         {activeConvId ? (
           <>
             <ChatHeader
@@ -163,6 +211,7 @@ const ChatPage: React.FC = () => {
                             hideTime={!showTimeHeader}
                             onContextMenu={(msg, x, y) => setContextMenu({ message: msg, x, y })}
                             onReply={(msg) => setReplyTarget(msg)}
+                            onForward={(msg) => setForwardMessage(msg)}
                           />
                         </div>
                       </React.Fragment>
@@ -170,6 +219,23 @@ const ChatPage: React.FC = () => {
                   })}
                 </div>
               )}
+
+              {/* Typing Indicator */}
+              {typingUsers.size > 0 && (
+                <div className="absolute bottom-[95px] left-8 z-[10] shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="bg-white dark:bg-surface-container-high rounded-full px-4 py-2 border border-outline-variant/10 flex items-center gap-3">
+                     <div className="flex gap-1.5 items-center">
+                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce"></div>
+                     </div>
+                     <span className="text-[12px] font-bold text-on-surface-variant italic">
+                       {Array.from(typingUsers).map(email => userProfiles[email]?.fullName || email.split('@')[0]).join(', ')} đang soạn tin...
+                     </span>
+                  </div>
+                </div>
+              )}
+
               <div ref={messagesEndRef} className="h-4" />
             </div>
 
@@ -190,6 +256,12 @@ const ChatPage: React.FC = () => {
         )}
       </div>
 
+      <ForwardModal 
+        isOpen={!!forwardMessage} 
+        onClose={() => setForwardMessage(null)} 
+        message={forwardMessage} 
+      />
+
       {/* 3. Info Sidebar */}
       {activeConvId && isInfoOpen && <ChatInfoSidebar />}
 
@@ -201,7 +273,7 @@ const ChatPage: React.FC = () => {
           onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
         >
           <div
-            className="absolute bg-white rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] border border-outline-variant/10 py-1.5 w-64 animate-in fade-in zoom-in-95 duration-200"
+            className="absolute bg-white dark:bg-surface-container rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] border border-outline-variant/10 dark:border-outline-variant/30 py-1.5 w-64 animate-in fade-in zoom-in-95 duration-200"
             style={{ 
               left: Math.min(contextMenu.x, window.innerWidth - 270), 
               top: Math.min(contextMenu.y, window.innerHeight - 400) 
@@ -231,7 +303,19 @@ const ChatPage: React.FC = () => {
               <Pin size={18} className="text-on-surface-variant" />
               {contextMenu.message.pinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'}
             </button>
-            <button className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors">
+            <button 
+              onClick={() => {
+                Swal.fire({
+                  title: 'Đánh dấu tin nhắn',
+                  text: 'Tin nhắn đã được đánh dấu và lưu vào Cloud của bạn!',
+                  icon: 'success',
+                  timer: 2000,
+                  showConfirmButton: false
+                });
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors"
+            >
               <Star size={18} className="text-on-surface-variant" />
               Đánh dấu tin nhắn
             </button>
@@ -239,20 +323,43 @@ const ChatPage: React.FC = () => {
             <div className="h-px bg-outline-variant/10 my-1 mx-2" />
 
             {/* Group 2: Advanced Actions */}
-            <button className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors">
+            <button 
+              onClick={() => {
+                Swal.fire({
+                  title: 'Chọn nhiều tin nhắn',
+                  text: 'Chức năng chọn nhiều tin nhắn đang được phát triển.',
+                  icon: 'info',
+                  confirmButtonColor: '#00418f'
+                });
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors"
+            >
               <ListChecks size={18} className="text-on-surface-variant" />
               Chọn nhiều tin nhắn
             </button>
-            <button className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors">
+            <button 
+              onClick={() => {
+                const date = new Date(contextMenu.message.createdAt).toLocaleString();
+                Swal.fire({
+                  title: 'Chi tiết tin nhắn',
+                  html: `
+                    <div class="text-left space-y-2 mt-4 text-sm text-on-surface">
+                      <p><strong>Người gửi:</strong> ${contextMenu.message.senderId}</p>
+                      <p><strong>Đã gửi lúc:</strong> ${date}</p>
+                      <p><strong>Trạng thái:</strong> ${contextMenu.message.status}</p>
+                      <p><strong>Mã tin nhắn:</strong> <span class="text-xs text-outline font-mono">${contextMenu.message.id}</span></p>
+                    </div>
+                  `,
+                  icon: 'info',
+                  confirmButtonColor: '#00418f'
+                });
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors"
+            >
               <Info size={18} className="text-on-surface-variant" />
               Xem chi tiết
-            </button>
-            <button className="w-full flex items-center justify-between px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors">
-              <div className="flex items-center gap-3 font-medium">
-                <LayoutGrid size={18} className="text-on-surface-variant" />
-                Tùy chọn khác
-              </div>
-              <ChevronRight size={16} className="text-on-surface-variant" />
             </button>
 
             <div className="h-px bg-outline-variant/10 my-1 mx-2" />

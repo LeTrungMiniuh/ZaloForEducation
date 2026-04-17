@@ -113,7 +113,7 @@ const SearchOverlay: React.FC = () => {
                 onClick={() => setSearchTab(tab as any)}
                 className={`px-5 py-2.5 rounded-[14px] text-[13px] font-extrabold transition-all duration-300 ${
                   searchTab === tab 
-                    ? 'bg-white text-primary shadow-sm ring-1 ring-black/5' 
+                    ? 'bg-white text-primary shadow-sm ring-1 ring-black/5 dark:bg-primary/20 dark:text-on-surface' 
                     : 'text-on-surface-variant hover:text-on-surface hover:bg-white/50'
                 }`}
               >

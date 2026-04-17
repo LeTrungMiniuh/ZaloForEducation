@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
+import { Edit3, User, Cake, Phone, MapPin, Mail, Camera, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 
@@ -16,93 +17,97 @@ type ProfileState = {
   backgroundUrl: string;
 };
 
-type ProfilePost = {
-  id: string;
-  content: string;
-  createdAt: string;
-  authorName?: string;
-  authorAvatar?: string;
-  attachment?: ProfileAttachment | null;
-};
-
-type ProfileAttachment = {
-  type: 'image' | 'video';
-  uri: string;
-  name?: string;
-};
-
 const COVER_IMAGE = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1600&q=80';
 
+const emptyProfile = (): ProfileState => ({
+  fullName: '',
+  email: '',
+  phone: '',
+  address: '',
+  bio: '',
+  dataOfBirth: '',
+  gender: true,
+  avatarUrl: '',
+  backgroundUrl: '',
+});
+
+const normalizeProfile = (data: any, fallbackEmail = ''): ProfileState => ({
+  fullName: data?.fullName || data?.fullname || '',
+  email: data?.email || fallbackEmail || '',
+  phone: data?.phone || '',
+  address: data?.address || '',
+  bio: data?.bio || '',
+  dataOfBirth: data?.dataOfBirth || '',
+  gender: typeof data?.gender === 'boolean' ? data.gender : true,
+  avatarUrl: data?.avatarUrl || data?.urlAvatar || '',
+  backgroundUrl: data?.backgroundUrl || data?.urlBackground || '',
+});
+
+const toDateParts = (value: string) => {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return { day: '', month: '', year: '' };
+  }
+  const [year, month, day] = value.split('-');
+  return { day, month, year };
+};
+
+const buildDate = (day: string, month: string, year: string) => {
+  if (!day || !month || !year) return '';
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+};
+
+const formatBirthDate = (value: string) => {
+  const { day, month, year } = toDateParts(value);
+  if (!day || !month || !year) return 'Chưa cập nhật';
+  return `${Number(day)} tháng ${month}, ${year}`;
+};
+
 const ProfilePage: React.FC = () => {
-  const { user, updateUser } = useAuth();
-  const [profile, setProfile] = useState<ProfileState>({
-    fullName: '',
-    email: '',
-    phone: '',
-    address: '',
-    bio: '',
-    dataOfBirth: '',
-    gender: true,
-    avatarUrl: '',
-    backgroundUrl: '',
-  });
+  const [searchParams] = useSearchParams();
+  const { user, refreshUser } = useAuth();
+
+  const targetEmail = (searchParams.get('email') || '').trim().toLowerCase();
+  const currentEmail = (user?.email || '').trim().toLowerCase();
+  const isViewingOther = !!targetEmail && targetEmail !== currentEmail;
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [infoExpanded, setInfoExpanded] = useState(false);
-  const [showPostComposer, setShowPostComposer] = useState(false);
-  const [postDraft, setPostDraft] = useState('');
-  const [postAttachment, setPostAttachment] = useState<ProfileAttachment | null>(null);
-  const [posts, setPosts] = useState<ProfilePost[]>([]);
-  const [draft, setDraft] = useState<ProfileState>({
-    fullName: '',
-    email: '',
-    phone: '',
-    address: '',
-    bio: '',
-    dataOfBirth: '',
-    gender: true,
-    avatarUrl: '',
-    backgroundUrl: '',
-  });
+  const [notFound, setNotFound] = useState(false);
+  const [profile, setProfile] = useState<ProfileState>(emptyProfile());
+  const [draft, setDraft] = useState<ProfileState>(emptyProfile());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
-  const attachmentInputRef = useRef<HTMLInputElement>(null);
-
-  const normalizeProfile = (data: any): ProfileState => ({
-    fullName: data?.fullName || data?.fullname || '',
-    email: data?.email || user?.email || '',
-    phone: data?.phone || '',
-    address: data?.address || '',
-    bio: data?.bio || '',
-    dataOfBirth: data?.dataOfBirth || '',
-    gender: typeof data?.gender === 'boolean' ? data.gender : true,
-    avatarUrl: data?.avatarUrl || data?.urlAvatar || '',
-    backgroundUrl: data?.backgroundUrl || data?.urlBackground || '',
-  });
 
   useEffect(() => {
-    const fetchProfile = async () => {
+    const load = async () => {
+      setLoading(true);
+      setNotFound(false);
       try {
+        if (isViewingOther) {
+          const res = await api.get('/chat/friends/search', { params: { email: targetEmail } });
+          if (!res.data?.found || !res.data?.user) {
+            setNotFound(true);
+            const fallback = normalizeProfile({}, targetEmail);
+            setProfile(fallback);
+            setDraft(fallback);
+            return;
+          }
+
+          const nextProfile = normalizeProfile(res.data.user, targetEmail);
+          setProfile(nextProfile);
+          setDraft(nextProfile);
+          return;
+        }
+
         const res = await api.get('/users/profile');
-        const nextProfile = normalizeProfile(res.data?.profile || res.data);
+        const nextProfile = normalizeProfile(res.data?.profile || res.data, user?.email || '');
         setProfile(nextProfile);
         setDraft(nextProfile);
-        updateUser(nextProfile);
       } catch (error) {
-        console.error('Fetch profile error', error);
-        const fallback = {
-          fullName: user?.fullName || user?.fullname || '',
-          email: user?.email || '',
-          phone: '',
-          address: '',
-          bio: '',
-          dataOfBirth: '',
-          gender: true,
-          avatarUrl: user?.avatarUrl || user?.urlAvatar || '',
-          backgroundUrl: (user?.backgroundUrl as string) || (user?.urlBackground as string) || '',
-        };
+        console.error('Load profile error', error);
+        const fallback = normalizeProfile({}, isViewingOther ? targetEmail : (user?.email || ''));
         setProfile(fallback);
         setDraft(fallback);
       } finally {
@@ -110,37 +115,17 @@ const ProfilePage: React.FC = () => {
       }
     };
 
-    fetchProfile();
-  }, []);
+    load();
+  }, [isViewingOther, targetEmail, user?.email]);
 
-  const handleChange = (field: keyof ProfileState, value: string | boolean) => {
-    setDraft((current) => ({ ...current, [field]: value }));
-  };
-
-  const toDateParts = (value: string) => {
-    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      return { day: '', month: '', year: '' };
-    }
-    const [year, month, day] = value.split('-');
-    return { day, month, year };
-  };
-
-  const buildDate = (day: string, month: string, year: string) => {
-    if (!day || !month || !year) {
-      return '';
-    }
-    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-  };
-
-  const formatBirthDate = (value: string) => {
-    const { day, month, year } = toDateParts(value);
-    if (!day || !month || !year) {
-      return 'Chưa cập nhật';
-    }
-    return `${Number(day)} tháng ${month}, ${year}`;
-  };
+  const displayAvatar = profile.avatarUrl || user?.avatarUrl || user?.urlAvatar || '';
+  const displayBackground = profile.backgroundUrl || user?.backgroundUrl || user?.urlBackground || COVER_IMAGE;
+  const displayName = profile.fullName || user?.fullName || user?.fullname || 'Người dùng';
+  const displayInitial = displayName.charAt(0).toUpperCase();
+  const dateParts = toDateParts(draft.dataOfBirth);
 
   const handleStartEdit = () => {
+    if (isViewingOther) return;
     setDraft(profile);
     setEditing(true);
   };
@@ -150,38 +135,62 @@ const ProfilePage: React.FC = () => {
     setEditing(false);
   };
 
-  const handleAvatarPick = () => {
-    fileInputRef.current?.click();
+  const handleSave = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isViewingOther) return;
+
+    setSaving(true);
+    try {
+      const res = await api.put('/users/profile', {
+        fullName: draft.fullName,
+        phone: draft.phone,
+        address: draft.address,
+        bio: draft.bio,
+        dataOfBirth: draft.dataOfBirth,
+        gender: draft.gender,
+      });
+
+      const nextProfile = normalizeProfile(res.data?.profile || res.data, user?.email || '');
+      setProfile(nextProfile);
+      setDraft(nextProfile);
+      await refreshUser();
+
+      await Swal.fire({
+        icon: 'success',
+        title: 'Đã lưu hồ sơ',
+        text: 'Thông tin cá nhân đã được cập nhật.',
+        timer: 1500,
+        showConfirmButton: false,
+      });
+      setEditing(false);
+    } catch (error: any) {
+      console.error('Update profile error', error);
+      await Swal.fire({
+        icon: 'error',
+        title: 'Không thể lưu hồ sơ',
+        text: error?.response?.data?.message || 'Vui lòng thử lại sau.',
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleAvatarChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
+    if (!file || isViewingOther) return;
 
     setUploading(true);
     try {
       const formData = new FormData();
       formData.append('file', file);
-
       const res = await api.post('/users/avatar/upload', formData, {
-        headers: {},
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
-
-      const nextProfile = normalizeProfile(res.data?.profile || res.data);
+      const nextProfile = normalizeProfile(res.data?.profile || res.data, user?.email || '');
       setProfile((current) => ({ ...current, avatarUrl: nextProfile.avatarUrl }));
       setDraft((current) => ({ ...current, avatarUrl: nextProfile.avatarUrl }));
-      updateUser(nextProfile);
-
-      await Swal.fire({
-        icon: 'success',
-        title: 'Đã cập nhật ảnh đại diện',
-        timer: 1600,
-        showConfirmButton: false,
-      });
+      await refreshUser();
     } catch (error: any) {
-      console.error('Upload avatar error', error);
       await Swal.fire({
         icon: 'error',
         title: 'Không thể tải ảnh lên',
@@ -193,38 +202,22 @@ const ProfilePage: React.FC = () => {
     }
   };
 
-  const handleBackgroundPick = () => {
-    backgroundInputRef.current?.click();
-  };
-
-  const handleBackgroundChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBackgroundUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
+    if (!file || isViewingOther) return;
 
     setUploading(true);
     try {
       const formData = new FormData();
       formData.append('file', file);
-
       const res = await api.post('/users/background/upload', formData, {
-        headers: {},
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
-
-      const nextProfile = normalizeProfile(res.data?.profile || res.data);
+      const nextProfile = normalizeProfile(res.data?.profile || res.data, user?.email || '');
       setProfile((current) => ({ ...current, backgroundUrl: nextProfile.backgroundUrl }));
       setDraft((current) => ({ ...current, backgroundUrl: nextProfile.backgroundUrl }));
-      updateUser(nextProfile);
-
-      await Swal.fire({
-        icon: 'success',
-        title: 'Đã cập nhật ảnh nền',
-        timer: 1600,
-        showConfirmButton: false,
-      });
+      await refreshUser();
     } catch (error: any) {
-      console.error('Upload background error', error);
       await Swal.fire({
         icon: 'error',
         title: 'Không thể tải ảnh nền lên',
@@ -236,407 +229,187 @@ const ProfilePage: React.FC = () => {
     }
   };
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-
-    try {
-      const res = await api.put('/users/profile', {
-        fullName: draft.fullName,
-        phone: draft.phone,
-        address: draft.address,
-        bio: draft.bio,
-        dataOfBirth: draft.dataOfBirth,
-        gender: draft.gender,
-      });
-
-      const nextProfile = normalizeProfile(res.data?.profile || res.data);
-      setProfile(nextProfile);
-      setDraft(nextProfile);
-      setEditing(false);
-      updateUser(nextProfile);
-
-      await Swal.fire({
-        icon: 'success',
-        title: 'Đã lưu hồ sơ',
-        text: 'Thông tin cá nhân của bạn đã được cập nhật.',
-        confirmButtonColor: '#00418f',
-      });
-    } catch (error: any) {
-      console.error('Update profile error', {
-        message: error?.message,
-        status: error?.response?.status,
-        statusText: error?.response?.statusText,
-        data: error?.response?.data,
-      });
-      await Swal.fire({
-        icon: 'error',
-        title: 'Không thể lưu hồ sơ',
-        text: error?.response?.data?.message || 'Vui lòng thử lại sau.',
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const displayAvatar = profile.avatarUrl || user?.avatarUrl || user?.urlAvatar || '';
-  const displayBackground = profile.backgroundUrl || (user?.backgroundUrl as string) || (user?.urlBackground as string) || COVER_IMAGE;
-  const displayName = profile.fullName || user?.fullName || user?.fullname || 'Người dùng';
-  const displayInitial = displayName.charAt(0).toUpperCase();
-  const dateParts = toDateParts(draft.dataOfBirth);
-  const postsStorageKey = `web_profile_posts_${user?.email || 'default'}`;
-
-  useEffect(() => {
-    const raw = localStorage.getItem(postsStorageKey);
-    if (!raw) {
-      setPosts([]);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      setPosts(Array.isArray(parsed) ? parsed : []);
-    } catch (error) {
-      console.error('Load web profile posts error', error);
-      setPosts([]);
-    }
-  }, [postsStorageKey]);
-
-  const handleDayChange = (value: string) => {
-    const day = value.replace(/\D/g, '').slice(0, 2);
-    handleChange('dataOfBirth', buildDate(day, dateParts.month, dateParts.year));
-  };
-
-  const handleMonthChange = (value: string) => {
-    const month = value.replace(/\D/g, '').slice(0, 2);
-    handleChange('dataOfBirth', buildDate(dateParts.day, month, dateParts.year));
-  };
-
-  const handleYearChange = (value: string) => {
-    const year = value.replace(/\D/g, '').slice(0, 4);
-    handleChange('dataOfBirth', buildDate(dateParts.day, dateParts.month, year));
-  };
-
-  const handleCreatePost = async () => {
-    const content = postDraft.trim();
-    if (!content && !postAttachment) {
-      await Swal.fire({
-        icon: 'warning',
-        title: 'Thiếu nội dung',
-        text: 'Vui lòng nhập nội dung hoặc đính kèm ảnh/video trước khi đăng bài.',
-        confirmButtonColor: '#00418f',
-      });
-      return;
-    }
-
-    const nextPost: ProfilePost = {
-      id: `${Date.now()}`,
-      content,
-      createdAt: new Date().toISOString(),
-      authorName: displayName,
-      authorAvatar: displayAvatar || '',
-      attachment: postAttachment ? { ...postAttachment } : null,
-    };
-    const nextPosts = [nextPost, ...posts];
-    setPosts(nextPosts);
-    localStorage.setItem(postsStorageKey, JSON.stringify(nextPosts));
-    setPostDraft('');
-    setPostAttachment(null);
-    setShowPostComposer(false);
-  };
-
-  const handleAttachmentButtonClick = () => {
-    attachmentInputRef.current?.click();
-  };
-
-  const handleAttachmentChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
-    const isVideo = file.type.startsWith('video/');
-    const isImage = file.type.startsWith('image/');
-    if (!isImage && !isVideo) {
-      await Swal.fire({
-        icon: 'warning',
-        title: 'File không hợp lệ',
-        text: 'Chỉ hỗ trợ ảnh hoặc video.',
-        confirmButtonColor: '#00418f',
-      });
-      event.target.value = '';
-      return;
-    }
-
-    const reader = new FileReader();
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error('Không thể đọc file đính kèm.'));
-      reader.readAsDataURL(file);
-    });
-
-    setPostAttachment({
-      type: isVideo ? 'video' : 'image',
-      uri: dataUrl,
-      name: file.name || (isVideo ? 'video' : 'image'),
-    });
-    setShowPostComposer(true);
-    event.target.value = '';
-  };
-
   return (
-    <div className="min-h-screen bg-[#e8edf4]">
-      <div className="max-w-5xl mx-auto px-4 md:px-6 py-5">
+    <div className="h-full bg-white flex flex-col overflow-hidden">
+      <div className="h-[60px] border-b border-slate-200 px-6 flex items-center justify-between shrink-0 bg-white z-10 sticky top-0 shadow-sm">
+        <div className="flex items-center gap-4">
+          <Link to="/chat" className="w-[38px] h-[38px] rounded-full hover:bg-slate-100 transition-colors inline-flex items-center justify-center text-slate-700">
+            <span className="material-symbols-outlined text-[20px]">arrow_back</span>
+          </Link>
+          <h1 className="text-xl font-bold text-slate-800 tracking-tight">Trang cá nhân</h1>
+        </div>
+        {isViewingOther && notFound && <span className="text-sm font-semibold text-red-600 bg-red-50 px-3 py-1 rounded-full">Không tìm thấy</span>}
+      </div>
+
+      <div className="flex-1 overflow-y-auto hide-scrollbar bg-white">
         {loading ? (
-          <div className="h-[70vh] rounded-2xl border border-slate-300 bg-white flex items-center justify-center">
-            <div className="w-10 h-10 rounded-full border-4 border-primary border-t-transparent animate-spin" />
+          <div className="h-full flex items-center justify-center">
+            <Loader2 size={36} className="animate-spin text-primary" />
           </div>
         ) : editing ? (
-          <div className="rounded-2xl border border-slate-300 bg-white shadow-sm overflow-hidden">
-            <div className="h-14 border-b border-slate-300 px-4 flex items-center justify-between">
-              <button onClick={handleCancelEdit} className="material-symbols-outlined text-2xl text-slate-700">arrow_back</button>
-              <h1 className="text-xl leading-none font-bold text-slate-800">Cập nhật thông tin cá nhân</h1>
-              <Link to="/" className="material-symbols-outlined text-2xl text-slate-700">home</Link>
-            </div>
-
-            <form onSubmit={handleSubmit} className="px-5 py-5 bg-[#f8f9fb] min-h-[560px]">
-              <label className="block text-base text-slate-700 mb-2">Tên hiển thị</label>
-              <input
-                value={draft.fullName}
-                onChange={(event) => handleChange('fullName', event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-lg text-slate-800 mb-5"
-                placeholder="Nhập tên hiển thị"
-              />
-
-              <h2 className="text-xl font-bold text-slate-800 mb-3">Thông tin cá nhân</h2>
-
-              <div className="flex items-center gap-8 mb-4">
-                <button type="button" onClick={() => handleChange('gender', true)} className="flex items-center gap-3">
-                  <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${draft.gender ? 'border-blue-500' : 'border-slate-400'}`}>
-                    {draft.gender && <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
-                  </span>
-                  <span className="text-base text-slate-800">Nam</span>
-                </button>
-                <button type="button" onClick={() => handleChange('gender', false)} className="flex items-center gap-3">
-                  <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${!draft.gender ? 'border-blue-500' : 'border-slate-400'}`}>
-                    {!draft.gender && <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
-                  </span>
-                  <span className="text-base text-slate-800">Nữ</span>
-                </button>
+          <form onSubmit={handleSave} className="w-full max-w-4xl mx-auto py-10 px-6">
+            <div className="border border-slate-200 rounded-2xl shadow-sm p-8 space-y-6">
+              <h2 className="text-xl font-bold text-slate-800 mb-6">Cập nhật thông tin</h2>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Tên hiển thị</label>
+                <input
+                  value={draft.fullName}
+                  onChange={(event) => setDraft((current) => ({ ...current, fullName: event.target.value }))}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                  placeholder="Nhập tên hiển thị"
+                />
               </div>
 
-              <label className="block text-base text-slate-700 mb-2">Ngày sinh</label>
-              <div className="grid grid-cols-3 gap-3 mb-5">
-                <input value={dateParts.day} onChange={(event) => handleDayChange(event.target.value)} placeholder="24" className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-800" />
-                <input value={dateParts.month} onChange={(event) => handleMonthChange(event.target.value)} placeholder="06" className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-800" />
-                <input value={dateParts.year} onChange={(event) => handleYearChange(event.target.value)} placeholder="2004" className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-800" />
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4 mb-5">
-                <div>
-                  <label className="block text-sm text-slate-700 mb-2">Điện thoại</label>
-                  <input value={draft.phone} onChange={(event) => handleChange('phone', event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800" />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-700 mb-2">Địa chỉ</label>
-                  <input value={draft.address} onChange={(event) => handleChange('address', event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800" />
-                </div>
-              </div>
-
-              <label className="block text-sm text-slate-700 mb-2">Giới thiệu</label>
-              <textarea value={draft.bio} onChange={(event) => handleChange('bio', event.target.value)} rows={3} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 resize-none" />
-
-              <div className="mt-8 border-t border-slate-300 pt-4 flex justify-end gap-2">
-                <button type="button" onClick={handleCancelEdit} className="px-4 py-2 rounded-lg bg-slate-200 text-sm font-semibold text-slate-800">Hủy</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 rounded-lg bg-blue-500 text-sm font-semibold text-white disabled:opacity-70">{saving ? 'Đang lưu' : 'Cập nhật'}</button>
-              </div>
-            </form>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-slate-300 bg-white shadow-sm overflow-hidden">
-            <div className="h-14 border-b border-slate-300 px-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Link to="/" className="w-9 h-9 rounded-lg border border-slate-300 inline-flex items-center justify-center text-slate-700">
-                  <span className="material-symbols-outlined">arrow_back</span>
-                </Link>
-                <h1 className="text-xl leading-none font-bold text-slate-800">Trang cá nhân</h1>
-              </div>
-            </div>
-
-            <div className="relative">
-              <img src={displayBackground} alt="cover" className="w-full h-36 object-cover" />
-              <button
-                onClick={handleBackgroundPick}
-                disabled={uploading}
-                className="absolute bottom-2 right-2 px-2.5 py-1 rounded-md bg-white/90 border border-slate-300 text-xs font-medium text-slate-700 disabled:opacity-60"
-              >
-                Đổi ảnh nền
-              </button>
-              <input ref={backgroundInputRef} type="file" accept="image/*" className="hidden" onChange={handleBackgroundChange} />
-            </div>
-
-            <div className="px-5 pt-3 pb-4 border-b-8 border-[#edf1f6]">
-              <div className="-mt-10 relative w-20 h-20 rounded-full border-[3px] border-white bg-white">
-                {displayAvatar ? (
-                  <img src={displayAvatar} alt={displayName} className="w-full h-full rounded-full object-cover" />
-                ) : (
-                  <div className="w-full h-full rounded-full bg-primary text-white flex items-center justify-center text-3xl font-bold">{displayInitial}</div>
-                )}
-                <button onClick={handleAvatarPick} disabled={uploading} className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-slate-700 text-sm">photo_camera</span>
-                </button>
-                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
-              </div>
-
-              <div className="mt-3 flex items-center gap-3">
-                <h2 className="text-2xl leading-none font-bold text-slate-800">{displayName}</h2>
-                <button onClick={handleStartEdit} className="material-symbols-outlined text-slate-700 text-xl">edit</button>
-              </div>
-            </div>
-
-            <div className="px-5 py-5 bg-[#f8f9fb]">
-              <button
-                type="button"
-                onClick={() => setInfoExpanded((prev) => !prev)}
-                className="w-full flex items-center justify-between rounded-xl border border-slate-300 bg-white px-4 py-3"
-              >
-                <h3 className="text-lg font-bold text-slate-800">Thông tin cá nhân</h3>
-                <span className="material-symbols-outlined text-slate-700">{infoExpanded ? 'expand_less' : 'expand_more'}</span>
-              </button>
-
-              {!infoExpanded && <p className="text-sm text-slate-500 mt-2">Nhấn để mở rộng và xem chi tiết</p>}
-
-              {infoExpanded && (
-                <>
-                  <div className="space-y-3 mb-4 mt-4">
-                    <div className="flex items-center">
-                      <span className="w-28 text-base text-slate-500">Giới tính</span>
-                      <span className="text-base text-slate-800">{profile.gender ? 'Nam' : 'Nữ'}</span>
-                    </div>
-                    <div className="flex items-center">
-                      <span className="w-28 text-base text-slate-500">Ngày sinh</span>
-                      <span className="text-base text-slate-800">{formatBirthDate(profile.dataOfBirth)}</span>
-                    </div>
-                    <div className="flex items-center">
-                      <span className="w-28 text-base text-slate-500">Điện thoại</span>
-                      <span className="text-base text-slate-800">{profile.phone || 'Chưa cập nhật'}</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="w-28 text-base text-slate-500 mb-1">Địa chỉ</span>
-                      <span className="text-base text-slate-800">{profile.address || 'Chưa cập nhật'}</span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="w-28 text-base text-slate-500 mb-1">Giới thiệu</span>
-                      <span className="text-base text-slate-800">{profile.bio || 'Chưa cập nhật'}</span>
-                    </div>
-                  </div>
-
-                  <p className="text-sm leading-6 text-slate-500 mb-4">Chỉ bạn bè có lưu số của bạn trong danh bạ máy xem được số này</p>
-
-                  <button onClick={handleStartEdit} className="w-full pt-3 border-t border-slate-300 flex items-center justify-center gap-2">
-                    <span className="material-symbols-outlined text-xl text-slate-800">edit</span>
-                    <span className="text-lg font-bold text-slate-800">Cập nhật</span>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Giới tính</label>
+                <div className="flex items-center gap-8">
+                  <button type="button" onClick={() => setDraft((current) => ({ ...current, gender: true }))} className="flex items-center gap-3 group">
+                    <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${draft.gender ? 'border-primary' : 'border-slate-300 group-hover:border-slate-400'}`}>
+                      {draft.gender && <span className="w-2.5 h-2.5 rounded-full bg-primary" />}
+                    </span>
+                    <span className="text-base text-slate-700 font-medium">Nam</span>
                   </button>
+                  <button type="button" onClick={() => setDraft((current) => ({ ...current, gender: false }))} className="flex items-center gap-3 group">
+                    <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${!draft.gender ? 'border-primary' : 'border-slate-300 group-hover:border-slate-400'}`}>
+                      {!draft.gender && <span className="w-2.5 h-2.5 rounded-full bg-primary" />}
+                    </span>
+                    <span className="text-base text-slate-700 font-medium">Nữ</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Ngày sinh</label>
+                <div className="grid grid-cols-3 gap-4">
+                  <input value={dateParts.day} onChange={(event) => setDraft((current) => ({ ...current, dataOfBirth: buildDate(event.target.value.replace(/\D/g, '').slice(0, 2), dateParts.month, dateParts.year) }))} placeholder="Ngày (24)" className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
+                  <input value={dateParts.month} onChange={(event) => setDraft((current) => ({ ...current, dataOfBirth: buildDate(dateParts.day, event.target.value.replace(/\D/g, '').slice(0, 2), dateParts.year) }))} placeholder="Tháng (06)" className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
+                  <input value={dateParts.year} onChange={(event) => setDraft((current) => ({ ...current, dataOfBirth: buildDate(dateParts.day, dateParts.month, event.target.value.replace(/\D/g, '').slice(0, 4)) }))} placeholder="Năm (2004)" className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">Điện thoại</label>
+                  <input value={draft.phone} onChange={(event) => setDraft((current) => ({ ...current, phone: event.target.value }))} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">Địa chỉ</label>
+                  <input value={draft.address} onChange={(event) => setDraft((current) => ({ ...current, address: event.target.value }))} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Giới thiệu</label>
+                <textarea value={draft.bio} onChange={(event) => setDraft((current) => ({ ...current, bio: event.target.value }))} rows={4} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-800 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all" />
+              </div>
+
+              <div className="pt-6 flex justify-end gap-3 border-t border-slate-200">
+                <button type="button" onClick={handleCancelEdit} className="px-6 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-sm font-bold text-slate-700 transition-colors">Hủy</button>
+                <button type="submit" disabled={saving} className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-sm font-bold text-white disabled:opacity-70 transition-colors shadow-sm">{saving ? 'Đang lưu' : 'Cập nhật'}</button>
+              </div>
+            </div>
+          </form>
+        ) : (
+          <div className="w-full pb-16">
+            <div className="relative w-full h-[320px] lg:h-[400px]">
+              <img src={displayBackground} alt="cover" className="w-full h-full object-cover" />
+              {!isViewingOther && (
+                <>
+                  <button
+                    onClick={() => backgroundInputRef.current?.click()}
+                    disabled={uploading}
+                    className="absolute bottom-6 right-6 px-4 py-2.5 rounded-xl bg-black/50 hover:bg-black/70 backdrop-blur-md text-white text-sm font-semibold disabled:opacity-60 flex items-center gap-2 transition-all shadow-lg"
+                  >
+                    <Camera size={16} /> Đổi ảnh bìa
+                  </button>
+                  <input ref={backgroundInputRef} type="file" accept="image/*" className="hidden" onChange={handleBackgroundUpload} />
                 </>
               )}
+            </div>
 
-              <div className="mt-5 rounded-2xl border border-slate-300 bg-white p-4">
-                <button
-                  onClick={() => setShowPostComposer((prev) => !prev)}
-                  className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-[#0b72ff] px-5 py-2.5 text-base font-bold text-white shadow-[0_8px_20px_rgba(11,114,255,0.3)]"
-                >
-                  <span className="material-symbols-outlined text-[20px]">edit_square</span>
-                  <span>Đăng bài</span>
-                </button>
-
-                {showPostComposer && (
-                  <div className="mt-3">
-                    <div className="flex items-center gap-3 mb-3">
-                      {displayAvatar ? (
-                        <img src={displayAvatar} alt={displayName} className="w-11 h-11 rounded-full object-cover border border-slate-300" />
-                      ) : (
-                        <div className="w-11 h-11 rounded-full bg-primary text-white flex items-center justify-center font-bold">{displayInitial}</div>
-                      )}
-                      <div>
-                        <p className="text-sm font-bold text-slate-800">{displayName}</p>
-                        <p className="text-xs text-slate-500">{profile.email || user?.email}</p>
-                      </div>
-                    </div>
-                    <textarea
-                      value={postDraft}
-                      onChange={(event) => setPostDraft(event.target.value)}
-                      rows={4}
-                      placeholder="Bạn đang nghĩ gì?"
-                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 resize-none"
-                    />
-                    <input ref={attachmentInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleAttachmentChange} />
-                    {postAttachment && (
-                      <div className="mt-3 rounded-xl border border-slate-300 bg-slate-50 p-3 relative overflow-hidden">
-                        <button
-                          type="button"
-                          onClick={() => setPostAttachment(null)}
-                          className="absolute top-2 right-2 w-8 h-8 rounded-full bg-white border border-slate-300 text-slate-600 inline-flex items-center justify-center"
-                        >
-                          <span className="material-symbols-outlined text-[18px]">close</span>
-                        </button>
-                        {postAttachment.type === 'image' ? (
-                          <img src={postAttachment.uri} alt={postAttachment.name || 'attachment'} className="w-full max-h-56 object-cover rounded-lg" />
-                        ) : (
-                          <video src={postAttachment.uri} controls className="w-full max-h-56 rounded-lg bg-black" />
-                        )}
-                        <p className="text-xs text-slate-500 mt-2 truncate">{postAttachment.name}</p>
-                      </div>
+            <div className="max-w-5xl mx-auto px-6 lg:px-8">
+              <div className="relative flex flex-col sm:flex-row items-center sm:items-end justify-between -mt-16 sm:-mt-20 sm:mb-8 mb-6 sm:gap-6 z-10">
+                <div className="flex flex-col sm:flex-row items-center sm:items-end gap-5 w-full sm:w-auto">
+                  <div className="relative w-32 h-32 sm:w-40 sm:h-40 rounded-full border-[4px] border-white bg-white shadow-md shrink-0">
+                    {displayAvatar ? (
+                      <img src={displayAvatar} alt={displayName} className="w-full h-full rounded-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full rounded-full bg-primary text-white flex items-center justify-center text-5xl font-bold">{displayInitial}</div>
                     )}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button type="button" onClick={handleAttachmentButtonClick} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
-                        <span className="material-symbols-outlined text-[18px]">attach_file</span>
-                        Ảnh / Video
-                      </button>
-                      {postAttachment && (
-                        <button type="button" onClick={() => setPostAttachment(null)} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
-                          <span className="material-symbols-outlined text-[18px]">delete</span>
-                          Bỏ đính kèm
+                    {!isViewingOther && (
+                      <>
+                        <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="absolute bottom-1 right-1 sm:bottom-2 sm:right-2 w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-300 transition-colors flex items-center justify-center shadow-sm">
+                          <Camera size={18} className="text-slate-700" />
                         </button>
-                      )}
-                    </div>
-                    <div className="mt-3 flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowPostComposer(false);
-                          setPostDraft('');
-                        }}
-                        className="px-4 py-2 rounded-lg bg-slate-200 text-sm font-semibold text-slate-800"
-                      >
-                        Hủy
-                      </button>
-                      <button type="button" onClick={handleCreatePost} className="px-4 py-2 rounded-lg bg-blue-500 text-sm font-semibold text-white">
-                        Đăng
-                      </button>
-                    </div>
+                        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
+                      </>
+                    )}
+                  </div>
+
+                  <div className="pb-2 text-center sm:text-left flex-1">
+                    <h2 className="text-3xl sm:text-4xl leading-tight font-extrabold text-slate-900 tracking-tight">{displayName}</h2>
+                    <p className="text-slate-500 font-medium text-base mt-2">{profile.email || targetEmail || user?.email}</p>
+                    {notFound && <p className="text-sm text-red-600 mt-2 font-medium bg-red-50 text-center sm:text-left rounded-lg py-1 px-3 inline-block">Không tìm thấy hồ sơ người dùng này.</p>}
+                  </div>
+                </div>
+
+                {!isViewingOther && (
+                  <div className="mt-4 sm:mt-0 pb-2">
+                    <button onClick={handleStartEdit} className="w-full sm:w-auto flex items-center justify-center gap-2 text-white bg-primary hover:bg-primary/90 px-6 py-2.5 rounded-xl transition-all text-sm font-bold shadow-sm">
+                      <Edit3 size={16} /> Chỉnh sửa
+                    </button>
                   </div>
                 )}
               </div>
 
-              {posts.length > 0 && (
-                <div className="mt-4 space-y-3">
-                  {posts.map((post) => (
-                    <article key={post.id} className="rounded-2xl border border-slate-300 bg-white p-4">
-                      <div className="flex items-center gap-3 mb-3">
-                        {post.authorAvatar ? (
-                          <img src={post.authorAvatar} alt={post.authorName || 'Người dùng'} className="w-11 h-11 rounded-full object-cover border border-slate-300" />
-                        ) : (
-                          <div className="w-11 h-11 rounded-full bg-primary text-white flex items-center justify-center font-bold">{(post.authorName || 'U').charAt(0).toUpperCase()}</div>
-                        )}
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">{post.authorName || 'Người dùng'}</p>
-                          <p className="text-xs text-slate-500">{new Date(post.createdAt).toLocaleString('vi-VN')}</p>
-                        </div>
+              <div className="w-full pt-4">
+                <div className="bg-white border text-left border-slate-200 rounded-2xl p-6 sm:p-8 shadow-sm">
+                  <h3 className="font-bold text-lg text-slate-800 mb-6 pb-4 border-b border-slate-100">Thông tin cá nhân</h3>
+                  
+                  <div className="grid md:grid-cols-2 gap-x-12 gap-y-8">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0"><User size={24} /></div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Giới tính</p>
+                        <p className="font-bold text-slate-800 text-base">{profile.gender ? 'Nam' : 'Nữ'}</p>
                       </div>
-                      <p className="text-sm text-slate-800 leading-6 whitespace-pre-wrap">{post.content}</p>
-                    </article>
-                  ))}
+                    </div>
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0"><Cake size={24} /></div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Ngày sinh</p>
+                        <p className="font-bold text-slate-800 text-base">{profile.dataOfBirth ? formatBirthDate(profile.dataOfBirth) : 'Chưa cập nhật'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0"><Phone size={24} /></div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Điện thoại</p>
+                        <p className="font-bold text-slate-800 text-base">{profile.phone || 'Chưa cập nhật'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-orange-50 flex items-center justify-center text-orange-600 shrink-0"><MapPin size={24} /></div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Địa chỉ</p>
+                        <p className="font-bold text-slate-800 text-base">{profile.address || 'Chưa cập nhật'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4 md:col-span-2">
+                      <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600 shrink-0"><Mail size={24} /></div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Giới thiệu</p>
+                        <p className="font-bold text-slate-800 text-base whitespace-pre-wrap">{profile.bio || 'Chưa cập nhật'}</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-8 p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-3">
+                    <span className="material-symbols-outlined text-slate-400">info</span>
+                    <p className="text-sm font-medium text-slate-500">Chỉ bạn bè có lưu số của bạn trong danh bạ máy xem được số này</p>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
         )}

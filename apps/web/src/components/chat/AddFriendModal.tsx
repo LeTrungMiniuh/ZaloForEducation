@@ -3,7 +3,7 @@ import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 
-import { X, Search, UserPlus, ArrowRight } from 'lucide-react';
+import { X, Search, UserPlus } from 'lucide-react';
 
 const AddFriendModal: React.FC = () => {
   const { user } = useAuth();

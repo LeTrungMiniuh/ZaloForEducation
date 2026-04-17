@@ -171,13 +171,13 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
               <div className="flex bg-surface-container p-1.5 rounded-2xl gap-1">
                 <button 
                   onClick={() => setFormData({...formData, gender: true})}
-                  className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${formData.gender ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:bg-white/50'}`}
+                  className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${formData.gender ? 'bg-white text-primary shadow-sm dark:bg-primary/20 dark:text-on-surface' : 'text-on-surface-variant hover:bg-white/50'}`}
                 >
                   Nam
                 </button>
                 <button 
                   onClick={() => setFormData({...formData, gender: false})}
-                  className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${!formData.gender ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:bg-white/50'}`}
+                  className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${!formData.gender ? 'bg-white text-primary shadow-sm dark:bg-primary/20 dark:text-on-surface' : 'text-on-surface-variant hover:bg-white/50'}`}
                 >
                   Nữ
                 </button>

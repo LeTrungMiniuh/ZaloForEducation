@@ -4,12 +4,26 @@ import { useChatStore } from '../../store/chatStore';
 import { useFriendships } from '../../hooks/useFriendships';
 import { useChatActions } from '../../hooks/useChatActions';
 import { getDisplayName, getDisplayAvatar } from '../../utils/chatUtils';
+import api from '../../services/api';
 
 const ContactPage: React.FC = () => {
   const { user } = useAuth();
   const { userProfiles, loadUserProfile } = useChatStore();
-  const { acceptedFriends, pendingFriends, loading } = useFriendships();
+  const { acceptedFriends, pendingFriends, loading, refreshFriendships } = useFriendships();
   const { handleOpenDirectChat } = useChatActions();
+  const [activeTab, setActiveTab] = React.useState<'friends' | 'groups' | 'requests'>('friends');
+
+  const incomingRequests = pendingFriends.filter(f => f.receiver_id === user?.email);
+  const outgoingRequests = pendingFriends.filter(f => f.sender_id === user?.email);
+
+  const acceptRequest = async (senderEmail: string) => {
+    try {
+      await api.post('/chat/friends/accept', { senderEmail });
+      refreshFriendships();
+    } catch (error) {
+      console.error('Failed to accept request', error);
+    }
+  };
 
   React.useEffect(() => {
     acceptedFriends.forEach((f) => {
@@ -29,24 +43,30 @@ const ContactPage: React.FC = () => {
           </div>
           
           <div className="space-y-1">
-             <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-primary/10 text-primary font-bold text-[14px]">
+             <button
+               onClick={() => setActiveTab('friends')}
+               className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all text-[14px] ${activeTab === 'friends' ? 'bg-primary/10 text-primary font-bold' : 'hover:bg-surface-container text-on-surface font-semibold'}`}>
                <span className="material-symbols-outlined">person</span>
                Danh sách bạn bè
              </button>
-             <button className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-surface-container transition-all text-on-surface font-semibold text-[14px]">
+             <button
+               onClick={() => setActiveTab('groups')}
+               className={`w-full flex items-center justify-between p-3 rounded-xl transition-all text-[14px] ${activeTab === 'groups' ? 'bg-primary/10 text-primary font-bold' : 'hover:bg-surface-container text-on-surface font-semibold'}`}>
                <div className="flex items-center gap-3">
                  <span className="material-symbols-outlined text-on-surface-variant">group</span>
                  Danh sách nhóm
                </div>
              </button>
-             <button className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-surface-container transition-all text-on-surface font-semibold text-[14px]">
+             <button
+               onClick={() => setActiveTab('requests')}
+               className={`w-full flex items-center justify-between p-3 rounded-xl transition-all text-[14px] ${activeTab === 'requests' ? 'bg-primary/10 text-primary font-bold' : 'hover:bg-surface-container text-on-surface font-semibold'}`}>
                <div className="flex items-center gap-3">
                  <span className="material-symbols-outlined text-on-surface-variant">person_add</span>
                  Lời mời kết bạn
                </div>
-               {pendingFriends.length > 0 && (
+               {incomingRequests.length > 0 && (
                  <span className="bg-error text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                   {pendingFriends.length}
+                   {incomingRequests.length}
                  </span>
                )}
              </button>
@@ -102,19 +122,88 @@ const ContactPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Right Panel: Content (Empty default) */}
-      <div className="flex-1 h-full flex flex-col items-center justify-center bg-surface-container-lowest animate-in fade-in duration-500">
-         <div className="w-20 h-20 bg-primary/10 rounded-3xl flex items-center justify-center mb-6">
-            <span className="material-symbols-outlined text-[40px] text-primary">person_search</span>
-         </div>
-         <h2 className="text-xl font-bold text-on-surface mb-2">Thông tin liên hệ</h2>
-         <p className="text-on-surface-variant text-sm max-w-sm text-center">
-           Chọn một người bạn từ danh sách bên trái để xem thông tin chi tiết và lịch sử trò chuyện chung.
-         </p>
-         
-         <button className="mt-8 px-6 py-2.5 bg-primary text-white font-bold rounded-full shadow-lg shadow-primary/20 hover:scale-105 transition-transform">
-           Tìm thêm bạn mới
-         </button>
+      {/* Right Panel: Content */}
+      <div className="flex-1 h-full flex flex-col items-center bg-surface-container-lowest overflow-y-auto w-full">
+         {activeTab === 'friends' && (
+           <div className="flex-1 flex flex-col items-center justify-center animate-in fade-in duration-500 w-full">
+             <div className="w-20 h-20 bg-primary/10 rounded-3xl flex items-center justify-center mb-6">
+                <span className="material-symbols-outlined text-[40px] text-primary">person_search</span>
+             </div>
+             <h2 className="text-xl font-bold text-on-surface mb-2">Thông tin liên hệ</h2>
+             <p className="text-on-surface-variant text-sm max-w-sm text-center">
+               Chọn một người bạn từ danh sách bên trái để xem thông tin chi tiết và lịch sử trò chuyện chung.
+             </p>
+             
+             <button className="mt-8 px-6 py-2.5 bg-primary text-white font-bold rounded-full shadow-lg shadow-primary/20 hover:scale-105 transition-transform">
+               Tìm thêm bạn mới
+             </button>
+           </div>
+         )}
+
+         {activeTab === 'requests' && (
+           <div className="w-full max-w-3xl p-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <div className="flex items-center gap-3 mb-8">
+               <span className="material-symbols-outlined text-[32px] text-primary">person_add</span>
+               <h2 className="text-2xl font-bold text-on-surface">Lời mời kết bạn</h2>
+             </div>
+             
+             {/* Received Requests */}
+             <div className="mb-8 bg-white rounded-2xl shadow-sm border border-outline-variant/20 overflow-hidden">
+                <div className="bg-surface-container-lowest p-4 border-b border-outline-variant/20">
+                  <h3 className="font-bold text-[15px] text-on-surface">Lời mời đã nhận ({incomingRequests.length})</h3>
+                </div>
+                <div className="p-2">
+                  {incomingRequests.length === 0 ? (
+                    <div className="p-8 text-center text-on-surface-variant text-sm">Chưa có lời mời nào</div>
+                  ) : (
+                    incomingRequests.map(req => (
+                      <div key={req.sender_id} className="flex items-center justify-between p-3 hover:bg-surface-container/50 rounded-xl transition-colors">
+                        <div className="flex items-center gap-3">
+                          <img src={getDisplayAvatar(req.sender_id, user, userProfiles)} alt="" className="w-12 h-12 rounded-full border border-outline-variant/10 bg-surface-container object-cover" />
+                          <div>
+                            <p className="font-bold text-on-surface">{getDisplayName(req.sender_id, user, userProfiles)}</p>
+                            <p className="text-[12px] text-on-surface-variant">{req.sender_id}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => acceptRequest(req.sender_id)} className="px-4 py-2 bg-primary text-white font-bold text-sm rounded-full hover:bg-primary/90 transition-colors shadow-sm">
+                            Chấp nhận
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+             </div>
+
+             {/* Sent Requests */}
+             <div className="bg-white rounded-2xl shadow-sm border border-outline-variant/20 overflow-hidden">
+                <div className="bg-surface-container-lowest p-4 border-b border-outline-variant/20">
+                  <h3 className="font-bold text-[15px] text-on-surface">Lời mời đã gửi ({outgoingRequests.length})</h3>
+                </div>
+                <div className="p-2">
+                  {outgoingRequests.length === 0 ? (
+                    <div className="p-8 text-center text-on-surface-variant text-sm">Chưa có lời mời nào</div>
+                  ) : (
+                    outgoingRequests.map(req => (
+                      <div key={req.receiver_id} className="flex items-center justify-between p-3 hover:bg-surface-container/50 rounded-xl transition-colors">
+                        <div className="flex items-center gap-3">
+                          <img src={getDisplayAvatar(req.receiver_id, user, userProfiles)} alt="" className="w-12 h-12 rounded-full border border-outline-variant/10 bg-surface-container object-cover" />
+                          <div>
+                            <p className="font-bold text-on-surface">{getDisplayName(req.receiver_id, user, userProfiles)}</p>
+                            <p className="text-[12px] text-on-surface-variant">{req.receiver_id}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                           <span className="text-sm font-medium text-primary bg-primary/10 px-3 py-1.5 rounded-full">Đang chờ xác nhận</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+             </div>
+           </div>
+         )}
       </div>
     </div>
   );

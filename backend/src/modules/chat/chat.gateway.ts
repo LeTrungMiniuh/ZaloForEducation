@@ -125,6 +125,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   emitConversationRead(email: string, convId: string) {
     const userRoom = `user#${email.toLowerCase()}`;
     this.server.to(userRoom).emit("conversation_marked_read", { convId });
+    // Tell the room that this user has read the chat
+    this.server.to(convId).emit("participant_read", { convId, email, timestamp: Date.now() });
     this.logger.log(`Notified user ${email} that conversation ${convId} was read`);
   }
 

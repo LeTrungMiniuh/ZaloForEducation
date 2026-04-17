@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 
 const SETTINGS_KEY = 'mobile_settings';
 
@@ -32,33 +33,45 @@ const SettingsToggle: React.FC<{
   enabled: boolean;
   onToggle: () => void;
   icon: string;
-}> = ({ label, description, enabled, onToggle, icon }) => {
+  mode?: 'switch' | 'action';
+  actionLabel?: string;
+}> = ({ label, description, enabled, onToggle, icon, mode = 'switch', actionLabel = 'Thực hiện' }) => {
   return (
-    <div className="group rounded-3xl border border-outline-variant/15 bg-white p-5 flex items-center justify-between gap-6 transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:border-primary/20">
-      <div className="flex items-center gap-5">
-        <div className="w-12 h-12 rounded-2xl bg-primary/5 flex items-center justify-center transition-colors group-hover:bg-primary/10">
+    <div className="group rounded-2xl sm:rounded-3xl border border-outline-variant/15 bg-white dark:bg-surface-container p-4 sm:p-5 flex items-center justify-between gap-3 sm:gap-6 transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:hover:shadow-[0_8px_30px_rgb(0,0,0,0.3)] hover:border-primary/20 dark:hover:border-primary/40">
+      <div className="flex items-center gap-3 sm:gap-5 min-w-0">
+        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-primary/5 dark:bg-primary/15 flex items-center justify-center transition-colors group-hover:bg-primary/10 dark:group-hover:bg-primary/20 shrink-0">
           <span className="material-symbols-outlined text-primary text-[24px]">{icon}</span>
         </div>
-        <div>
-          <p className="text-[15px] font-extrabold text-on-surface leading-tight">{label}</p>
-          <p className="text-[13px] text-on-surface-variant mt-1.5 leading-relaxed">{description}</p>
+        <div className="min-w-0">
+          <p className="text-[14px] sm:text-[15px] font-extrabold text-on-surface leading-tight">{label}</p>
+          <p className="text-[12px] sm:text-[13px] text-on-surface-variant mt-1 sm:mt-1.5 leading-relaxed">{description}</p>
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onToggle}
-        className={`relative h-9 w-16 shrink-0 rounded-full border overflow-hidden transition-all duration-300 focus:outline-none ${enabled ? 'border-primary bg-primary' : 'border-[#d0d0d4] bg-[#d9d9dc]'}`}
-      >
-        <span className={`absolute top-0.5 h-7 w-7 rounded-full bg-white shadow-lg transition-all duration-300 ${enabled ? 'left-[34px]' : 'left-[2px]'}`}></span>
-      </button>
+      {mode === 'action' ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="shrink-0 rounded-xl sm:rounded-2xl bg-primary/85 dark:bg-[#4b5d7a] dark:border dark:border-[#6c7fa1] text-white dark:text-[#eef3fb] px-4 sm:px-5 py-2 sm:py-2.5 text-[12px] sm:text-[13px] font-extrabold hover:bg-primary/80 dark:hover:bg-[#55698a] transition-colors"
+        >
+          {actionLabel}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`relative h-8 sm:h-9 w-14 sm:w-16 shrink-0 rounded-full border overflow-hidden transition-all duration-300 focus:outline-none ${enabled ? 'border-primary bg-primary' : 'border-[#d0d0d4] dark:border-[#464d5f] bg-[#d9d9dc] dark:bg-[#3a3f52]'}`}
+        >
+          <span className={`absolute top-0.5 h-7 w-7 rounded-full bg-white dark:bg-surface-container shadow-lg transition-all duration-300 ${enabled ? 'left-[26px] sm:left-[34px]' : 'left-[2px]'}`}></span>
+        </button>
+      )}
     </div>
   );
 };
 
 const Section: React.FC<{ title: string; subtitle: string; children: React.ReactNode }> = ({ title, subtitle, children }) => (
-  <section className="mt-12 first:mt-0">
-    <div className="mb-6 px-1">
-      <h3 className="text-xl font-extrabold tracking-tight text-on-surface">{title}</h3>
+  <section className="mt-10 sm:mt-12 first:mt-0">
+    <div className="mb-5 sm:mb-6 px-1">
+      <h3 className="text-lg sm:text-xl font-extrabold tracking-tight text-on-surface">{title}</h3>
       <p className="text-[13px] text-on-surface-variant mt-1.5 font-medium">{subtitle}</p>
     </div>
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -70,10 +83,10 @@ const Section: React.FC<{ title: string; subtitle: string; children: React.React
 const ChipSelector: React.FC<{ label: string; active: boolean; onClick: () => void }> = ({ label, active, onClick }) => (
   <button
     onClick={onClick}
-    className={`px-6 py-3 rounded-2xl text-sm font-bold transition-all ${
+    className={`px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-[13px] sm:text-sm font-bold transition-all ${
       active 
-        ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-105' 
-        : 'bg-surface-container-highest/50 text-on-surface-variant hover:bg-surface-container-highest'
+        ? 'bg-white text-primary shadow-lg shadow-white/20 scale-105 dark:bg-[#4b5d7a] dark:text-[#eef3fb] dark:border dark:border-[#6c7fa1] dark:shadow-none' 
+        : 'bg-surface-container-highest/50 dark:bg-surface-container-highest/20 text-on-surface-variant hover:bg-surface-container-highest dark:hover:bg-surface-container-highest/40'
     }`}
   >
     {label}
@@ -83,6 +96,7 @@ const ChipSelector: React.FC<{ label: string; active: boolean; onClick: () => vo
 const SettingsPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, requestChangePassword, confirmChangePassword, requestLockAccount, confirmLockAccount, requestDeleteAccount, confirmDeleteAccount } = useAuth();
+  const { themeMode, setThemeMode, isDark, language, setLanguage, t } = useTheme();
   const [settings, setSettings] = useState<WebSettings>(DEFAULT_SETTINGS);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [isLockAccountOpen, setIsLockAccountOpen] = useState(false);
@@ -114,139 +128,141 @@ const SettingsPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-surface-container-lowest text-on-surface selection:bg-primary/10">
-      <nav className="fixed top-0 w-full z-50 bg-white/70 backdrop-blur-2xl border-b border-outline-variant/10 px-8 py-5 flex justify-between items-center shadow-sm">
-        <div className="flex items-center gap-6">
+    <div className="h-full overflow-y-auto bg-surface-container-lowest dark:bg-surface-container-lowest text-on-surface dark:text-on-surface selection:bg-primary/10 dark:selection:bg-primary/30">
+      <nav className="sticky top-0 w-full z-20 bg-white/80 dark:bg-surface-container/80 backdrop-blur-2xl border-b border-outline-variant/10 dark:border-outline-variant/20 px-4 sm:px-8 py-3 sm:py-5 flex justify-between items-center gap-3 shadow-sm dark:shadow-lg">
+        <div className="flex items-center gap-3 sm:gap-6 min-w-0">
           <button 
             onClick={() => navigate(-1)} 
-            className="w-11 h-11 flex items-center justify-center rounded-2xl bg-surface-container-highest/50 hover:bg-surface-container-highest transition-all hover:scale-105 active:scale-95 text-on-surface"
+            className="w-9 h-9 sm:w-11 sm:h-11 flex items-center justify-center rounded-xl sm:rounded-2xl bg-surface-container-highest/50 dark:bg-surface-container-highest/20 hover:bg-surface-container-highest dark:hover:bg-surface-container-highest/40 transition-all hover:scale-105 active:scale-95 text-on-surface dark:text-on-surface shrink-0"
           >
-            <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+            <span className="material-symbols-outlined text-[22px] sm:text-[24px]">arrow_back</span>
           </button>
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-primary leading-none">Cài đặt</h1>
-            <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mt-1.5">Zalo Education Experience</p>
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-primary leading-none">{t('nav.settings')}</h1>
+            <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mt-1.5">{t('nav.experience')}</p>
           </div>
         </div>
-        <div className="flex items-center gap-4 bg-white/80 p-1.5 pr-4 rounded-2xl border border-outline-variant/10 shadow-sm">
-          <img src={displayAvatar} alt={displayName} className="w-10 h-10 rounded-xl object-cover ring-2 ring-primary/5 shadow-inner" />
-          <div className="text-left">
+        <div className="hidden sm:flex items-center gap-3 bg-white/80 dark:bg-surface-container/80 p-1.5 pr-3 rounded-xl sm:rounded-2xl border border-outline-variant/10 dark:border-outline-variant/20 shadow-sm dark:shadow-lg">
+          <img src={displayAvatar} alt={displayName} className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl object-cover ring-2 ring-primary/5 shadow-inner" />
+          <div className="text-left min-w-0">
             <p className="text-[13px] font-extrabold text-on-surface leading-tight">{displayName}</p>
             <p className="text-[10px] text-on-surface-variant font-bold truncate max-w-[150px]">{user?.email}</p>
           </div>
         </div>
       </nav>
 
-      <main className="max-w-6xl mx-auto w-full px-8 pt-32 pb-24">
-        <header className="mb-14 text-center max-w-2xl mx-auto">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-[32px] bg-primary/5 text-primary mb-6 shadow-xl shadow-primary/5">
-            <span className="material-symbols-outlined text-[40px]" style={{ fontVariationSettings: "'wght' 300" }}>settings</span>
+      <main className="max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-8 sm:pt-10 pb-12 sm:pb-20">
+        <header className="mb-10 sm:mb-14 text-center max-w-2xl mx-auto">
+          <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-[24px] sm:rounded-[32px] bg-primary/5 dark:bg-primary/10 text-primary mb-4 sm:mb-6 shadow-xl shadow-primary/5 dark:shadow-primary/10">
+            <span className="material-symbols-outlined text-[34px] sm:text-[40px]" style={{ fontVariationSettings: "'wght' 300" }}>settings</span>
           </div>
-          <h2 className="text-4xl font-black tracking-tight text-on-surface mb-4">Tuỳ chỉnh ứng dụng</h2>
-          <p className="text-on-surface-variant font-medium leading-relaxed">
-            Mọi thay đổi sẽ được lưu cục bộ trên trình duyệt này và đồng bộ hoá khi bạn đăng nhập trên các thiết bị Zalo Education khác.
+          <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-on-surface mb-3 sm:mb-4">{t('header.title')}</h2>
+          <p className="text-sm sm:text-base text-on-surface-variant font-medium leading-relaxed">
+            {t('header.description')}
           </p>
         </header>
 
-        <div className="space-y-12">
-          <Section title="Tài khoản & Bảo mật" subtitle="Quản lý các thiết bị và phương thức bảo vệ tài khoản">
-            <div className="md:col-span-2 group rounded-[32px] border border-outline-variant/20 bg-gradient-to-br from-primary to-primary-container p-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-2xl shadow-primary/10 transition-all hover:scale-[1.01]">
-              <div className="text-white">
+        <div className="space-y-10 sm:space-y-12">
+          <Section title={t('section.account')} subtitle={t('section.account_subtitle')}>
+            <div className="md:col-span-2 group rounded-[32px] border border-outline-variant/20 dark:border-outline-variant/30 bg-surface-container-lowest dark:bg-surface-container p-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 shadow-2xl shadow-primary/10 dark:shadow-primary/5 transition-all hover:scale-[1.01]">
+              <div className="text-on-surface">
                 <h3 className="text-xl font-black mb-1.5 flex items-center gap-2">
                   <span className="material-symbols-outlined">devices</span>
-                  Thiết bị đăng nhập
+                  {t('account.devices')}
                 </h3>
-                <p className="text-white/80 text-sm font-medium">Hiện tại bạn đang đăng nhập trên {user?.activeSessions || 1} thiết bị.</p>
+                <p className="text-on-surface-variant text-sm font-medium">{t('account.devices_desc', { count: user?.activeSessions || 1 })}</p>
               </div>
               <Link
                 to="/sessions"
-                className="inline-flex items-center justify-center rounded-2xl bg-white text-primary px-8 py-4 font-black text-sm hover:shadow-xl hover:-translate-y-1 active:translate-y-0 transition-all"
+                className={`inline-flex items-center justify-center rounded-2xl px-8 py-4 font-extrabold text-sm hover:shadow-xl hover:-translate-y-1 active:translate-y-0 transition-all ${isDark ? 'bg-[#4b5d7a] text-[#eef3fb] border border-[#6c7fa1] shadow-none hover:bg-[#55698a]' : 'bg-white text-primary'}`}
               >
-                Quản lý phiên ngay
+                {t('account.manage_sessions')}
               </Link>
             </div>
             <SettingsToggle
               icon="lock"
-              label="Đổi mật khẩu"
-              description="Cập nhật mật khẩu thường xuyên để đảm bảo an toàn tối đa."
+              label={t('account.change_password')}
+              description={t('account.change_password_desc')}
               enabled={false}
+              mode="action"
+              actionLabel={t('account.change_password')}
               onToggle={() => setIsChangePasswordOpen(true)}
             />
           </Section>
 
-          <Section title="Quyền riêng tư" subtitle="Kiểm soát những gì người khác thấy về bạn">
+          <Section title={t('section.privacy')} subtitle={t('section.privacy_subtitle')}>
             <SettingsToggle
               icon="visibility"
-              label="Trạng thái hoạt động"
-              description="Cho phép bạn bè thấy khi nào bạn đang online."
+              label={t('privacy.online_status')}
+              description={t('privacy.online_status_desc')}
               enabled={settings.showOnlineStatus}
               onToggle={() => patchSettings({ showOnlineStatus: !settings.showOnlineStatus })}
             />
             <SettingsToggle
               icon="contact_phone"
-              label="Tìm kiếm qua số điện thoại"
-              description="Cho phép người lạ tìm thấy bạn thông qua số điện thoại."
+              label={t('privacy.phone_search')}
+              description={t('privacy.phone_search_desc')}
               enabled={settings.allowSearchByPhone}
               onToggle={() => patchSettings({ allowSearchByPhone: !settings.allowSearchByPhone })}
             />
             <SettingsToggle
               icon="sync"
-              label="Đồng bộ danh bạ"
-              description="Tự động đồng bộ các liên hệ mới từ danh bạ của bạn."
+              label={t('privacy.sync_contacts')}
+              description={t('privacy.sync_contacts_desc')}
               enabled={settings.syncContacts}
               onToggle={() => patchSettings({ syncContacts: !settings.syncContacts })}
             />
           </Section>
 
-          <Section title="Thông báo" subtitle="Cài đặt âm thanh và cách nhận tin nhắn">
+          <Section title={t('section.notifications')} subtitle={t('section.notifications_subtitle')}>
             <SettingsToggle
               icon="notifications"
-              label="Thông báo đẩy"
-              description="Nhận thông báo ngay lập tức trên màn hình desktop."
+              label={t('notif.push')}
+              description={t('notif.push_desc')}
               enabled={settings.notifications}
               onToggle={() => patchSettings({ notifications: !settings.notifications })}
             />
             <SettingsToggle
               icon="volume_up"
-              label="Âm thanh thông báo"
-              description="Phát âm báo khi có tin nhắn mới hoặc cuộc gọi."
+              label={t('notif.sound')}
+              description={t('notif.sound_desc')}
               enabled={settings.messageSound}
               onToggle={() => patchSettings({ messageSound: !settings.messageSound })}
             />
           </Section>
 
-          <Section title="Dữ liệu & Media" subtitle="Quản lý cách ứng dụng xử lý file và bộ nhớ">
+          <Section title={t('section.media')} subtitle={t('section.media_subtitle')}>
             <SettingsToggle
               icon="cloud_download"
-              label="Tự động tải media"
-              description="Tự động lưu ảnh và video về bộ nhớ tạm của trình duyệt."
+              label={t('media.auto_download')}
+              description={t('media.auto_download_desc')}
               enabled={settings.autoDownloadMedia}
               onToggle={() => patchSettings({ autoDownloadMedia: !settings.autoDownloadMedia })}
             />
           </Section>
 
-          <Section title="Giao diện & Ngôn ngữ" subtitle="Tùy chỉnh phong cách hiển thị ứng dụng">
-            <div className="rounded-3xl border border-outline-variant/15 bg-white p-6 md:col-span-2">
+          <Section title={t('section.theme')} subtitle={t('section.theme_subtitle')}>
+            <div className="rounded-3xl border border-outline-variant/15 dark:border-outline-variant/30 bg-white dark:bg-surface-container p-6 md:col-span-2">
               <div className="flex flex-col md:flex-row gap-12">
                 <div className="flex-1">
                   <p className="text-sm font-extrabold text-on-surface mb-5 flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary">palette</span>
-                    Chủ đề giao diện
+                    {t('theme.label')}
                   </p>
                   <div className="flex flex-wrap gap-3">
-                    <ChipSelector label="Hệ thống" active={settings.themeMode === 'system'} onClick={() => patchSettings({ themeMode: 'system' })} />
-                    <ChipSelector label="Sáng" active={settings.themeMode === 'light'} onClick={() => patchSettings({ themeMode: 'light' })} />
-                    <ChipSelector label="Tối" active={settings.themeMode === 'dark'} onClick={() => patchSettings({ themeMode: 'dark' })} />
+                    <ChipSelector label={t('theme.system')} active={themeMode === 'system'} onClick={() => setThemeMode('system')} />
+                    <ChipSelector label={t('theme.light')} active={themeMode === 'light'} onClick={() => setThemeMode('light')} />
+                    <ChipSelector label={t('theme.dark')} active={themeMode === 'dark'} onClick={() => setThemeMode('dark')} />
                   </div>
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-extrabold text-on-surface mb-5 flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary">language</span>
-                    Ngôn ngữ ứng dụng
+                    {t('language.label')}
                   </p>
                   <div className="flex flex-wrap gap-3">
-                    <ChipSelector label="Tiếng Việt" active={settings.language === 'vi'} onClick={() => patchSettings({ language: 'vi' })} />
-                    <ChipSelector label="English" active={settings.language === 'en'} onClick={() => patchSettings({ language: 'en' })} />
+                    <ChipSelector label={t('language.vi')} active={language === 'vi'} onClick={() => setLanguage('vi')} />
+                    <ChipSelector label={t('language.en')} active={language === 'en'} onClick={() => setLanguage('en')} />
                   </div>
                 </div>
               </div>
@@ -256,45 +272,45 @@ const SettingsPage: React.FC = () => {
           {/* Section: Quản lý tài khoản */}
           <section className="mt-12">
             <div className="mb-6 px-1">
-              <h3 className="text-xl font-extrabold tracking-tight text-error">Quản lý tài khoản</h3>
-              <p className="text-[13px] text-on-surface-variant mt-1.5 font-medium">Các thao tác không thể hoàn tác. Vui lòng cân nhắc kỹ trước khi thực hiện.</p>
+              <h3 className="text-xl font-extrabold tracking-tight text-on-surface">{t('section.account_management')}</h3>
+              <p className="text-[13px] text-on-surface-variant mt-1.5 font-medium">{t('section.account_management_subtitle')}</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <button
                 id="btn-lock-account"
                 onClick={() => setIsLockAccountOpen(true)}
-                className="group rounded-3xl border border-orange-200 bg-orange-50 p-5 flex items-center gap-5 transition-all hover:shadow-[0_8px_30px_rgb(234,88,12,0.1)] hover:border-orange-400 text-left"
+                className="group rounded-3xl border border-outline-variant/15 dark:border-outline-variant/30 bg-white dark:bg-surface-container p-5 flex items-center gap-5 transition-all hover:shadow-[0_8px_30px_rgb(0,65,143,0.08)] dark:hover:shadow-[0_8px_30px_rgb(0,0,0,0.25)] hover:border-primary/30 dark:hover:border-primary/40 text-left"
               >
-                <div className="w-12 h-12 rounded-2xl bg-orange-100 flex items-center justify-center group-hover:bg-orange-200 transition-colors">
-                  <span className="material-symbols-outlined text-orange-600 text-[24px]">lock_person</span>
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center group-hover:bg-primary/15 dark:group-hover:bg-primary/25 transition-colors">
+                  <span className="material-symbols-outlined text-primary text-[24px]">lock_person</span>
                 </div>
                 <div>
-                  <p className="text-[15px] font-extrabold text-orange-800 leading-tight">Khóa tài khoản</p>
-                  <p className="text-[13px] text-orange-600 mt-1.5 leading-relaxed">Tạm dừng truy cập. Tài khoản có thể được mở khóa sau.</p>
+                  <p className="text-[15px] font-extrabold text-on-surface leading-tight">{t('account_mgmt.lock')}</p>
+                  <p className="text-[13px] text-on-surface-variant mt-1.5 leading-relaxed">{t('account_mgmt.lock_desc')}</p>
                 </div>
               </button>
 
               <button
                 id="btn-delete-account"
                 onClick={() => setIsDeleteAccountOpen(true)}
-                className="group rounded-3xl border border-red-200 bg-red-50 p-5 flex items-center gap-5 transition-all hover:shadow-[0_8px_30px_rgb(239,68,68,0.1)] hover:border-red-400 text-left"
+                className="group rounded-3xl border border-outline-variant/15 dark:border-outline-variant/30 bg-white dark:bg-surface-container p-5 flex items-center gap-5 transition-all hover:shadow-[0_8px_30px_rgb(0,65,143,0.08)] dark:hover:shadow-[0_8px_30px_rgb(0,0,0,0.25)] hover:border-primary/30 dark:hover:border-primary/40 text-left"
               >
-                <div className="w-12 h-12 rounded-2xl bg-red-100 flex items-center justify-center group-hover:bg-red-200 transition-colors">
-                  <span className="material-symbols-outlined text-red-600 text-[24px]">delete_forever</span>
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center group-hover:bg-primary/15 dark:group-hover:bg-primary/25 transition-colors">
+                  <span className="material-symbols-outlined text-primary text-[24px]">delete_forever</span>
                 </div>
                 <div>
-                  <p className="text-[15px] font-extrabold text-red-800 leading-tight">Xóa tài khoản</p>
-                  <p className="text-[13px] text-red-600 mt-1.5 leading-relaxed">Xóa vĩnh viễn tài khoản và toàn bộ dữ liệu liên quan.</p>
+                  <p className="text-[15px] font-extrabold text-on-surface leading-tight">{t('account_mgmt.delete')}</p>
+                  <p className="text-[13px] text-on-surface-variant mt-1.5 leading-relaxed">{t('account_mgmt.delete_desc')}</p>
                 </div>
               </button>
             </div>
           </section>
         </div>
 
-        <footer className="mt-20 pt-10 border-t border-outline-variant/10 text-center">
-          <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Zalo Education v1.0.0 Alpha</p>
+        <footer className="mt-20 pt-10 border-t border-outline-variant/10 dark:border-outline-variant/20 text-center">
+          <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">{t('footer.version')}</p>
           <p className="text-[11px] text-outline mt-2 tracking-wide font-medium max-w-md mx-auto leading-relaxed">
-            Hệ thống giáo dục nội bộ. Các thiết lập giao diện chỉ có hiệu lực trên trình duyệt này.
+            {t('footer.note')}
           </p>
         </footer>
       </main>
@@ -338,6 +354,7 @@ const ChangePasswordModal: React.FC<{
   confirmChangePassword: (otp: string) => Promise<void>;
   email: string;
 }> = ({ isOpen, onClose, requestChangePassword, confirmChangePassword, email }) => {
+  const { t } = useTheme();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -352,7 +369,7 @@ const ChangePasswordModal: React.FC<{
   const handleRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
-      setError('Mật khẩu xác nhận không khớp.');
+      setError(t('modal.password_mismatch'));
       return;
     }
     setLoading(true);
@@ -361,7 +378,7 @@ const ChangePasswordModal: React.FC<{
       await requestChangePassword({ currentPassword, newPassword });
       setStep(2);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Có lỗi xảy ra, vui lòng thử lại.');
+      setError(err.response?.data?.message || t('modal.error'));
     } finally {
       setLoading(false);
     }
@@ -374,9 +391,8 @@ const ChangePasswordModal: React.FC<{
     setError(null);
     try {
       await confirmChangePassword(otp);
-      // Success will automatically trigger logout from confirmChangePassword in AuthContext
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Mã OTP không chính xác.');
+      setError(err.response?.data?.message || t('modal.invalid_otp'));
     } finally {
       setLoading(false);
     }
@@ -385,14 +401,14 @@ const ChangePasswordModal: React.FC<{
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 sm:p-0">
       <div 
-        className="absolute inset-0 bg-on-surface/40 backdrop-blur-md animate-in fade-in duration-300"
+        className="absolute inset-0 bg-on-surface/40 dark:bg-black/60 animate-in fade-in duration-300"
         onClick={onClose}
       />
-      <div className="relative w-full max-w-[500px] bg-white rounded-[40px] shadow-2xl overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-10 duration-500">
+      <div className="relative w-full max-w-[500px] bg-white dark:bg-surface-container rounded-[40px] shadow-2xl dark:shadow-2xl overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-10 duration-500">
         <div className="absolute top-6 right-6 z-10">
           <button 
             onClick={onClose}
-            className="w-10 h-10 rounded-full bg-surface-container-highest/30 flex items-center justify-center hover:bg-surface-container-highest transition-colors active:scale-95"
+            className="w-10 h-10 rounded-full bg-surface-container-highest/30 dark:bg-surface-container-highest/20 flex items-center justify-center hover:bg-surface-container-highest dark:hover:bg-surface-container-highest/40 transition-colors active:scale-95"
           >
             <span className="material-symbols-outlined text-[20px] text-on-surface-variant">close</span>
           </button>
@@ -404,12 +420,12 @@ const ChangePasswordModal: React.FC<{
               <span className="material-symbols-outlined text-[32px]">{step === 1 ? 'lock_reset' : 'mark_email_unread'}</span>
             </div>
             <h3 className="text-2xl font-black text-on-surface">
-              {step === 1 ? 'Đổi mật khẩu' : 'Xác thực OTP'}
+              {step === 1 ? t('modal.change_password') : t('modal.verify_otp')}
             </h3>
             <p className="text-sm text-on-surface-variant font-medium mt-2 leading-relaxed">
               {step === 1 
-                ? 'Vui lòng xác thực mật khẩu hiện tại để tiếp tục.' 
-                : `Mã xác thực đã được gửi tới email: ${email}`}
+                ? t('modal.verify_password')
+                : t('modal.otp_sent', { email })}
             </p>
           </div>
 
@@ -423,7 +439,7 @@ const ChangePasswordModal: React.FC<{
           {step === 1 ? (
             <form onSubmit={handleRequest} className="space-y-6">
               <div className="space-y-2">
-                <label className="text-[13px] font-extrabold text-on-surface ml-1">Mật khẩu hiện tại</label>
+                <label className="text-[13px] font-extrabold text-on-surface ml-1">{t('modal.current_password')}</label>
                 <div className="relative group">
                   <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">lock</span>
                   <input 
@@ -431,14 +447,14 @@ const ChangePasswordModal: React.FC<{
                     required
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
-                    className="w-full h-14 bg-surface-container-highest/20 border-2 border-outline-variant/10 rounded-2xl pl-12 pr-4 text-sm font-bold focus:border-primary focus:bg-white outline-none transition-all"
+                    className="w-full h-14 bg-surface-container-highest/20 dark:bg-surface-container-highest/30 border-2 border-outline-variant/10 dark:border-outline-variant/20 rounded-2xl pl-12 pr-4 text-sm font-bold focus:border-primary focus:bg-white dark:focus:bg-surface-container outline-none transition-all text-on-surface dark:text-on-surface placeholder:text-on-surface-variant/60"
                     placeholder="••••••••"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <label className="text-[13px] font-extrabold text-on-surface ml-1">Mật khẩu mới</label>
+                <label className="text-[13px] font-extrabold text-on-surface ml-1">{t('modal.new_password')}</label>
                 <div className="relative group">
                   <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">password</span>
                   <input 
@@ -446,14 +462,14 @@ const ChangePasswordModal: React.FC<{
                     required
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full h-14 bg-surface-container-highest/20 border-2 border-outline-variant/10 rounded-2xl pl-12 pr-4 text-sm font-bold focus:border-primary focus:bg-white outline-none transition-all"
-                    placeholder="Tối thiểu 8 ký tự"
+                    className="w-full h-14 bg-surface-container-highest/20 dark:bg-surface-container-highest/30 border-2 border-outline-variant/10 dark:border-outline-variant/20 rounded-2xl pl-12 pr-4 text-sm font-bold focus:border-primary focus:bg-white dark:focus:bg-surface-container outline-none transition-all text-on-surface dark:text-on-surface placeholder:text-on-surface-variant/60"
+                    placeholder="Minimum 8 characters"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <label className="text-[13px] font-extrabold text-on-surface ml-1">Xác nhận mật khẩu mới</label>
+                <label className="text-[13px] font-extrabold text-on-surface ml-1">{t('modal.confirm_password')}</label>
                 <div className="relative group">
                   <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">verified</span>
                   <input 
@@ -461,8 +477,8 @@ const ChangePasswordModal: React.FC<{
                     required
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full h-14 bg-surface-container-highest/20 border-2 border-outline-variant/10 rounded-2xl pl-12 pr-4 text-sm font-bold focus:border-primary focus:bg-white outline-none transition-all"
-                    placeholder="Nhập lại mật khẩu mới"
+                    className="w-full h-14 bg-surface-container-highest/20 dark:bg-surface-container-highest/30 border-2 border-outline-variant/10 dark:border-outline-variant/20 rounded-2xl pl-12 pr-4 text-sm font-bold focus:border-primary focus:bg-white dark:focus:bg-surface-container outline-none transition-all text-on-surface dark:text-on-surface placeholder:text-on-surface-variant/60"
+                    placeholder="Re-enter new password"
                   />
                 </div>
               </div>
@@ -470,9 +486,9 @@ const ChangePasswordModal: React.FC<{
               <button 
                 type="submit"
                 disabled={loading}
-                className="w-full h-14 bg-primary text-white rounded-2xl font-black text-sm shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:scale-100"
+                className="w-full h-14 bg-primary hover:bg-primary/90 dark:bg-[#4b5d7a] dark:border dark:border-[#6c7fa1] dark:hover:bg-[#55698a] text-white dark:text-[#eef3fb] rounded-2xl font-black text-sm shadow-xl shadow-primary/20 dark:shadow-none hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:scale-100"
               >
-                {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Gửi mã xác thực'}
+                {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : t('modal.send_otp')}
               </button>
             </form>
           ) : (
@@ -484,7 +500,7 @@ const ChangePasswordModal: React.FC<{
                   autoFocus
                   value={otp}
                   onChange={(e) => setOtp(e.target.value)}
-                  className="w-full max-w-[280px] h-20 bg-surface-container-highest/30 border-2 border-outline-variant/10 rounded-[28px] text-center text-4xl font-black tracking-[12px] text-primary focus:border-primary focus:bg-white outline-none transition-all placeholder:text-outline/30"
+                  className="w-full max-w-[280px] h-20 bg-surface-container-highest/30 dark:bg-surface-container-highest/40 border-2 border-outline-variant/10 dark:border-outline-variant/20 rounded-[28px] text-center text-4xl font-black tracking-[12px] text-primary focus:border-primary focus:bg-white dark:focus:bg-surface-container outline-none transition-all placeholder:text-outline/30 dark:placeholder:text-outline/50"
                   placeholder="000000"
                 />
               </div>
@@ -493,16 +509,16 @@ const ChangePasswordModal: React.FC<{
                 <button 
                   type="submit"
                   disabled={loading || otp.length < 6}
-                  className="w-full h-14 bg-primary text-white rounded-2xl font-black text-sm shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:scale-100"
+                  className="w-full h-14 bg-primary hover:bg-primary/90 dark:bg-[#4b5d7a] dark:border dark:border-[#6c7fa1] dark:hover:bg-[#55698a] text-white dark:text-[#eef3fb] rounded-2xl font-black text-sm shadow-xl shadow-primary/20 dark:shadow-none hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:scale-100"
                 >
-                  {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Xác nhận đổi mật khẩu'}
+                  {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : t('modal.change_password')}
                 </button>
                 <button 
                   type="button"
                   onClick={() => setStep(1)}
-                  className="w-full h-12 bg-transparent text-primary rounded-2xl font-extrabold text-[13px] hover:bg-primary/5 transition-all"
+                  className="w-full h-12 bg-transparent text-primary hover:bg-primary/5 dark:hover:bg-primary/10 rounded-2xl font-extrabold text-[13px] transition-all"
                 >
-                  Quay lại bước trước
+                  {t('modal.back')}
                 </button>
               </div>
             </form>
@@ -524,6 +540,7 @@ const AccountActionModal: React.FC<{
   onRequestOtp: (currentPassword: string) => Promise<void>;
   onConfirmOtp: (otp: string) => Promise<void>;
 }> = ({ isOpen, onClose, email, mode, onRequestOtp, onConfirmOtp }) => {
+  const { t } = useTheme();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -533,18 +550,16 @@ const AccountActionModal: React.FC<{
   if (!isOpen) return null;
 
   const isLock = mode === 'lock';
-  const accentClass = isLock ? 'text-orange-600' : 'text-red-600';
-  const bgClass = isLock ? 'bg-orange-50 border-orange-200' : 'bg-red-50 border-red-200';
-  const btnClass = isLock
-    ? 'bg-orange-500 hover:bg-orange-600 shadow-orange-200'
-    : 'bg-red-500 hover:bg-red-600 shadow-red-200';
+  const accentClass = 'text-primary';
+  const bgClass = 'bg-primary/5 dark:bg-primary/20 border-primary/20 dark:border-primary/40';
+  const btnClass = 'bg-primary hover:bg-primary/90 dark:bg-[#4b5d7a] dark:border dark:border-[#6c7fa1] dark:hover:bg-[#55698a] shadow-primary/20 dark:shadow-none';
 
-  const title = isLock ? 'Khóa tài khoản' : 'Xóa tài khoản';
+  const title = isLock ? t('account_mgmt.lock') : t('account_mgmt.delete');
   const icon = isLock ? 'lock_person' : 'delete_forever';
-  const confirmLabel = isLock ? 'Xác nhận khóa tài khoản' : 'Xác nhận xóa tài khoản';
+  const confirmLabel = isLock ? t('modal.lock_account') : t('modal.delete_account');
   const warningMsg = isLock
-    ? 'Tài khoản sẽ bị tạm khóa. Tất cả phiên đăng nhập sẽ bị vô hiệu hóa ngay lập tức.'
-    : 'Hành động này KHÔNG THỂ hoàn tác. Toàn bộ dữ liệu tài khoản sẽ bị xóa vĩnh viễn.';
+    ? 'Account will be temporarily locked. All login sessions will be disabled immediately.'
+    : 'This action CANNOT be undone. All account data will be permanently deleted.';
 
   const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -555,7 +570,7 @@ const AccountActionModal: React.FC<{
       await onRequestOtp(currentPassword);
       setStep(2);
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Có lỗi xảy ra, vui lòng thử lại.');
+      setError(err.response?.data?.message || t('modal.error'));
     } finally {
       setLoading(false);
     }
@@ -568,9 +583,8 @@ const AccountActionModal: React.FC<{
     setError(null);
     try {
       await onConfirmOtp(otp);
-      // onConfirmOtp sẽ tự gọi logoutLocal() → redirect về /login
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Mã OTP không chính xác.');
+      setError(err.response?.data?.message || t('modal.invalid_otp'));
     } finally {
       setLoading(false);
     }
@@ -586,10 +600,10 @@ const AccountActionModal: React.FC<{
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 sm:p-0">
-      <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-md animate-in fade-in duration-300" onClick={handleClose} />
-      <div className="relative w-full max-w-[500px] bg-white rounded-[40px] shadow-2xl overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-10 duration-500">
+      <div className="absolute inset-0 bg-on-surface/40 dark:bg-black/60 animate-in fade-in duration-300" onClick={handleClose} />
+      <div className="relative w-full max-w-[500px] bg-white dark:bg-surface-container rounded-[40px] shadow-2xl dark:shadow-2xl overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-10 duration-500">
         <div className="absolute top-6 right-6 z-10">
-          <button onClick={handleClose} className="w-10 h-10 rounded-full bg-surface-container-highest/30 flex items-center justify-center hover:bg-surface-container-highest transition-colors active:scale-95">
+          <button onClick={handleClose} className="w-10 h-10 rounded-full bg-surface-container-highest/30 dark:bg-surface-container-highest/20 flex items-center justify-center hover:bg-surface-container-highest dark:hover:bg-surface-container-highest/40 transition-colors active:scale-95">
             <span className="material-symbols-outlined text-[20px] text-on-surface-variant">close</span>
           </button>
         </div>
@@ -601,7 +615,7 @@ const AccountActionModal: React.FC<{
             </div>
             <h3 className="text-2xl font-black text-on-surface">{title}</h3>
             <p className="text-sm text-on-surface-variant font-medium mt-2 leading-relaxed">
-              {step === 1 ? warningMsg : `Mã xác thực đã được gửi tới email: ${email}`}
+              {step === 1 ? warningMsg : t('modal.otp_sent', { email })}
             </p>
           </div>
 
@@ -615,7 +629,7 @@ const AccountActionModal: React.FC<{
           {step === 1 ? (
             <form onSubmit={handleRequestOtp} className="space-y-6">
               <div className="space-y-2">
-                <label className="text-[13px] font-extrabold text-on-surface ml-1">Mật khẩu hiện tại</label>
+                <label className="text-[13px] font-extrabold text-on-surface ml-1">{t('modal.current_password')}</label>
                 <div className="relative group">
                   <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">lock</span>
                   <input
@@ -624,17 +638,17 @@ const AccountActionModal: React.FC<{
                     autoFocus
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
-                    className="w-full h-14 bg-surface-container-highest/20 border-2 border-outline-variant/10 rounded-2xl pl-12 pr-4 text-sm font-bold focus:border-primary focus:bg-white outline-none transition-all"
-                    placeholder="Xác nhận danh tính của bạn"
+                    className="w-full h-14 bg-surface-container-highest/20 dark:bg-surface-container-highest/30 border-2 border-outline-variant/10 dark:border-outline-variant/20 rounded-2xl pl-12 pr-4 text-sm font-bold focus:border-primary focus:bg-white dark:focus:bg-surface-container outline-none transition-all text-on-surface dark:text-on-surface placeholder:text-on-surface-variant/60"
+                    placeholder={t('modal.verify_password')}
                   />
                 </div>
               </div>
               <button
                 type="submit"
                 disabled={loading || !currentPassword}
-                className={`w-full h-14 text-white rounded-2xl font-black text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:scale-100 ${btnClass}`}
+                className={`w-full h-14 text-white dark:text-[#eef3fb] rounded-2xl font-black text-sm shadow-xl dark:shadow-none hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:scale-100 ${btnClass}`}
               >
-                {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Gửi mã xác thực'}
+                {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : t('modal.send_otp')}
               </button>
             </form>
           ) : (
@@ -646,7 +660,7 @@ const AccountActionModal: React.FC<{
                   autoFocus
                   value={otp}
                   onChange={(e) => setOtp(e.target.value)}
-                  className="w-full max-w-[280px] h-20 bg-surface-container-highest/30 border-2 border-outline-variant/10 rounded-[28px] text-center text-4xl font-black tracking-[12px] text-primary focus:border-primary focus:bg-white outline-none transition-all placeholder:text-outline/30"
+                  className="w-full max-w-[280px] h-20 bg-surface-container-highest/30 dark:bg-surface-container-highest/40 border-2 border-outline-variant/10 dark:border-outline-variant/20 rounded-[28px] text-center text-4xl font-black tracking-[12px] text-primary focus:border-primary focus:bg-white dark:focus:bg-surface-container outline-none transition-all placeholder:text-outline/30 dark:placeholder:text-outline/50"
                   placeholder="000000"
                 />
               </div>
@@ -654,16 +668,16 @@ const AccountActionModal: React.FC<{
                 <button
                   type="submit"
                   disabled={loading || otp.length < 6}
-                  className={`w-full h-14 text-white rounded-2xl font-black text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:scale-100 ${btnClass}`}
+                  className={`w-full h-14 text-white dark:text-[#eef3fb] rounded-2xl font-black text-sm shadow-xl dark:shadow-none hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:scale-100 ${btnClass}`}
                 >
                   {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : confirmLabel}
                 </button>
                 <button
                   type="button"
                   onClick={() => setStep(1)}
-                  className="w-full h-12 bg-transparent text-primary rounded-2xl font-extrabold text-[13px] hover:bg-primary/5 transition-all"
+                  className="w-full h-12 bg-transparent text-primary hover:bg-primary/5 dark:hover:bg-primary/10 rounded-2xl font-extrabold text-[13px] transition-all"
                 >
-                  Quay lại bước trước
+                  {t('modal.back')}
                 </button>
               </div>
             </form>

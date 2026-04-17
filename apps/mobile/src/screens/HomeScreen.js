@@ -1,29 +1,29 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-  Image,
-  Platform,
-  StatusBar,
-  Pressable,
-  ActivityIndicator,
-  Linking,
-  KeyboardAvoidingView,
+    ActivityIndicator,
+    Image,
+    KeyboardAvoidingView,
+    Linking,
+    Platform,
+    Pressable,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
-import * as ImagePicker from 'expo-image-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography } from '../constants/Theme';
-import Alert from '../utils/Alert';
 import { useAuth } from '../context/AuthContext';
+import { useChatStore } from '../store/chatStore';
+import Alert from '../utils/Alert';
 import { apiRequest } from '../utils/api';
 import SocketService from '../utils/socket';
-import { useChatStore } from '../store/chatStore';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 const REACTION_OPTIONS = ['❤️', '👍', '😂', '😮', '😢', '😡'];
@@ -138,6 +138,12 @@ const formatFileSize = (size) => {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const isVideoAttachment = (item = {}) => {
+  const mime = String(item?.mimeType || item?.fileType || '').toLowerCase();
+  const name = String(item?.name || item?.fileName || item?.url || item?.dataUrl || '').toLowerCase();
+  return mime.startsWith('video/') || /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name);
+};
+
 export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChange }) {
   const insets = useSafeAreaInsets();
   const { user, profileVersion, checkSessionStatus } = useAuth();
@@ -219,7 +225,7 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
   const getMessagePreview = (message) => {
     if (!message) return 'Tin nhắn';
     if (message.recalled) return 'Tin nhắn đã được thu hồi';
-    if (Array.isArray(message.media) && message.media.length > 0) return '[Hình ảnh]';
+    if (Array.isArray(message.media) && message.media.length > 0) return '[Ảnh/Video]';
     if (Array.isArray(message.files) && message.files.length > 0) return '[Tệp đính kèm]';
     return String(message.content || 'Tin nhắn');
   };
@@ -454,8 +460,9 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
   const toggleReaction = async (message, emoji) => {
     if (!user?.email || !selectedChat?.id) return;
     const messageId = message.id;
-    const currentEmoji = getCurrentUserReaction(message);
-    const action = currentEmoji === emoji ? 'remove' : 'add';
+    const reactions = getReactionData(message);
+    const hasReactedWithThisEmoji = reactions[emoji]?.includes(user.email);
+    const action = hasReactedWithThisEmoji ? 'remove' : 'add';
 
     const res = await chatPatch(
       `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
@@ -463,7 +470,6 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
         action: 'react',
         reactAction: action,
         emoji,
-        previousEmoji: currentEmoji,
       },
     );
 
@@ -858,6 +864,21 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
                       <View style={{ marginTop: 8, gap: 6 }}>
                         {(Array.isArray(message.media) ? message.media : []).map((item, index) => {
                           const file = normalizeAttachment(item);
+                          if (isVideoAttachment(item)) {
+                            return (
+                              <TouchableOpacity
+                                key={`m-${message.id}-${index}`}
+                                style={styles.messageFile}
+                                onPress={() => file.dataUrl && Linking.openURL(file.dataUrl)}
+                              >
+                                <Text style={styles.messageFileIcon}>play_circle</Text>
+                                <View style={{ flex: 1 }}>
+                                  <Text numberOfLines={1} style={styles.messageFileName}>{file.name || 'Video'}</Text>
+                                  <Text style={styles.messageFileSize}>Nhấn để mở video</Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          }
                           return <Image key={`m-${message.id}-${index}`} source={{ uri: file.dataUrl }} style={styles.messageImage} />;
                         })}
                         {(Array.isArray(message.files) ? message.files : []).map((item, index) => {
@@ -888,6 +909,15 @@ export default function HomeScreen({ onNavigate, onLogout, initialTab, onTabChan
                         ))}
                       </View>
                     )}
+
+                    <View style={[styles.messageMetaRow, isMe && styles.messageMetaRowMe]}>
+                      <Text style={styles.messageTime}>
+                        {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </Text>
+                    </View>
                   </View>
                 </Pressable>
               );
@@ -1623,6 +1653,20 @@ const styles = StyleSheet.create({
     ...Typography.body,
     fontSize: 11,
     color: '#2f3a4a',
+  },
+  messageMetaRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+  },
+  messageMetaRowMe: {
+    justifyContent: 'flex-end',
+  },
+  messageTime: {
+    ...Typography.body,
+    fontSize: 10,
+    color: '#7a8391',
+    fontWeight: '600',
   },
   actionItem: {
     paddingVertical: 12,

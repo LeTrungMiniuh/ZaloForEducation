@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { Link, useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 
 const SessionsPage: React.FC = () => {
   const navigate = useNavigate();
   const { getSessions, logout, logoutAll, revokeSession, socket, deviceId, user } = useAuth();
+  const { isDark } = useTheme();
   const [activeSessions, setActiveSessions] = useState<any[]>([]);
   const [loginHistory, setLoginHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +104,7 @@ const SessionsPage: React.FC = () => {
   return (
     <div className="bg-surface text-on-surface min-h-screen flex flex-col w-full animate-fade-in">
       {/* Navbar */}
-      <nav className="fixed top-0 w-full z-50 bg-white/80 backdrop-blur-md border-b border-outline-variant px-6 py-4 flex justify-between items-center">
+      <nav className="fixed top-0 w-full z-50 bg-white/80 dark:bg-surface-container/80 backdrop-blur-md border-b border-outline-variant px-6 py-4 flex justify-between items-center">
         <div className="flex items-center gap-4">
           <button 
             onClick={() => navigate(-1)} 
@@ -110,7 +112,7 @@ const SessionsPage: React.FC = () => {
           >
             <span className="material-symbols-outlined">arrow_back</span>
           </button>
-          <h1 className="text-xl font-bold tracking-tight text-primary">Quản lý phiên đăng nhập</h1>
+          <h1 className="text-xl font-bold tracking-tight text-primary dark:text-on-surface">Quản lý phiên đăng nhập</h1>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right hidden sm:block">
@@ -182,7 +184,7 @@ const SessionsPage: React.FC = () => {
                     </div>
                     {!isCurrent && (
                       <button 
-                        className="px-4 py-2 text-sm font-bold text-error hover:bg-error/10 rounded-xl transition-colors"
+                        className="px-4 py-2 text-sm font-bold text-error dark:text-[#eef3fb] hover:bg-error/10 dark:hover:bg-[#4b5d7a] dark:border dark:border-[#6c7fa1] rounded-xl transition-colors"
                         onClick={() => handleRevoke(session.deviceId, session.deviceName)}
                       >
                         Đăng xuất
@@ -224,23 +226,23 @@ const SessionsPage: React.FC = () => {
                 </div>
               )}
 
-              <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-6 p-8 bg-error/5 rounded-3xl border border-error/10 border-dashed">
+              <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-6 p-8 bg-error/5 dark:bg-surface-container rounded-3xl border border-error/10 dark:border-outline-variant/30 border-dashed dark:border-solid">
                 <div className="text-center sm:text-left">
-                  <h4 className="font-bold text-error text-lg mb-1">Bảo mật tài khoản</h4>
-                  <p className="text-sm text-on-error-container opacity-80 leading-relaxed">
+                  <h4 className="font-bold text-error dark:text-on-surface text-lg mb-1">Bảo mật tài khoản</h4>
+                  <p className="text-sm text-on-error-container dark:text-on-surface-variant opacity-80 leading-relaxed">
                     Nếu bạn thấy thiết bị lạ, hãy đăng xuất khỏi tất cả và đổi lại mật khẩu ngay lập tức.
                   </p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
                   <button 
                     onClick={handleLogoutCurrent}
-                    className="px-6 py-4 bg-surface-container-lowest text-on-surface font-bold rounded-2xl border border-outline-variant hover:bg-white transition-all shadow-sm flex items-center justify-center gap-2"
+                    className={`px-6 py-4 font-bold rounded-2xl border transition-all flex items-center justify-center gap-2 ${isDark ? 'bg-[#4b5d7a] text-[#eef3fb] border-[#6c7fa1] hover:bg-[#55698a]' : 'bg-surface-container-lowest text-on-surface border-outline-variant hover:bg-white shadow-sm'}`}
                   >
                     Đăng xuất thiết bị này
                   </button>
                   <button 
                     onClick={handleLogoutAll}
-                    className="px-6 py-4 bg-error text-white font-bold rounded-2xl hover:opacity-90 transition-all shadow-lg shadow-error/20 flex items-center justify-center gap-2"
+                    className={`px-6 py-4 font-bold rounded-2xl transition-all flex items-center justify-center gap-2 ${isDark ? 'bg-[#4b5d7a] text-[#eef3fb] border border-[#6c7fa1] hover:bg-[#55698a]' : 'bg-primary text-white hover:opacity-90 shadow-lg shadow-primary/20'}`}
                   >
                     Đăng xuất tất cả thiết bị
                   </button>

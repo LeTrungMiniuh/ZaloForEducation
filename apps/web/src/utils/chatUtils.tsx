@@ -69,7 +69,7 @@ export const getDisplayAvatar = (email: string | undefined, currentUser: any, us
 export const getMessagePreview = (message: any): string => {
   if (!message) return 'Tin nhắn';
   if (message.recalled) return 'Tin nhắn đã được thu hồi';
-  if (Array.isArray(message.media) && message.media.length > 0) return '[Hình ảnh]';
+  if (Array.isArray(message.media) && message.media.length > 0) return '[Ảnh/Video]';
   if (Array.isArray(message.files) && message.files.length > 0) return '[Tệp đính kèm]';
   return String(message.content || 'Tin nhắn');
 };
@@ -80,6 +80,18 @@ export const normalizeAttachment = (item: any) => {
   const size = Number(item?.size || 0);
   const dataUrl = item?.dataUrl || item?.fileUrl || item?.url || '';
   return { name, mimeType, size, dataUrl };
+};
+
+export const truncateFileName = (name: string, maxLength: number = 35) => {
+  if (!name || name.length <= maxLength) return name;
+  const extIndex = name.lastIndexOf('.');
+  if (extIndex !== -1 && name.length - extIndex <= 6) {
+    const ext = name.substring(extIndex);
+    const nameWithoutExt = name.substring(0, extIndex);
+    const charsToShow = maxLength - ext.length - 3;
+    return `${nameWithoutExt.substring(0, charsToShow)}...${ext}`;
+  }
+  return `${name.substring(0, maxLength - 3)}...`;
 };
 
 export const isUnread = (conv: any, currentUserEmail: string | undefined): boolean => {

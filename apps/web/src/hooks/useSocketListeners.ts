@@ -13,7 +13,9 @@ export const useSocketListeners = () => {
     setConversations,
     localClearHistory,
     updateMessage,
-    setUserProfiles 
+    setUserProfiles,
+    setMessages,
+    messages
   } = useChatStore();
 
   // Helper to update conv list locally
@@ -107,6 +109,26 @@ export const useSocketListeners = () => {
       ));
     };
 
+    const handleParticipantRead = (data: { convId: string, email: string, timestamp: number }) => {
+      // If someone else read the conversation I am currently in,
+      // I should update my sent messages to "read".
+      if (data.email !== user.email && data.convId === activeConvId) {
+        setMessages(
+          useChatStore.getState().messages.map(m => 
+            (m.senderId === user.email && (!m.status || m.status === 'sent' || m.status === 'delivered')) 
+              ? { ...m, status: 'read' } 
+              : m
+          )
+        );
+      }
+    };
+
+    const handleTypingUpdate = (data: { convId: string, email: string, isTyping: boolean }) => {
+      // Dispatch typing event to document so ChatPage can listen without deep store rerenders
+      const event = new CustomEvent('chat_typing_update', { detail: data });
+      document.dispatchEvent(event);
+    };
+
     // Socket listeners
     socket.on('receiveMessage', handleReceiveMessage);
     socket.on('history_cleared', handleHistoryCleared);
@@ -116,6 +138,8 @@ export const useSocketListeners = () => {
     socket.on('message_recalled', handleMessageRecalled);
     socket.on('message_pinned', handleMessagePinned);
     socket.on('PIN_UPDATE', handlePinUpdate);
+    socket.on('participant_read', handleParticipantRead);
+    socket.on('typing_update', handleTypingUpdate);
 
     return () => {
       socket.off('receiveMessage', handleReceiveMessage);
@@ -126,6 +150,8 @@ export const useSocketListeners = () => {
       socket.off('message_recalled', handleMessageRecalled);
       socket.off('message_pinned', handleMessagePinned);
       socket.off('PIN_UPDATE', handlePinUpdate);
+      socket.off('participant_read', handleParticipantRead);
+      socket.off('typing_update', handleTypingUpdate);
     };
   }, [socket, user, activeConvId, addMessage, markAsRead, setLocalRead, localClearHistory, setUserProfiles, updateMessage]);
 };

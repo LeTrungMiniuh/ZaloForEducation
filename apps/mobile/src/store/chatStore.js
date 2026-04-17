@@ -1,17 +1,19 @@
 import { create } from 'zustand';
 import axios from 'axios';
-import { MMKV } from 'react-native-mmkv';
-
-const storage = new MMKV();
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Helper to get/set from storage
-const getCachedMessages = (convId) => {
-  const data = storage.getString(`messages#${convId}`);
-  return data ? JSON.parse(data) : [];
+const getCachedMessages = async (convId) => {
+  try {
+    const data = await AsyncStorage.getItem(`messages#${convId}`);
+    return data ? JSON.parse(data) : [];
+  } catch (err) {
+    return [];
+  }
 };
 
 const setCachedMessages = (convId, messages) => {
-  storage.set(`messages#${convId}`, JSON.stringify(messages.slice(-50))); // Chỉ cache 50 tin mới nhất
+  AsyncStorage.setItem(`messages#${convId}`, JSON.stringify(messages.slice(-50))).catch(() => {}); // Chỉ cache 50 tin mới nhất
 };
 
 export const useChatStore = create((set, get) => ({
@@ -23,14 +25,20 @@ export const useChatStore = create((set, get) => ({
 
   setConversations: (conversations) => set({ conversations }),
   
-  setActiveConversation: (convId) => {
+  setActiveConversation: async (convId) => {
     if (get().activeConvId === convId) return;
     
-    // Offline-first: Load từ cache trước
-    const cached = getCachedMessages(convId);
-    set({ activeConvId: convId, messages: cached, nextCursor: null });
-    
+    // Set active conversation and clear messages initially
+    set({ activeConvId: convId, messages: [], nextCursor: null });
+
     if (convId) {
+      // Offline-first: Load từ cache trước
+      const cached = await getCachedMessages(convId);
+      // Double check activeConvId hasn't changed while await was pending
+      if (get().activeConvId === convId) {
+        set({ messages: cached });
+      }
+      
       get().fetchMessages(convId);
     }
   },
