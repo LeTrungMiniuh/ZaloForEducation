@@ -1,5 +1,5 @@
 import { GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import { DynamoDBService } from '../../infrastructure/dynamodb.service';
 import { S3Service } from '../../infrastructure/s3.service';
 import { ChatGateway } from '../chat/chat.gateway';
@@ -24,6 +24,7 @@ export class UserService {
   constructor(
     private readonly s3Service: S3Service,
     private readonly db: DynamoDBService,
+    @Inject(forwardRef(() => ChatGateway))
     private readonly chatGateway: ChatGateway,
     private readonly redisService: RedisService,
   ) {}

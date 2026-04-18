@@ -58,6 +58,14 @@ export class DynamoDBService implements OnModuleInit {
       await this.client.send(command);
       console.log(`Table ${this.tableName} created successfully.`);
     } catch (error) {
+      const errorName = error?.name || error?.__type;
+      if (errorName === 'UnrecognizedClientException') {
+        console.warn(
+          `[DynamoDB] Skipping table bootstrap because AWS credentials are not valid for ${this.tableName}.`,
+        );
+        return;
+      }
+
       console.error('Error initializing DynamoDB table:', error);
     }
   }

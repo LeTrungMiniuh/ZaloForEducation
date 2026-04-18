@@ -101,7 +101,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
           setToken(savedToken);
 
           const currentDeviceId = savedDeviceId || await getDeviceId();
-          SocketService.connect(parsedUser.email, currentDeviceId);
+          SocketService.connect(parsedUser.email, currentDeviceId, savedToken);
 
           // Heartbeat check
           apiRequest('/auth/sessions').catch(err => {
@@ -172,7 +172,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
     setToken(accessToken);
     setDeviceId(currentDeviceId);
     setProfileVersion(Date.now());
-    SocketService.connect(userData.email, currentDeviceId);
+    SocketService.connect(userData.email, currentDeviceId, accessToken);
   };
 
   const logout = async () => {

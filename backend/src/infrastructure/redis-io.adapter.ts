@@ -5,13 +5,14 @@ import { Redis } from 'ioredis';
 import { Logger } from '@nestjs/common';
 
 export class RedisIoAdapter extends IoAdapter {
-  private adapterConstructor: any;
+  private adapterConstructor: any | null = null;
   private readonly logger = new Logger(RedisIoAdapter.name);
 
   async connectToRedis(): Promise<void> {
     const redisUrl = process.env.REDIS_URL;
     if (!redisUrl) {
       this.logger.error('REDIS_URL is not defined in environment variables');
+      this.adapterConstructor = null;
       return;
     }
 
@@ -39,7 +40,9 @@ export class RedisIoAdapter extends IoAdapter {
 
   createIOServer(port: number, options?: ServerOptions): any {
     const server = super.createIOServer(port, options);
-    server.adapter(this.adapterConstructor);
+    if (this.adapterConstructor) {
+      server.adapter(this.adapterConstructor);
+    }
     return server;
   }
 }

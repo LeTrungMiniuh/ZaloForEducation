@@ -12,6 +12,7 @@ export class ChatService {
     private readonly db: DynamoDBService,
     @Inject(forwardRef(() => ChatGateway))
     private readonly chatGateway: ChatGateway,
+    @Inject(forwardRef(() => FriendshipService))
     private readonly friendshipService: FriendshipService,
   ) {}
 

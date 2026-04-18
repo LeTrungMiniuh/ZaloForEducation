@@ -320,4 +320,81 @@ export class ChatController {
   async markAsRead(@Param("id") id: string, @Req() req: any) {
     return await this.chatService.markConversationAsRead(id, req.user.email);
   }
+
+  @Post("friends/reject")
+  async rejectFriendRequest(
+    @Body() body: { senderEmail: string },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.rejectRequest(email, body.senderEmail);
+  }
+
+  @Post("friends/unfriend")
+  async unfriend(@Body() body: { friendEmail: string }, @Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.unfriend(email, body.friendEmail);
+  }
+
+  @Post("friends/block")
+  async blockUser(@Body() body: { targetEmail: string }, @Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.blockUser(email, body.targetEmail);
+  }
+
+  @Patch("friends/nickname")
+  async setNickname(
+    @Body() body: { friendEmail: string; nickname: string },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.setNickname(
+      email,
+      body.friendEmail,
+      body.nickname,
+    );
+  }
+
+  @Patch("friends/close-friend")
+  async setCloseFriend(
+    @Body() body: { friendEmail: string; isCloseFriend: boolean },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.setCloseFriend(
+      email,
+      body.friendEmail,
+      body.isCloseFriend,
+    );
+  }
+
+  // Backward-compatible alias route
+  @Patch("friends/closeFriend")
+  async setCloseFriendAlias(
+    @Body() body: { friendEmail: string; isCloseFriend?: boolean; closeFriend?: boolean },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.setCloseFriend(
+      email,
+      body.friendEmail,
+      Boolean(
+        body.isCloseFriend !== undefined
+          ? body.isCloseFriend
+          : body.closeFriend,
+      ),
+    );
+  }
+
+  @Get("friends/requests")
+  async getIncomingRequests(@Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.getIncomingRequests(email);
+  }
+
+  @Get("friends/suggestions")
+  async getFriendSuggestions(@Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.getFriendSuggestions(email);
+  }
 }
