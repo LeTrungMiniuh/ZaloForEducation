@@ -15,18 +15,17 @@ export interface User {
   passwordHash: string;
   currentDeviceId?: string;
   googleId?: string;
-  authProvider?: 'LOCAL' | 'GOOGLE';
+  authProvider?: "LOCAL" | "GOOGLE";
   isVerified?: boolean;
   lastLoginAt: string;
   createdAt: string;
   updatedAt: string;
-  status: 'active' | 'suspended' | 'LOCKED' | 'DELETED';
+  status: "active" | "suspended" | "LOCKED" | "DELETED";
   isActive: boolean;
   isDeleted?: boolean;
   deletedAt?: string;
   lockedAt?: string;
 }
-
 
 export interface FileURL {
   fileName: string;
@@ -40,7 +39,7 @@ export interface Conversation {
   avatar?: string;
   admin?: string; // string representing user email/id
   members: string[]; // array of user emails/ids
-  type: 'direct' | 'group';
+  type: "direct" | "group";
   lastMessage?: string; // messageId
   isDelete?: boolean;
   delete_history?: string[];
@@ -54,11 +53,23 @@ export interface Friendship {
   id: string; // generated ID or combined string
   sender_id: string; // User email
   receiver_id: string; // User email
-  status: 'pending' | 'accepted' | 'declined';
+  status: "pending" | "accepted" | "declined" | "blocked";
   content?: string;
   type?: string;
+  nickname?: string;
+  blockedBy?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FriendSuggestion {
+  email: string;
+  fullName: string;
+  avatarUrl?: string;
+  mutualFriendCount: number;
+  mutualFriends: string[];
+  sharedGroups: string[];
+  reasons: string[];
 }
 
 export interface Message {
@@ -74,15 +85,14 @@ export interface Message {
   replyTo?: string; // msgId
   revoked?: boolean;
   removed?: string[]; // user emails
-  type: 'text' | 'image' | 'video' | 'file' | 'system';
+  type: "text" | "image" | "video" | "file" | "system";
   createdAt: string;
 }
-
 
 export interface OtpCode {
   id: string; // OTP#<email>
   code: string;
-  type: 'register' | 'forgot_password';
+  type: "register" | "forgot_password";
   attempts: number;
   expiresAt: number; // TTL (Unix timestamp)
 }
@@ -111,7 +121,7 @@ export interface LoginRequestDto {
   deviceId: string;
   deviceName?: string;
   deviceType?: string;
-  platform?: 'web' | 'mobile';
+  platform?: "web" | "mobile";
 }
 
 export interface ApiResponse<T = any> {

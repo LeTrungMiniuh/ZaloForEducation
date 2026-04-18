@@ -92,6 +92,18 @@ export class ChatGateway {
     this.server.to(data.convId).emit("receiveMessage", data.message);
   }
 
+  notifyFriendRequest(email: string, payload: any) {
+    const userRoom = `user#${email}`;
+    this.server.to(userRoom).emit("friend_request_received", payload);
+    console.log(`Sent friend_request_received to room ${userRoom}`);
+  }
+
+  notifyFriendshipUpdate(email: string, payload: any) {
+    const userRoom = `user#${email}`;
+    this.server.to(userRoom).emit("friendship_updated", payload);
+    console.log(`Sent friendship_updated to room ${userRoom}`);
+  }
+
   @SubscribeMessage("call:invite")
   handleCallInvite(
     @MessageBody()
