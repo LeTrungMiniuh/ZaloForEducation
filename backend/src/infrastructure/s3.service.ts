@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
 
@@ -47,6 +47,31 @@ export class S3Service {
     } catch (error) {
       this.logger.error(`S3 upload failed for key ${key}: ${error.message}`, error.stack);
       throw new Error(`Lỗi khi tải ảnh lên S3: ${error.message}`);
+    }
+  }
+
+  async deleteFile(fileUrl: string): Promise<void> {
+    const bucketName = this.configService.get<string>('S3_BUCKET_NAME');
+    if (!bucketName || !fileUrl) return;
+
+    try {
+      // Extract key from URL: https://bucket.s3.region.amazonaws.com/folder/filename
+      const urlParts = fileUrl.split('.amazonaws.com/');
+      if (urlParts.length < 2) return;
+      
+      const key = decodeURIComponent(urlParts[1]);
+
+      this.logger.log(`Deleting file from S3: bucket=${bucketName}, key=${key}`);
+
+      await this.s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: bucketName,
+          Key: key,
+        })
+      );
+      this.logger.log(`Successfully deleted file from S3: ${key}`);
+    } catch (error) {
+      this.logger.error(`Failed to delete S3 file ${fileUrl}: ${error.message}`);
     }
   }
 }

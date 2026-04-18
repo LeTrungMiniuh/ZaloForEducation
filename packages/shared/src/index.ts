@@ -42,12 +42,19 @@ export interface Conversation {
   members: string[]; // array of user emails/ids
   type: 'direct' | 'group';
   lastMessage?: string; // messageId
+  lastMessageContent?: string;
+  lastMessageSenderId?: string;
+  lastMessageTimestamp?: number;
   isDelete?: boolean;
   delete_history?: string[];
   approvedMembers?: boolean;
   listApprovedMembers?: string[];
   createdAt: string;
   updatedAt: string;
+  partner?: string;
+  online?: boolean;
+  lastReadAt?: number;
+  pinnedMessageIds?: string[];
 }
 
 export interface Friendship {
@@ -71,11 +78,16 @@ export interface Message {
   files?: FileURL[];
   like?: string[]; // Array of user emails who liked
   seen?: string[]; // Array of user emails who saw
-  replyTo?: string; // msgId
-  revoked?: boolean;
+  status?: 'sending' | 'sent' | 'delivered' | 'seen' | 'error'; 
+  replyTo?: any; // msg object or id
+  recalled?: boolean;
   removed?: string[]; // user emails
   type: 'text' | 'image' | 'video' | 'file' | 'system';
   createdAt: string;
+  updatedAt?: string;
+  pinned?: boolean;
+  pinnedAt?: string;
+  reactions?: Record<string, string[]>;
 }
 
 

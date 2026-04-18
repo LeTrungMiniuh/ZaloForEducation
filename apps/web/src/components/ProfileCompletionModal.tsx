@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import Swal from 'sweetalert2';
 import { useOtpCountdown } from '../hooks/useOtpCountdown';
+import { 
+  ShieldCheck, 
+  Eye, 
+  EyeOff, 
+  X,
+  Loader2
+} from 'lucide-react';
 
 interface ProfileCompletionModalProps {
   isOpen: boolean;
@@ -111,7 +118,7 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
           <h2 className="text-3xl font-black tracking-tight">Hoàn thiện hồ sơ</h2>
           <p className="text-white/80 font-medium mt-2">Chỉ còn một bước nữa để bắt đầu với ZaloEdu</p>
           <div className="absolute top-0 right-0 p-8 opacity-10">
-            <span className="material-symbols-outlined text-6xl">verified_user</span>
+            <ShieldCheck size={64} strokeWidth={1} />
           </div>
         </div>
 
@@ -152,7 +159,7 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors"
               >
-                <span className="material-symbols-outlined">{showPassword ? 'visibility_off' : 'visibility'}</span>
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
             </div>
           </div>
@@ -230,7 +237,7 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
               className="w-full bg-surface-container rounded-2xl border-2 border-transparent focus:border-primary/20 focus:bg-white px-4 py-3 outline-none transition-all font-black tracking-[0.5em] text-center text-on-surface text-xl"
               value={formData.otp}
               onChange={e => setFormData({...formData, otp: e.target.value.replace(/\D/g, '').slice(0, 6)})}
-              placeholder="••••••"
+              placeholder="•••••"
               disabled={!isOtpSent}
             />
           </div>
@@ -240,8 +247,9 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
              <button 
               onClick={handleConfirm}
               disabled={loading || !formData.otp}
-              className="flex-1 bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100"
+              className="flex-1 bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2"
             >
+              {loading && <Loader2 size={20} className="animate-spin" />}
               {loading ? 'Đang hoàn tất...' : 'HOÀN TẤT ĐĂNG KÝ'}
             </button>
           </div>
