@@ -1,5 +1,7 @@
 import {
   Injectable,
+  Inject,
+  forwardRef,
   BadRequestException,
   NotFoundException,
 } from "@nestjs/common";
@@ -21,7 +23,9 @@ import { UserService } from "../user/user.service";
 export class FriendshipService {
   constructor(
     private readonly db: DynamoDBService,
+    @Inject(forwardRef(() => ChatService))
     private readonly chatService: ChatService,
+    @Inject(forwardRef(() => ChatGateway))
     private readonly chatGateway: ChatGateway,
     private readonly userService: UserService,
   ) {}
@@ -485,6 +489,82 @@ export class FriendshipService {
     });
 
     return { message: "Nickname updated successfully" };
+  }
+
+  async setCloseFriend(
+    userEmail: string,
+    friendEmail: string,
+    isCloseFriend: boolean,
+  ) {
+    const normalizedUser = this.normalizeEmail(userEmail);
+    const normalizedFriend = this.normalizeEmail(friendEmail);
+
+    let currentRecord = await this.getFriendshipRecord(
+      normalizedUser,
+      normalizedFriend,
+    );
+
+    // Self-heal one-way friendship data if reverse side exists and is accepted.
+    if (!currentRecord) {
+      const reverseRecord = await this.getFriendshipRecord(
+        normalizedFriend,
+        normalizedUser,
+      );
+      const reverseStatus = String(reverseRecord?.status || "").toLowerCase();
+      if (!reverseRecord || reverseStatus !== "accepted") {
+        throw new NotFoundException("Friend not found");
+      }
+
+      const timestamp = new Date().toISOString();
+      currentRecord = {
+        PK: `USER#${normalizedUser}`,
+        SK: `FRIEND#${normalizedFriend}`,
+        sender_id: reverseRecord.sender_id || normalizedFriend,
+        receiver_id: reverseRecord.receiver_id || normalizedUser,
+        status: "accepted",
+        nickname: reverseRecord.nickname,
+        createdAt: reverseRecord.createdAt || timestamp,
+        updatedAt: timestamp,
+      } as any;
+
+      await this.db.docClient.send(
+        new PutCommand({
+          TableName: this.db.tableName,
+          Item: currentRecord,
+        }),
+      );
+    }
+
+    const currentStatus = String(currentRecord.status || "").toLowerCase();
+    if (currentStatus !== "accepted") {
+      throw new BadRequestException("Only accepted friends can be close friends");
+    }
+
+    const timestamp = new Date().toISOString();
+    await this.db.docClient.send(
+      new UpdateCommand({
+        TableName: this.db.tableName,
+        Key: this.friendshipKey(normalizedUser, normalizedFriend),
+        UpdateExpression:
+          "SET closeFriend = :closeFriend, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":closeFriend": Boolean(isCloseFriend),
+          ":updatedAt": timestamp,
+        },
+      }),
+    );
+
+    await this.emitFriendshipUpdate(normalizedUser, {
+      action: "close_friend_updated",
+      otherEmail: normalizedFriend,
+      isCloseFriend: Boolean(isCloseFriend),
+      updatedAt: timestamp,
+    });
+
+    return {
+      message: "Close friend updated successfully",
+      isCloseFriend: Boolean(isCloseFriend),
+    };
   }
 
   /**

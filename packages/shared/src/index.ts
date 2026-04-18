@@ -64,6 +64,7 @@ export interface Friendship {
   content?: string;
   type?: string;
   nickname?: string;
+  closeFriend?: boolean;
   blockedBy?: string;
   createdAt: string;
   updatedAt: string;

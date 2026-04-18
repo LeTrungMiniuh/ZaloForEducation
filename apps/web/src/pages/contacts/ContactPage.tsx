@@ -615,9 +615,22 @@ const ContactsPage: React.FC = () => {
   };
 
   const handleOpenFriendChat = (email: string) => {
+    const normalizedTarget = String(email || "").trim().toLowerCase();
+    const normalizedMe = String(myEmail || "").trim().toLowerCase();
+    const existingDirect = conversations.find((conversation) => {
+      if (conversation?.type !== "direct") return false;
+      const members = Array.isArray(conversation.members)
+        ? conversation.members.map((item) => String(item || "").toLowerCase())
+        : [];
+      return (
+        members.includes(normalizedMe) && members.includes(normalizedTarget)
+      );
+    });
+
     navigate("/chat", {
       state: {
-        openDirectChatEmail: email,
+        openConversationId: existingDirect?.id,
+        openDirectChatEmail: normalizedTarget,
       },
     });
   };

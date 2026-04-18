@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import InboxList from '../../components/chat/InboxList';
@@ -26,12 +27,17 @@ const ChatPage: React.FC = () => {
   const { user, socket } = useAuth();
   const {
     activeConvId,
+    conversations,
     messages,
     sendMessageOptimistic,
+    startDirectChat,
+    setActiveConversation,
     userProfiles,
     markAsRead,
     fetchMessages
   } = useChatStore();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const [isInfoOpen, setIsInfoOpen] = useState(true);
   const [replyTarget, setReplyTarget] = useState<any | null>(null);
@@ -104,6 +110,65 @@ const ChatPage: React.FC = () => {
   };
 
   const [contextMenu, setContextMenu] = useState<{ message: any; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const navState = (location.state || null) as {
+      openConversationId?: string;
+      openDirectChatEmail?: string;
+    } | null;
+
+    const requestedConvId = String(navState?.openConversationId || '').trim();
+    const requestedEmail = String(navState?.openDirectChatEmail || '').trim().toLowerCase();
+
+    if (!requestedConvId && !requestedEmail) return;
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        if (requestedConvId) {
+          setActiveConversation(requestedConvId);
+          return;
+        }
+
+        const normalizedMe = String(user?.email || '').trim().toLowerCase();
+        const existingDirect = conversations.find((conversation) => {
+          if (conversation?.type !== 'direct') return false;
+          const members = Array.isArray(conversation.members)
+            ? conversation.members.map((item) => String(item || '').toLowerCase())
+            : [];
+          return members.includes(normalizedMe) && members.includes(requestedEmail);
+        });
+
+        if (existingDirect?.id) {
+          setActiveConversation(existingDirect.id);
+          return;
+        }
+
+        if (!cancelled && requestedEmail) {
+          await startDirectChat(requestedEmail);
+        }
+      } finally {
+        if (!cancelled) {
+          navigate('/chat', { replace: true, state: null });
+        }
+      }
+    };
+
+    run().catch((error) => {
+      console.error('Failed to open chat from navigation state', error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    location.state,
+    conversations,
+    navigate,
+    setActiveConversation,
+    startDirectChat,
+    user?.email,
+  ]);
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-white">

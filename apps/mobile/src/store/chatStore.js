@@ -1,17 +1,105 @@
-import { create } from 'zustand';
-import axios from 'axios';
-import { MMKV } from 'react-native-mmkv';
+import { create } from "zustand";
+import { apiRequest } from "../utils/api";
 
-const storage = new MMKV();
+const memoryCache = new Map();
+let storage = null;
+
+try {
+  // Expo Go does not provide Nitro native modules (MMKV v4), so this must be optional.
+  // eslint-disable-next-line global-require
+  const { MMKV } = require("react-native-mmkv");
+  storage = new MMKV();
+} catch (error) {
+  // Expo Go fallback: keep using in-memory cache silently.
+}
 
 // Helper to get/set from storage
 const getCachedMessages = (convId) => {
-  const data = storage.getString(`messages#${convId}`);
+  const key = `messages#${convId}`;
+  if (!storage) return memoryCache.get(key) || [];
+  const data = storage.getString(key);
   return data ? JSON.parse(data) : [];
 };
 
 const setCachedMessages = (convId, messages) => {
-  storage.set(`messages#${convId}`, JSON.stringify(messages.slice(-50))); // Chỉ cache 50 tin mới nhất
+  const key = `messages#${convId}`;
+  const payload = messages.slice(-50);
+  memoryCache.set(key, payload);
+  if (storage) {
+    storage.set(key, JSON.stringify(payload)); // Chỉ cache 50 tin mới nhất
+  }
+};
+
+const normalizeApiPayload = (res) => {
+  if (!res || typeof res !== "object") return res;
+  if (Object.prototype.hasOwnProperty.call(res, "data")) return res.data;
+
+  const numericKeys = Object.keys(res).filter((key) => /^\d+$/.test(key));
+  if (numericKeys.length > 0) {
+    return numericKeys
+      .sort((a, b) => Number(a) - Number(b))
+      .map((key) => res[key]);
+  }
+
+  const payload = { ...res };
+  delete payload.ok;
+  delete payload.status;
+  return payload;
+};
+
+const normalizeApiResponse = (res) => ({
+  ...res,
+  data: normalizeApiPayload(res),
+});
+
+const normalizeMessage = (message) => {
+  if (!message || typeof message !== "object") return null;
+
+  const normalized = {
+    ...message,
+    id: String(message.id || "").trim(),
+    senderId: String(message.senderId || message.sender_id || "").trim(),
+    content: String(message.content || ""),
+  };
+
+  if (!normalized.id) return null;
+  if (!normalized.senderId) normalized.senderId = "unknown";
+  return normalized;
+};
+
+const chatGet = async (path, query) => {
+  const queryString = query
+    ? `?${Object.entries(query)
+        .filter(
+          ([, value]) =>
+            value !== undefined && value !== null && String(value) !== "",
+        )
+        .map(
+          ([key, value]) =>
+            `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`,
+        )
+        .join("&")}`
+    : "";
+
+  let res = await apiRequest(`/chat${path}${queryString}`);
+  if (!res?.ok && res?.status === 404) {
+    res = await apiRequest(`/api/chat${path}${queryString}`);
+  }
+  return normalizeApiResponse(res);
+};
+
+const chatPost = async (path, body) => {
+  let res = await apiRequest(`/chat${path}`, {
+    method: "POST",
+    body: JSON.stringify(body || {}),
+  });
+  if (!res?.ok && res?.status === 404) {
+    res = await apiRequest(`/api/chat${path}`, {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    });
+  }
+  return normalizeApiResponse(res);
 };
 
 export const useChatStore = create((set, get) => ({
@@ -21,94 +109,133 @@ export const useChatStore = create((set, get) => ({
   isLoadingMessages: false,
   nextCursor: null,
 
-  setConversations: (conversations) => set({ conversations }),
-  
+  setConversations: (conversations) =>
+    set({ conversations: Array.isArray(conversations) ? conversations : [] }),
+
   setActiveConversation: (convId) => {
     if (get().activeConvId === convId) return;
-    
+
     // Offline-first: Load từ cache trước
     const cached = getCachedMessages(convId);
     set({ activeConvId: convId, messages: cached, nextCursor: null });
-    
+
     if (convId) {
       get().fetchMessages(convId);
     }
   },
 
   setMessages: (messages, nextCursor) => {
-    set({ messages, nextCursor });
+    const safeMessages = Array.isArray(messages)
+      ? messages.map(normalizeMessage).filter(Boolean)
+      : [];
+    set({ messages: safeMessages, nextCursor });
     if (get().activeConvId) {
-      setCachedMessages(get().activeConvId, messages);
+      setCachedMessages(get().activeConvId, safeMessages);
     }
   },
 
-  addMessage: (message) => set((state) => {
-    if (state.messages.find(m => m.id === message.id)) return state;
-    const newMessages = [...state.messages, message];
-    if (state.activeConvId) setCachedMessages(state.activeConvId, newMessages);
-    return { messages: newMessages };
-  }),
+  addMessage: (message) =>
+    set((state) => {
+      const safeMessage = normalizeMessage(message);
+      if (!safeMessage) return state;
+      if (state.messages.find((m) => m.id === safeMessage.id)) return state;
+      const newMessages = [...state.messages, safeMessage];
+      if (state.activeConvId)
+        setCachedMessages(state.activeConvId, newMessages);
+      return { messages: newMessages };
+    }),
 
-  updateMessage: (msgId, updates) => set((state) => ({
-    messages: state.messages.map(m => m.id === msgId ? { ...m, ...updates } : m)
-  })),
+  updateMessage: (msgId, updates) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === msgId ? { ...m, ...updates } : m,
+      ),
+    })),
 
   fetchConversations: async () => {
     try {
-      const res = await axios.get('/chat/conversations');
-      set({ conversations: res.data });
+      const res = await chatGet("/conversations");
+      const conversations = Array.isArray(res?.data) ? res.data : [];
+      set({ conversations });
     } catch (err) {
-      console.error('Failed to fetch conversations', err);
+      console.error("Failed to fetch conversations", err);
     }
   },
 
   fetchMessages: async (convId, limit = 30) => {
     set({ isLoadingMessages: true });
     try {
-      const res = await axios.get(`/chat/conversations/${convId}/messages?limit=${limit}`);
-      const newMessages = res.data.messages;
-      set({ 
-        messages: newMessages, 
-        nextCursor: res.data.nextCursor,
-        isLoadingMessages: false 
+      const res = await chatGet(
+        `/conversations/${encodeURIComponent(convId)}/messages`,
+        { limit },
+      );
+      const payload = res?.data || {};
+      const newMessages = (Array.isArray(payload?.messages)
+        ? payload.messages
+        : Array.isArray(payload)
+          ? payload
+          : [])
+        .map(normalizeMessage)
+        .filter(Boolean);
+      set({
+        messages: newMessages,
+        nextCursor: payload?.nextCursor || null,
+        isLoadingMessages: false,
       });
       setCachedMessages(convId, newMessages);
     } catch (err) {
       set({ isLoadingMessages: false });
-      console.error('Failed to fetch messages', err);
+      console.error("Failed to fetch messages", err);
     }
   },
 
-  sendMessageOptimistic: async (convId, senderEmail, content, msgType = 'text') => {
+  sendMessageOptimistic: async (
+    convId,
+    senderEmail,
+    content,
+    msgType = "text",
+  ) => {
     const tempId = `TEMP#${Date.now()}`;
     const timestamp = new Date().toISOString();
-    
+
     const optimisticMsg = {
       id: tempId,
       conversationId: convId,
       senderId: senderEmail,
       content,
       type: msgType,
-      status: 'sending',
+      status: "sending",
       createdAt: timestamp,
     };
 
     set((state) => ({ messages: [...state.messages, optimisticMsg] }));
 
     try {
-      const res = await axios.post(`/chat/conversations/${convId}/messages`, {
-        content,
-        type: msgType
-      });
+      const res = await chatPost(
+        `/conversations/${encodeURIComponent(convId)}/messages`,
+        {
+          content,
+          type: msgType,
+        },
+      );
+      const savedMessage = normalizeMessage(res?.data || res);
+
+      if (!savedMessage) {
+        throw new Error("INVALID_MESSAGE_PAYLOAD");
+      }
 
       set((state) => ({
-        messages: state.messages.map(m => m.id === tempId ? { ...res.data, status: 'sent' } : m)
+        messages: state.messages.map((m) =>
+          m.id === tempId ? { ...savedMessage, status: "sent" } : m,
+        ),
       }));
     } catch (err) {
       set((state) => ({
-        messages: state.messages.map(m => m.id === tempId ? { ...m, status: 'sending' } : m) 
+        messages: state.messages.map((m) =>
+          m.id === tempId ? { ...m, status: "error" } : m,
+        ),
       }));
-      console.error('Failed to send message', err);
+      console.error("Failed to send message", err);
     }
-  }
+  },
 }));

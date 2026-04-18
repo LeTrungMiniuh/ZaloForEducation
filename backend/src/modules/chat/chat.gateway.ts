@@ -123,7 +123,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     socket.to(data.convId).emit("receiveMessage", data.message);
   }
 
-<<<<<<< HEAD
+  notifyFriendRequest(email: string, payload: any) {
+    const userRoom = `user#${email.toLowerCase()}`;
+    this.server.to(userRoom).emit("friend_request_received", payload);
+    console.log(`Sent friend_request_received to room ${userRoom}`);
+  }
+
+  notifyFriendshipUpdate(email: string, payload: any) {
+    const userRoom = `user#${email.toLowerCase()}`;
+    this.server.to(userRoom).emit("friendship_updated", payload);
+    console.log(`Sent friendship_updated to room ${userRoom}`);
+  }
+
   /**
    * Notify all devices of a user that a conversation has been read
    */
@@ -131,17 +142,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userRoom = `user#${email.toLowerCase()}`;
     this.server.to(userRoom).emit("conversation_marked_read", { convId });
     this.logger.log(`Notified user ${email} that conversation ${convId} was read`);
-=======
-  notifyFriendRequest(email: string, payload: any) {
-    const userRoom = `user#${email}`;
-    this.server.to(userRoom).emit("friend_request_received", payload);
-    console.log(`Sent friend_request_received to room ${userRoom}`);
-  }
-
-  notifyFriendshipUpdate(email: string, payload: any) {
-    const userRoom = `user#${email}`;
-    this.server.to(userRoom).emit("friendship_updated", payload);
-    console.log(`Sent friendship_updated to room ${userRoom}`);
   }
 
   @SubscribeMessage("call:invite")
@@ -287,7 +287,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     client.to(data.convId).emit("call:end", payload);
->>>>>>> @{-1}
   }
 
   // Gửi thông báo đăng xuất tới thiết bị đích (Đã gia cố để đảm bảo nhận được ở mọi màn hình)

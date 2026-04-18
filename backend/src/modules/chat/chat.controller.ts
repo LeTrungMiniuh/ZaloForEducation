@@ -308,7 +308,6 @@ export class ChatController {
     return await this.friendshipService.acceptRequest(email, body.senderEmail);
   }
 
-<<<<<<< HEAD
   @Delete("conversations/:id/history")
   async deleteChatHistory(@Param("id") id: string, @Req() req: any) {
     const email = req.user.email;
@@ -320,7 +319,8 @@ export class ChatController {
   @Patch("conversations/:id/read")
   async markAsRead(@Param("id") id: string, @Req() req: any) {
     return await this.chatService.markConversationAsRead(id, req.user.email);
-=======
+  }
+
   @Post("friends/reject")
   async rejectFriendRequest(
     @Body() body: { senderEmail: string },
@@ -355,6 +355,37 @@ export class ChatController {
     );
   }
 
+  @Patch("friends/close-friend")
+  async setCloseFriend(
+    @Body() body: { friendEmail: string; isCloseFriend: boolean },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.setCloseFriend(
+      email,
+      body.friendEmail,
+      body.isCloseFriend,
+    );
+  }
+
+  // Backward-compatible alias route
+  @Patch("friends/closeFriend")
+  async setCloseFriendAlias(
+    @Body() body: { friendEmail: string; isCloseFriend?: boolean; closeFriend?: boolean },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.setCloseFriend(
+      email,
+      body.friendEmail,
+      Boolean(
+        body.isCloseFriend !== undefined
+          ? body.isCloseFriend
+          : body.closeFriend,
+      ),
+    );
+  }
+
   @Get("friends/requests")
   async getIncomingRequests(@Req() req: any) {
     const email = req.user.email;
@@ -365,6 +396,5 @@ export class ChatController {
   async getFriendSuggestions(@Req() req: any) {
     const email = req.user.email;
     return await this.friendshipService.getFriendSuggestions(email);
->>>>>>> @{-1}
   }
 }

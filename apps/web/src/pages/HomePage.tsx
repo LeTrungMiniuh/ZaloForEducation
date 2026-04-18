@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { Message, Conversation } from '@zalo-edu/shared';
 import { useAuth } from '../context/AuthContext';
@@ -6,14 +6,14 @@ import api from '../services/api';
 import { Link } from 'react-router-dom';
 import ProfileModal from '../components/ProfileModal';
 import { useChatStore } from '../store/chatStore';
-=======
+
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import api from "../services/api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import ProfileModal from "../components/ProfileModal";
 import Swal from "sweetalert2";
->>>>>>> @{-1}
+
 
 type Friendship = {
   sender_id: string;
@@ -119,7 +119,7 @@ const chatUpload = async (file: File) => {
 
 const HomePage: React.FC = () => {
   const { user, logout, socket } = useAuth();
-<<<<<<< HEAD
+
 
   // ZUSTAND STORE
   const {
@@ -154,7 +154,7 @@ const HomePage: React.FC = () => {
   // UI ONLY STATE
   const [activeTab, setActiveTab] = useState<'chat' | 'contacts' | 'notifications' | 'cloud'>('chat');
   const [inputText, setInputText] = useState('');
-=======
+
   const navigate = useNavigate();
   const location = useLocation();
   const openedDirectChatEmailRef = useRef<string | null>(null);
@@ -206,7 +206,7 @@ const HomePage: React.FC = () => {
   const [showAllContacts, setShowAllContacts] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
   const [showAllMessages, setShowAllMessages] = useState(false);
-=======
+
   const [contextMenu, setContextMenu] = useState<{
     message: any;
     x: number;
