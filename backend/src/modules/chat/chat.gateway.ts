@@ -123,6 +123,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     socket.to(data.convId).emit("receiveMessage", data.message);
   }
 
+<<<<<<< HEAD
   /**
    * Notify all devices of a user that a conversation has been read
    */
@@ -130,6 +131,163 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userRoom = `user#${email.toLowerCase()}`;
     this.server.to(userRoom).emit("conversation_marked_read", { convId });
     this.logger.log(`Notified user ${email} that conversation ${convId} was read`);
+=======
+  notifyFriendRequest(email: string, payload: any) {
+    const userRoom = `user#${email}`;
+    this.server.to(userRoom).emit("friend_request_received", payload);
+    console.log(`Sent friend_request_received to room ${userRoom}`);
+  }
+
+  notifyFriendshipUpdate(email: string, payload: any) {
+    const userRoom = `user#${email}`;
+    this.server.to(userRoom).emit("friendship_updated", payload);
+    console.log(`Sent friendship_updated to room ${userRoom}`);
+  }
+
+  @SubscribeMessage("call:invite")
+  handleCallInvite(
+    @MessageBody()
+    data: {
+      convId: string;
+      fromEmail: string;
+      toEmail?: string;
+      callType?: "video" | "audio";
+    },
+    @ConnectedSocket() client: Socket,
+  ): void {
+    if (!data?.convId || !data?.fromEmail) return;
+
+    const payload = {
+      convId: data.convId,
+      fromEmail: data.fromEmail,
+      toEmail: data.toEmail,
+      callType: data.callType || "video",
+      ts: Date.now(),
+    };
+
+    if (data.toEmail) {
+      this.server.to(`user#${data.toEmail}`).emit("call:incoming", payload);
+      return;
+    }
+
+    client.to(data.convId).emit("call:incoming", payload);
+  }
+
+  @SubscribeMessage("call:offer")
+  handleCallOffer(
+    @MessageBody()
+    data: {
+      convId: string;
+      fromEmail: string;
+      toEmail?: string;
+      offer: any;
+    },
+    @ConnectedSocket() client: Socket,
+  ): void {
+    if (!data?.convId || !data?.fromEmail || !data?.offer) return;
+
+    const payload = {
+      convId: data.convId,
+      fromEmail: data.fromEmail,
+      toEmail: data.toEmail,
+      offer: data.offer,
+      ts: Date.now(),
+    };
+
+    if (data.toEmail) {
+      this.server.to(`user#${data.toEmail}`).emit("call:offer", payload);
+      return;
+    }
+
+    client.to(data.convId).emit("call:offer", payload);
+  }
+
+  @SubscribeMessage("call:answer")
+  handleCallAnswer(
+    @MessageBody()
+    data: {
+      convId: string;
+      fromEmail: string;
+      toEmail?: string;
+      answer: any;
+    },
+    @ConnectedSocket() client: Socket,
+  ): void {
+    if (!data?.convId || !data?.fromEmail || !data?.answer) return;
+
+    const payload = {
+      convId: data.convId,
+      fromEmail: data.fromEmail,
+      toEmail: data.toEmail,
+      answer: data.answer,
+      ts: Date.now(),
+    };
+
+    if (data.toEmail) {
+      this.server.to(`user#${data.toEmail}`).emit("call:answer", payload);
+      return;
+    }
+
+    client.to(data.convId).emit("call:answer", payload);
+  }
+
+  @SubscribeMessage("call:ice")
+  handleCallIce(
+    @MessageBody()
+    data: {
+      convId: string;
+      fromEmail: string;
+      toEmail?: string;
+      candidate: any;
+    },
+    @ConnectedSocket() client: Socket,
+  ): void {
+    if (!data?.convId || !data?.fromEmail || !data?.candidate) return;
+
+    const payload = {
+      convId: data.convId,
+      fromEmail: data.fromEmail,
+      toEmail: data.toEmail,
+      candidate: data.candidate,
+      ts: Date.now(),
+    };
+
+    if (data.toEmail) {
+      this.server.to(`user#${data.toEmail}`).emit("call:ice", payload);
+      return;
+    }
+
+    client.to(data.convId).emit("call:ice", payload);
+  }
+
+  @SubscribeMessage("call:end")
+  handleCallEnd(
+    @MessageBody()
+    data: {
+      convId: string;
+      fromEmail: string;
+      toEmail?: string;
+      reason?: string;
+    },
+    @ConnectedSocket() client: Socket,
+  ): void {
+    if (!data?.convId || !data?.fromEmail) return;
+
+    const payload = {
+      convId: data.convId,
+      fromEmail: data.fromEmail,
+      toEmail: data.toEmail,
+      reason: data.reason || "ended",
+      ts: Date.now(),
+    };
+
+    if (data.toEmail) {
+      this.server.to(`user#${data.toEmail}`).emit("call:end", payload);
+      return;
+    }
+
+    client.to(data.convId).emit("call:end", payload);
+>>>>>>> @{-1}
   }
 
   // Gửi thông báo đăng xuất tới thiết bị đích (Đã gia cố để đảm bảo nhận được ở mọi màn hình)
