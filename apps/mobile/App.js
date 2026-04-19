@@ -10,19 +10,19 @@ import {
   PlusJakartaSans_800ExtraBold 
 } from '@expo-google-fonts/plus-jakarta-sans';
 
-import LoginScreen from './src/screens/LoginScreen';
-import RegisterScreen from './src/screens/RegisterScreen';
-import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
-import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
-import HomeScreen from './src/screens/HomeScreen';
-import SessionsScreen from './src/screens/SessionsScreen';
-import ProfileScreen from './src/screens/ProfileScreen';
-import QRScannerScreen from './src/screens/QRScannerScreen';
-import StatusPickerScreen from './src/screens/StatusPickerScreen';
-import ProfileMoreScreen from './src/screens/ProfileMoreScreen';
-import SettingsScreen from './src/screens/SettingsScreen';
-import ChangePasswordScreen from './src/screens/ChangePasswordScreen';
-import LoginOtpScreen from './src/screens/LoginOtpScreen';
+import LoginScreen from './src/screens/auth/LoginScreen';
+import RegisterScreen from './src/screens/auth/RegisterScreen';
+import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
+import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
+import HomeScreen from './src/screens/main/HomeScreen';
+import SessionsScreen from './src/screens/main/SessionsScreen';
+import ProfileScreen from './src/screens/profile/ProfileScreen';
+import QRScannerScreen from './src/screens/profile/QRScannerScreen';
+import StatusPickerScreen from './src/screens/profile/StatusPickerScreen';
+import ProfileMoreScreen from './src/screens/profile/ProfileMoreScreen';
+import SettingsScreen from './src/screens/profile/SettingsScreen';
+import ChangePasswordScreen from './src/screens/profile/ChangePasswordScreen';
+import LoginOtpScreen from './src/screens/auth/LoginOtpScreen';
 import SplashScreen from './src/components/SplashScreen';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';

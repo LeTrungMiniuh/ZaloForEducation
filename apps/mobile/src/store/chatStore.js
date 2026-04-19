@@ -109,8 +109,10 @@ export const useChatStore = create((set, get) => ({
   isLoadingMessages: false,
   nextCursor: null,
 
-  setConversations: (conversations) =>
-    set({ conversations: Array.isArray(conversations) ? conversations : [] }),
+  setConversations: (update) =>
+    set((state) => ({
+      conversations: typeof update === "function" ? update(state.conversations) : (Array.isArray(update) ? update : []),
+    })),
 
   setActiveConversation: (convId) => {
     if (get().activeConvId === convId) return;
@@ -138,8 +140,22 @@ export const useChatStore = create((set, get) => ({
     set((state) => {
       const safeMessage = normalizeMessage(message);
       if (!safeMessage) return state;
-      if (state.messages.find((m) => m.id === safeMessage.id)) return state;
-      const newMessages = [...state.messages, safeMessage];
+
+      // Prevent adding if ID already exists
+      if (state.messages.some((m) => m.id === safeMessage.id)) return state;
+
+      // Optimistically remove any temporary message that matches this real one
+      // (Same sender, same content, and ID starts with TEMP#)
+      const filteredMessages = state.messages.filter(
+        (m) =>
+          !(
+            String(m.id).startsWith("TEMP#") &&
+            m.content === safeMessage.content &&
+            m.senderId === safeMessage.senderId
+          ),
+      );
+
+      const newMessages = [...filteredMessages, safeMessage];
       if (state.activeConvId)
         setCachedMessages(state.activeConvId, newMessages);
       return { messages: newMessages };
@@ -155,10 +171,20 @@ export const useChatStore = create((set, get) => ({
   fetchConversations: async () => {
     try {
       const res = await chatGet("/conversations");
-      const conversations = Array.isArray(res?.data) ? res.data : [];
-      set({ conversations });
+      let data = [];
+      if (Array.isArray(res?.data)) {
+        data = res.data;
+      } else if (res && typeof res === "object") {
+        const numericKeys = Object.keys(res).filter(k => /^\d+$/.test(k)).sort((a, b) => Number(a) - Number(b));
+        if (numericKeys.length > 0) {
+          data = numericKeys.map(k => res[k]);
+        }
+      }
+      set({ conversations: data });
+      return data;
     } catch (err) {
       console.error("Failed to fetch conversations", err);
+      return [];
     }
   },
 
@@ -224,11 +250,26 @@ export const useChatStore = create((set, get) => ({
         throw new Error("INVALID_MESSAGE_PAYLOAD");
       }
 
-      set((state) => ({
-        messages: state.messages.map((m) =>
-          m.id === tempId ? { ...savedMessage, status: "sent" } : m,
-        ),
-      }));
+      set((state) => {
+        // Check if the real message already exists (e.g., received via socket before API returned)
+        const alreadyExists = state.messages.some(
+          (m) => m.id === savedMessage.id && m.id !== tempId,
+        );
+
+        if (alreadyExists) {
+          // If the real message is already there, just remove the temporary one
+          return {
+            messages: state.messages.filter((m) => m.id !== tempId),
+          };
+        }
+
+        // Replace the temporary message with the real one
+        return {
+          messages: state.messages.map((m) =>
+            m.id === tempId ? { ...savedMessage, status: "sent" } : m,
+          ),
+        };
+      });
     } catch (err) {
       set((state) => ({
         messages: state.messages.map((m) =>

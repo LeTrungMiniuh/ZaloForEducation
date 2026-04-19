@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  FlatList,
   TextInput,
   TouchableOpacity,
   Image,
@@ -11,23 +12,27 @@ import {
   StatusBar,
   Pressable,
   ActivityIndicator,
-  Linking,
   KeyboardAvoidingView,
 } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import styles from './style/HomeScreen.styles';
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Colors, Typography } from "../constants/Theme";
-import Alert from "../utils/Alert";
-import { useAuth } from "../context/AuthContext";
-import { apiRequest, API_URL } from "../utils/api";
-import SocketService from "../utils/socket";
-import { useChatStore } from "../store/chatStore";
-import ContactsScreen from "./ContactsScreen";
+import { Colors, Typography } from '../../constants/Theme';
+import Alert from '../../utils/Alert';
+import { useAuth } from '../../context/AuthContext';
+import { apiRequest, API_URL } from '../../utils/api';
+import SocketService from '../../utils/socket';
+import { useChatStore } from '../../store/chatStore';
+import ContactsScreen from './ContactsScreen';
+import MessageBubble from '../../components/chat/MessageBubble';
+import ChatInput from '../../components/chat/ChatInput';
+import * as Clipboard from 'expo-clipboard';
+import { Modal } from 'react-native';
 const REACTION_OPTIONS = ["❤️", "👍", "😂", "😮", "😢", "😡"];
 const MAX_ATTACHMENTS_PER_MESSAGE = 8;
 const TAB_ALIAS = {
@@ -42,9 +47,9 @@ const TAB_ALIAS = {
 
 const normalizeHomeTab = (tab) =>
   TAB_ALIAS[
-    String(tab || "")
-      .trim()
-      .toLowerCase()
+  String(tab || "")
+    .trim()
+    .toLowerCase()
   ] || "chat";
 
 const normalizeApiPayload = (res) => {
@@ -64,6 +69,22 @@ const normalizeApiPayload = (res) => {
   return payload;
 };
 
+const normalizeConversation = (conv) => {
+  if (!conv || typeof conv !== "object") return null;
+  const id = String(conv.id || conv._id || "").trim();
+  if (!id) return null;
+  return {
+    ...conv,
+    id,
+    type: conv.type || "direct",
+    partner: String(conv.partner || "").trim(),
+    name: String(conv.name || "").trim(),
+    avatar: String(conv.avatar || "").trim(),
+    lastMessage: conv.lastMessage || null,
+    updatedAt: conv.updatedAt || conv.updated_at || null,
+  };
+};
+
 const normalizeApiResponse = (res) => ({
   ...res,
   data: normalizeApiPayload(res),
@@ -72,12 +93,12 @@ const normalizeApiResponse = (res) => ({
 const chatGet = async (path, query) => {
   const queryString = query
     ? `?${Object.entries(query)
-        .filter(([, v]) => v !== undefined && v !== null && String(v) !== "")
-        .map(
-          ([k, v]) =>
-            `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
-        )
-        .join("&")}`
+      .filter(([, v]) => v !== undefined && v !== null && String(v) !== "")
+      .map(
+        ([k, v]) =>
+          `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
+      )
+      .join("&")}`
     : "";
 
   let res = await apiRequest(`/chat${path}${queryString}`);
@@ -199,11 +220,12 @@ export default function HomeScreen({
     setConversations,
   } = useChatStore();
 
-  const [activeTab, setActiveTab] = useState(normalizeHomeTab(initialTab));
+  const [activeTab, setActiveTab] = useState(initialTab || "messages");
   const [inputText, setInputText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
-  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingConversations, setLoadingConversations] = useState(true);
+  const [readConversations, setReadConversations] = useState(new Set());
   const [friendships, setFriendships] = useState([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [friendSearchEmail, setFriendSearchEmail] = useState("");
@@ -211,11 +233,17 @@ export default function HomeScreen({
   const [friendSearchResult, setFriendSearchResult] = useState(null);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
 
-  const [conversationPreviewMap, setConversationPreviewMap] = useState({});
   const [messageReactions, setMessageReactions] = useState({});
   const [replyTarget, setReplyTarget] = useState(null);
   const [actionMessage, setActionMessage] = useState(null);
   const [userProfiles, setUserProfiles] = useState({});
+  const [typingUsers, setTypingUsers] = useState({});
+  const [isFriendRequestsModalOpen, setIsFriendRequestsModalOpen] = useState(false);
+  const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [messageToForward, setMessageToForward] = useState(null);
+
+  const typingTimeoutRef = useRef(null);
 
   const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
@@ -223,6 +251,8 @@ export default function HomeScreen({
   const safeMessages = Array.isArray(messages)
     ? messages.filter((m) => m && typeof m === "object")
     : [];
+
+  const reversedMessages = useMemo(() => [...safeMessages].reverse(), [safeMessages]);
 
   // Derived State
   const selectedChat = safeConversations.find((c) => c.id === activeConvId);
@@ -240,6 +270,8 @@ export default function HomeScreen({
   }, [initialTab]);
 
   const closeMessageAction = () => setActionMessage(null);
+
+
 
   const getFriendshipMeta = (friendship) => {
     const source = friendship?.senderEmail || friendship?.sender_id || "";
@@ -287,9 +319,7 @@ export default function HomeScreen({
   };
 
   const getConversationPreview = (conv) => {
-    const seeded = conversationPreviewMap[conv.id];
-    if (seeded) return seeded;
-    const raw = String(conv?.lastMessage || "");
+    const raw = String(conv?.lastMessageContent || conv?.lastMessage || "");
     if (!raw) return "Chưa có tin nhắn";
     if (raw.startsWith("MSG#")) return "Đang tải nội dung...";
     return raw;
@@ -311,18 +341,29 @@ export default function HomeScreen({
     };
   };
 
-  const upsertConversationLastMessage = (convId, content) => {
+  const upsertConversationLastMessage = (convId, content, senderId, isNewMessage = false, msgId = null) => {
     setConversations((prev) => {
       const index = prev.findIndex((conv) => conv.id === convId);
       if (index === -1) return prev;
-
+ 
       const next = [...prev];
       const target = next[index];
+      
+      const isCurrentlyActive = activeConvId === convId;
+      // Deduplication: Don't increment if we already processed this message ID
+      const isAlreadyProcessed = msgId && target.lastProcessedMsgId === msgId;
+      const shouldIncrement = isNewMessage && !isAlreadyProcessed && senderId && senderId !== user?.email && !isCurrentlyActive;
+      
       const updated = {
         ...target,
-        lastMessage: content || target.lastMessage || "",
+        lastMessage: content,
+        lastMessageContent: content,
+        lastMessageSenderId: senderId || target.lastMessageSenderId,
+        lastProcessedMsgId: msgId || target.lastProcessedMsgId,
+        unreadCount: shouldIncrement ? (target.unreadCount || 0) + 1 : (isCurrentlyActive ? 0 : target.unreadCount || 0),
         updatedAt: new Date().toISOString(),
       };
+      
       next.splice(index, 1);
       next.unshift(updated);
       return next;
@@ -347,40 +388,60 @@ export default function HomeScreen({
   };
 
   const loadConversations = async () => {
-    if (!user?.email) return;
+    if (!user?.email) {
+      console.log("[Chat] Skip loading: No user email");
+      return;
+    }
+    console.log("[Chat] Fetching conversations for:", user.email);
     setLoadingConversations(true);
     try {
       const res = await chatGet("/conversations");
-      const normalized = (Array.isArray(res?.data) ? res.data : []).map(
-        normalizeConversation,
-      );
+      console.log("[Chat] API Response Status:", res?.status);
+
+      // Robust data extraction: check res.data first, then fallback to numeric keys in res
+      let rawData = [];
+      if (Array.isArray(res?.data)) {
+        rawData = res.data;
+      } else if (res && typeof res === "object") {
+        const numericKeys = Object.keys(res)
+          .filter((key) => /^\d+$/.test(key))
+          .sort((a, b) => Number(a) - Number(b));
+        if (numericKeys.length > 0) {
+          rawData = numericKeys.map((key) => res[key]);
+        }
+      }
+
+      const normalized = rawData
+        .map(normalizeConversation)
+        .filter((c) => c !== null);
+
+      console.log(`[Chat] Successfully loaded ${normalized.length} conversations`);
       setConversations(normalized);
 
-      const previewSeed = {};
-      normalized.forEach((conv) => {
-        const raw = String(conv.lastMessage || "");
-        if (!raw) previewSeed[conv.id] = "Chưa có tin nhắn";
-        else if (!raw.startsWith("MSG#")) previewSeed[conv.id] = raw;
-      });
-      setConversationPreviewMap(previewSeed);
+      setReadConversations(new Set());
 
       normalized
-        .filter((conv) => String(conv.lastMessage || "").startsWith("MSG#"))
+        .filter((conv) => !conv.lastMessageContent && String(conv.lastMessage || "").startsWith("MSG#"))
         .forEach(async (conv) => {
-          const latestRes = await chatGet(
-            `/conversations/${encodeURIComponent(conv.id)}/messages`,
-            { limit: 1 },
-          );
-          const latestMessages =
-            latestRes?.messages || latestRes?.data?.messages || [];
-          const latest = latestMessages[latestMessages.length - 1];
-          setConversationPreviewMap((prev) => ({
-            ...prev,
-            [conv.id]: latest ? getMessagePreview(latest) : "Chưa có tin nhắn",
-          }));
+          try {
+            const latestRes = await chatGet(
+              `/conversations/${encodeURIComponent(conv.id)}/messages`,
+              { limit: 1 },
+            );
+            const latestMessages =
+              latestRes?.data || latestRes?.messages || [];
+            const latest = Array.isArray(latestMessages)
+              ? latestMessages[latestMessages.length - 1]
+              : null;
+            if (latest) {
+              upsertConversationLastMessage(conv.id, getMessagePreview(latest), latest.senderId, false, latest.id);
+            }
+          } catch (mErr) {
+            console.warn(`[Chat] Failed to load preview for ${conv.id}`, mErr);
+          }
         });
     } catch (err) {
-      console.error("Fetch conversations failed", err);
+      console.error("[Chat] Fetch conversations failed", err);
     } finally {
       setLoadingConversations(false);
     }
@@ -388,12 +449,27 @@ export default function HomeScreen({
 
   const fetchFriendships = async () => {
     if (!user?.email) return;
+    console.log("[Friends] Fetching friends for:", user.email);
     setLoadingFriends(true);
     try {
       const res = await chatGet("/friends");
-      setFriendships(Array.isArray(res?.data) ? res.data : []);
+      
+      let rawData = [];
+      if (Array.isArray(res?.data)) {
+        rawData = res.data;
+      } else if (res && typeof res === "object") {
+        const numericKeys = Object.keys(res)
+          .filter((key) => /^\d+$/.test(key))
+          .sort((a, b) => Number(a) - Number(b));
+        if (numericKeys.length > 0) {
+          rawData = numericKeys.map((key) => res[key]);
+        }
+      }
+
+      console.log(`[Friends] Successfully loaded ${rawData.length} friendships`);
+      setFriendships(rawData);
     } catch (err) {
-      console.error("Fetch friends failed", err);
+      console.error("[Friends] Fetch friends failed", err);
       setFriendships([]);
     } finally {
       setLoadingFriends(false);
@@ -486,6 +562,19 @@ export default function HomeScreen({
     if (!normalizedChat) return;
 
     setActiveConversation(normalizedChat.id);
+    setActiveTab("chat");
+    
+    // Reset unread count locally
+    setConversations(prev => prev.map(c => 
+      c.id === normalizedChat.id ? { ...c, unreadCount: 0 } : c
+    ));
+
+    setReadConversations(prev => {
+      const next = new Set(prev);
+      next.add(normalizedChat.id);
+      return next;
+    });
+
     setReplyTarget(null);
     closeMessageAction();
 
@@ -603,6 +692,64 @@ export default function HomeScreen({
     closeMessageAction();
   };
 
+  const deleteMessageForMe = async (messageId) => {
+    if (!selectedChat?.id) return;
+    try {
+      const res = await chatPatch(
+        `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
+        { action: "deleteForMe" },
+      );
+      if (res.ok) {
+        setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      }
+    } catch (err) {
+      console.error("Delete for me failed", err);
+    }
+    closeMessageAction();
+  };
+
+  const copyToClipboard = async (text) => {
+    if (!text) return;
+    await Clipboard.setStringAsync(text);
+    // Optional: show a small toast or overlay
+    closeMessageAction();
+  };
+
+  const handleForwardSelect = async (targetConvId) => {
+    if (!forwardTargetMessage || !targetConvId) return;
+
+    setIsForwardModalOpen(false);
+    const msg = forwardTargetMessage;
+
+    try {
+      // Logic similar to Web: Send a new message to the target conversation
+      const res = await chatPost(
+        `/conversations/${encodeURIComponent(targetConvId)}/messages`,
+        {
+          content: msg.content || (msg.media?.length > 0 ? "[Hình ảnh]" : "[Tệp đính kèm]"),
+          media: msg.media || [],
+          files: msg.files || [],
+          type: msg.type || 'text',
+        },
+      );
+
+      if (res.ok) {
+        Alert.alert("Thành công", "Đã chuyển tiếp tin nhắn.");
+      }
+    } catch (err) {
+      console.error("Forward failed", err);
+      Alert.alert("Lỗi", "Không thể chuyển tiếp tin nhắn.");
+    } finally {
+      setForwardTargetMessage(null);
+    }
+  };
+
+  const startForward = (message) => {
+    setForwardTargetMessage(message);
+    setIsForwardModalOpen(true);
+    closeMessageAction();
+  };
+
   const recallMessage = async (messageId) => {
     if (!selectedChat?.id) return;
     const res = await chatPatch(
@@ -614,10 +761,6 @@ export default function HomeScreen({
     setMessages((prev) =>
       prev.map((msg) => (msg.id === messageId ? updatedMessage : msg)),
     );
-    setConversationPreviewMap((prev) => ({
-      ...prev,
-      [selectedChat.id]: "Tin nhắn đã được thu hồi",
-    }));
     upsertConversationLastMessage(selectedChat.id, "Tin nhắn đã được thu hồi");
 
     setMessageReactions((prev) => {
@@ -673,27 +816,21 @@ export default function HomeScreen({
     }
   };
 
-  const sendMessage = async () => {
-    if (
-      (!inputText.trim() && attachments.length === 0) ||
-      !selectedChat ||
-      sending
-    )
-      return;
+  const handleChatSend = async (textToSend, attachmentsToSend) => {
+    if (!selectedChat) return;
 
-    setSending(true);
     try {
-      const trimmedInput = inputText.trim();
-      const currentAttachments = [...attachments];
+      const trimmedInput = textToSend.trim();
+      const currentAttachments = [...attachmentsToSend];
 
-      // Reset UI early
-      setInputText("");
-      setAttachments([]);
       setReplyTarget(null);
+      if (SocketService.socket && selectedChat.id) {
+        SocketService.socket.emit("typing", { convId: selectedChat.id, isTyping: false });
+      }
 
       if (currentAttachments.length > 0) {
         // --- MULTIMEDIA FLOW ---
-        const { compressImage } = await import("../utils/imageUtils");
+        const { compressImage } = await import("../../utils/imageUtils");
 
         const uploadedAttachments = await Promise.all(
           currentAttachments.map(async (item) => {
@@ -747,16 +884,17 @@ export default function HomeScreen({
       } else {
         // --- OPTIMISTIC TEXT FLOW ---
         await sendMessageOptimistic(selectedChat.id, user.email, trimmedInput);
+        // Explicitly snap to bottom (index 0 for inverted)
+        setTimeout(() => {
+          messagesScrollRef.current?.scrollToOffset({ offset: 0, animated: true });
+        }, 100);
       }
 
       // Update Preview
-      setConversationPreviewMap((prev) => ({
-        ...prev,
-        [selectedChat.id]: trimmedInput || "[Đa phương tiện]",
-      }));
       upsertConversationLastMessage(
         selectedChat.id,
         trimmedInput || "[Đa phương tiện]",
+        user.email
       );
     } catch (err) {
       console.error("Send message failed", err);
@@ -793,15 +931,15 @@ export default function HomeScreen({
         .flatMap((message) => {
           const media = Array.isArray(message.media)
             ? message.media.map((item) => ({
-                ...normalizeAttachment(item),
-                createdAt: message.createdAt,
-              }))
+              ...normalizeAttachment(item),
+              createdAt: message.createdAt,
+            }))
             : [];
           const files = Array.isArray(message.files)
             ? message.files.map((item) => ({
-                ...normalizeAttachment(item),
-                createdAt: message.createdAt,
-              }))
+              ...normalizeAttachment(item),
+              createdAt: message.createdAt,
+            }))
             : [];
           return [...media, ...files];
         })
@@ -810,7 +948,7 @@ export default function HomeScreen({
         .reverse(),
     [messages],
   );
-
+  
   useEffect(() => {
     loadConversations();
   }, [user?.email]);
@@ -854,11 +992,25 @@ export default function HomeScreen({
 
       const incomingConvId = msg.conversationId || msg.convId;
       if (incomingConvId) {
-        setConversationPreviewMap((prev) => ({
-          ...prev,
-          [incomingConvId]: getMessagePreview(msg),
-        }));
-        upsertConversationLastMessage(incomingConvId, getMessagePreview(msg));
+        // Match backend behavior: lastMessage is the ID, lastMessageContent is the text
+        const preview = getMessagePreview(msg);
+        upsertConversationLastMessage(incomingConvId, preview, msg.senderId, true, msg.id);
+
+        // Mark as unread locally if receiving message from someone else
+        if (msg.senderId !== user?.email) {
+          setReadConversations(prev => {
+            const next = new Set(prev);
+            next.delete(incomingConvId);
+            return next;
+          });
+        }
+
+        // Auto-scroll snap if receiving message in active chat
+        if (incomingConvId === selectedChat?.id) {
+          setTimeout(() => {
+            messagesScrollRef.current?.scrollToOffset({ offset: 0, animated: true });
+          }, 100);
+        }
       }
     };
 
@@ -872,22 +1024,31 @@ export default function HomeScreen({
       });
     };
 
+    const handleTypingEvent = (data) => {
+      const { convId, email, isTyping } = data;
+      if (!convId || !email || email === user?.email) return;
+      setTypingUsers((prev) => {
+        const currentTyping = prev[convId] || new Set();
+        const nextSet = new Set(currentTyping);
+        if (isTyping) {
+          nextSet.add(email);
+        } else {
+          nextSet.delete(email);
+        }
+        return { ...prev, [convId]: nextSet };
+      });
+    };
+
     socket.on("receiveMessage", handleReceiveMessage);
     socket.on("presence_update", handlePresenceUpdate);
+    socket.on("typing", handleTypingEvent);
 
     return () => {
       socket.off("receiveMessage", handleReceiveMessage);
       socket.off("presence_update", handlePresenceUpdate);
+      socket.off("typing", handleTypingEvent);
     };
-  }, [addMessage]);
-
-  useEffect(() => {
-    if (messagesScrollRef.current) {
-      setTimeout(() => {
-        messagesScrollRef.current?.scrollToEnd?.({ animated: true });
-      }, 60);
-    }
-  }, [messages]);
+  }, [addMessage, selectedChat?.id]);
 
   const handleLogoutPress = () => {
     Alert.alert(
@@ -903,31 +1064,13 @@ export default function HomeScreen({
   const renderHeader = () => (
     <LinearGradient
       colors={["#0058bc", "#00418f"]}
-      style={[styles.header, { paddingTop: insets.top + 10 }]}
+      style={[styles.header, { paddingTop: insets.top }]}
     >
       <View style={styles.headerContent}>
-        <TouchableOpacity
-          style={styles.headerAvatar}
-          onPress={() => onNavigate("profile")}
-        >
-          {user?.avatarUrl ? (
-            <Image
-              key={`header-avatar-${profileVersion}`}
-              source={{ uri: `${user.avatarUrl}?v=${profileVersion}` }}
-              style={styles.avatarImage}
-            />
-          ) : (
-            <View style={styles.avatarFallback}>
-              <Text style={styles.avatarInitial}>
-                {user?.fullName ? user.fullName[0].toUpperCase() : "U"}
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
         <View style={styles.searchContainer}>
           <Text style={styles.searchIcon}>search</Text>
           <TextInput
-            placeholder="Tìm email bạn bè..."
+            placeholder="Tìm kiếm"
             style={styles.searchInput}
             placeholderTextColor="rgba(255,255,255,0.7)"
             value={friendSearchEmail}
@@ -936,53 +1079,90 @@ export default function HomeScreen({
             autoCapitalize="none"
             keyboardType="email-address"
           />
+        </View>
+        <View style={styles.headerIcons}>
           <TouchableOpacity
-            style={styles.searchActionButton}
-            onPress={handleSearchFriend}
+            style={styles.iconButton}
+            onPress={() => onNavigate("qr-scanner")}
           >
-            {friendSearchLoading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.searchActionIcon}>person_search</Text>
-            )}
+            <Text style={styles.headerIconText}>qr_code_scanner</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.iconButton}
+            onPress={() => setIsAddMenuOpen(true)}
+          >
+            <Text style={styles.headerIconText}>add</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={styles.iconButton}
-          onPress={() => onNavigate("settings")}
-        >
-          <Text style={styles.headerIconText}>settings</Text>
-        </TouchableOpacity>
       </View>
     </LinearGradient>
   );
 
-  const ConversationsView = () => {
+  const renderConversationsView = () => {
     if (selectedChat) {
+      const currentTypingSet = typingUsers[selectedChat.id];
+      const partnerProfile = selectedChat.type === "direct" ? userProfiles[selectedChat.partner] : null;
+      const isOnline = partnerProfile?.status === "online";
+      
+      let displayStatus = selectedChat.type === "direct" 
+        ? (isOnline ? "Đang hoạt động" : "Đang ngoại tuyến")
+        : "Đang trò chuyện";
+
+      if (currentTypingSet && currentTypingSet.size > 0) {
+        const firstEmail = Array.from(currentTypingSet)[0];
+        displayStatus = `${getDisplayName(firstEmail)} đang gõ...`;
+      }
+
       return (
-        <View style={styles.chatPane}>
-          <View style={styles.chatPaneHeader}>
+        <KeyboardAvoidingView 
+          style={styles.chatPane}
+          behavior={Platform.OS === "ios" ? "padding" : "padding"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+        >
+          <LinearGradient
+            colors={["#0058bc", "#00418f"]}
+            style={[styles.chatPaneHeader, { paddingTop: insets.top }]}
+          >
             <TouchableOpacity onPress={() => setActiveConversation(null)}>
               <Text style={styles.chatPaneBack}>arrow_back</Text>
             </TouchableOpacity>
-            <Image
-              source={{
-                uri:
-                  selectedChat.type === "direct"
-                    ? getDisplayAvatar(selectedChat.partner)
-                    : selectedChat.avatar,
-              }}
-              style={styles.chatPaneAvatar}
-            />
+            <View style={styles.avatarContainer}>
+              <Image
+                source={{
+                  uri:
+                    selectedChat.type === "direct"
+                      ? getDisplayAvatar(selectedChat.partner)
+                      : selectedChat.avatar,
+                }}
+                style={styles.chatPaneAvatar}
+              />
+              {selectedChat.type === "direct" && userProfiles[selectedChat.partner]?.status === "online" && (
+                <View style={[styles.onlineBadge, { borderColor: '#0058bc' }]} />
+              )}
+            </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.chatPaneName} numberOfLines={1}>
                 {selectedChat.type === "direct"
                   ? getDisplayName(selectedChat.partner)
                   : selectedChat.name}
               </Text>
-              <Text style={styles.chatPaneSub}>Đang trò chuyện</Text>
+              <Text style={[styles.chatPaneSub, displayStatus.includes("đang gõ...") && { color: "#fff", fontWeight: "700" }]}>
+                {displayStatus}
+              </Text>
             </View>
-          </View>
+
+            <View style={styles.chatHeaderIcons}>
+              <TouchableOpacity style={styles.chatHeaderIconButton}>
+                <Text style={styles.chatHeaderIcon}>call</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.chatHeaderIconButton}>
+                <Text style={styles.chatHeaderIcon}>videocam</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.chatHeaderIconButton}>
+                <Text style={styles.chatHeaderIcon}>list</Text>
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
 
           {activePinnedMessages.length > 0 && (
             <View style={styles.pinStrip}>
@@ -1000,225 +1180,53 @@ export default function HomeScreen({
             </View>
           )}
 
-          <ScrollView
+          <FlatList
+            key={`chat-list-${selectedChat.id}`}
             ref={messagesScrollRef}
-            style={styles.messagesContainer}
-            contentContainerStyle={{ padding: 12, gap: 10 }}
-          >
-            {safeMessages.map((message, index) => {
+            data={reversedMessages}
+            inverted={true}
+            keyExtractor={(item, index) => item.id || `msg-${index}`}
+            renderItem={({ item: message }) => {
               const isMe = message.senderId === user?.email;
-              const reactionSummary = getReactionSummary(message);
               return (
-                <Pressable
-                  key={message.id || `msg-${index}`}
-                  onLongPress={() => setActionMessage(message)}
-                  style={[
-                    styles.messageRow,
-                    isMe ? styles.messageRowMe : styles.messageRowOther,
-                  ]}
-                >
-                  {!isMe && (
-                    <Image
-                      source={{ uri: getDisplayAvatar(message.senderId) }}
-                      style={styles.msgAvatar}
-                    />
-                  )}
-                  <View
-                    style={[
-                      styles.messageBubble,
-                      isMe ? styles.messageBubbleMe : styles.messageBubbleOther,
-                    ]}
-                  >
-                    {message.replyTo && (
-                      <View style={styles.replyBlock}>
-                        <Text style={styles.replySender}>
-                          Trả lời {message.replyTo.senderId || "tin nhắn"}
-                        </Text>
-                        <Text style={styles.replyContent} numberOfLines={1}>
-                          {message.replyTo.content}
-                        </Text>
-                      </View>
-                    )}
-                    <Text
-                      style={[
-                        styles.messageText,
-                        message.recalled && styles.recalledText,
-                      ]}
-                    >
-                      {message.content}
-                    </Text>
-
-                    {(Array.isArray(message.media) ||
-                      Array.isArray(message.files)) && (
-                      <View style={{ marginTop: 8, gap: 6 }}>
-                        {(Array.isArray(message.media) ? message.media : []).map((item, index) => {
-                          const file = normalizeAttachment(item);
-                          if (isVideoAttachment(item)) {
-                            return (
-                              <TouchableOpacity
-                                key={`m-${message.id}-${index}`}
-                                style={styles.messageFile}
-                                onPress={() => file.dataUrl && Linking.openURL(file.dataUrl)}
-                              >
-                                <Text style={styles.messageFileIcon}>play_circle</Text>
-                                <View style={{ flex: 1 }}>
-                                  <Text numberOfLines={1} style={styles.messageFileName}>{file.name || 'Video'}</Text>
-                                  <Text style={styles.messageFileSize}>Nhấn để mở video</Text>
-                                </View>
-                              </TouchableOpacity>
-                            );
-                          }
-                          return <Image key={`m-${message.id}-${index}`} source={{ uri: file.dataUrl }} style={styles.messageImage} />;
-                        })}
-                        {(Array.isArray(message.files) ? message.files : []).map((item, index) => {
-                          const file = normalizeAttachment(item);
-                          return (
-                            <Image
-                              key={`m-${message.id}-${index}`}
-                              source={{ uri: file.dataUrl }}
-                              style={styles.messageImage}
-                            />
-                          );
-                        })}
-                        {(Array.isArray(message.files)
-                          ? message.files
-                          : []
-                        ).map((item, index) => {
-                          const file = normalizeAttachment(item);
-                          return (
-                            <TouchableOpacity
-                              key={`f-${message.id}-${index}`}
-                              style={styles.messageFile}
-                              onPress={() => Linking.openURL(file.dataUrl)}
-                            >
-                              <Text style={styles.messageFileIcon}>
-                                {getFileIcon(file.mimeType, file.name)}
-                              </Text>
-                              <View style={{ flex: 1 }}>
-                                <Text
-                                  numberOfLines={1}
-                                  style={styles.messageFileName}
-                                >
-                                  {file.name}
-                                </Text>
-                                <Text style={styles.messageFileSize}>
-                                  {formatFileSize(file.size)}
-                                </Text>
-                              </View>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    )}
-
-                    {reactionSummary.length > 0 && (
-                      <View
-                        style={[
-                          styles.reactionSummaryRow,
-                          isMe ? { justifyContent: "flex-end" } : null,
-                        ]}
-                      >
-                        {reactionSummary.map(([emoji, users]) => (
-                          <TouchableOpacity
-                            key={`${message.id}-${emoji}`}
-                            style={styles.reactionSummaryChip}
-                            onPress={() => toggleReaction(message, emoji)}
-                          >
-                            <Text style={styles.reactionSummaryText}>
-                              {emoji} {users.length}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
-
-                    <View style={[styles.messageMetaRow, isMe && styles.messageMetaRowMe]}>
-                      <Text style={styles.messageTime}>
-                        {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </Text>
-                    </View>
-                  </View>
-                </Pressable>
+                <MessageBubble
+                  message={message}
+                  isMe={isMe}
+                  userProfile={{ avatarUrl: getDisplayAvatar(message.senderId) }}
+                  onLongPress={setActionMessage}
+                  onReaction={toggleReaction}
+                  onReply={startReply}
+                />
               );
-            })}
-          </ScrollView>
+            }}
+            contentContainerStyle={{ 
+              paddingHorizontal: 12, 
+              paddingTop: 50, 
+              paddingBottom: 20 
+            }}
+            showsVerticalScrollIndicator={false}
+            maintainVisibleContentPosition={{
+              minIndexForVisible: 0,
+            }}
+          />
 
-          {replyTarget && (
-            <View style={styles.replyComposer}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.replyComposerTitle}>
-                  Đang trả lời {replyTarget.senderId || "tin nhắn"}
-                </Text>
-                <Text numberOfLines={1} style={styles.replyComposerText}>
-                  {replyTarget.content}
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setReplyTarget(null)}>
-                <Text style={styles.replyComposerCancel}>x</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {attachments.length > 0 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.attachmentStrip}
-              contentContainerStyle={{ gap: 8, paddingHorizontal: 10 }}
-            >
-              {attachments.map((item, index) => (
-                <View key={`a-${index}`} style={styles.attachmentChip}>
-                  <Text style={styles.attachmentIcon}>
-                    {getFileIcon(item.mimeType, item.name)}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.attachmentName}>
-                    {item.name}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() =>
-                      setAttachments((prev) =>
-                        prev.filter((_, i) => i !== index),
-                      )
-                    }
-                  >
-                    <Text style={styles.attachmentRemove}>x</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-          )}
-
-          <View style={styles.composer}>
-            <TouchableOpacity
-              onPress={pickImages}
-              style={styles.composerAction}
-            >
-              <Text style={styles.composerActionIcon}>image</Text>
-            </TouchableOpacity>
-            <TextInput
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="Nhập tin nhắn..."
-              placeholderTextColor="#8a9099"
-              style={styles.composerInput}
-              multiline
-            />
-            <TouchableOpacity
-              onPress={sendMessage}
-              style={[styles.sendButton, sending && { opacity: 0.6 }]}
-              disabled={sending}
-            >
-              {sending ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.sendButtonText}>send</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
+          <ChatInput
+            key={selectedChat.id} // Force remount on chat change to trigger autoFocus
+            onSendMessage={handleChatSend}
+            replyTarget={replyTarget}
+            onClearReply={() => setReplyTarget(null)}
+            onTyping={() => {
+              if (SocketService.socket && selectedChat.id) {
+                if (!typingTimeoutRef.current) {
+                  SocketService.socket.emit("typing", { convId: selectedChat.id, isTyping: true });
+                  typingTimeoutRef.current = setTimeout(() => {
+                    typingTimeoutRef.current = null;
+                  }, 2000);
+                }
+              }
+            }}
+          />
+        </KeyboardAvoidingView>
       );
     }
 
@@ -1232,20 +1240,15 @@ export default function HomeScreen({
     }
 
     return (
-      <ScrollView style={styles.scrollContainer}>
+      <ScrollView key="conversations-list-scroll" style={styles.scrollContainer}>
         <View style={styles.chatList}>
-          <Text
-            style={[styles.sectionTitle, { marginLeft: 20, marginBottom: 10 }]}
-          >
-            Tin nhắn nội bộ
-          </Text>
           {safeConversations.map((chat) => {
             const partnerEmail =
               chat.type === "direct"
                 ? chat.partner ||
-                  (Array.isArray(chat.members)
-                    ? chat.members.find((member) => member !== user?.email)
-                    : undefined)
+                (Array.isArray(chat.members)
+                  ? chat.members.find((member) => member !== user?.email)
+                  : undefined)
                 : undefined;
             const chatName =
               chat.type === "direct"
@@ -1255,28 +1258,53 @@ export default function HomeScreen({
               chat.type === "direct"
                 ? getDisplayAvatar(partnerEmail)
                 : chat.avatar || getDisplayAvatar();
+            const isUnread = chat.lastMessageSenderId && 
+                            chat.lastMessageSenderId !== user?.email && 
+                            !readConversations.has(chat.id);
+            const partnerProfile = partnerEmail ? userProfiles[partnerEmail] : null;
+            const isOnline = partnerProfile?.status === 'online';
+
             return (
               <TouchableOpacity
                 key={chat.id}
                 style={styles.chatItem}
                 onPress={() => handleSelectChat(chat)}
               >
-                <Image source={{ uri: chatAvatar }} style={styles.avatar} />
+                <View style={styles.avatarContainer}>
+                  <Image source={{ uri: chatAvatar }} style={styles.avatar} />
+                  {isOnline && <View style={styles.onlineBadge} />}
+                  {chat.unreadCount > 0 && (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadBadgeText}>
+                        {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
                 <View style={styles.chatInfo}>
                   <View style={styles.chatHeader}>
-                    <Text style={styles.chatName} numberOfLines={1}>
+                    <Text 
+                      style={[styles.chatName, isUnread && { fontWeight: '700', color: '#000' }]} 
+                      numberOfLines={1}
+                    >
                       {chatName}
                     </Text>
-                    <Text style={styles.chatTime}>
+                    <Text style={[styles.chatTime, isUnread && { color: Colors.primary, fontWeight: '600' }]}>
                       {chat.updatedAt
                         ? new Date(chat.updatedAt).toLocaleTimeString("vi-VN", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
                         : "--:--"}
                     </Text>
                   </View>
-                  <Text style={styles.lastMsg} numberOfLines={1}>
+                  <Text 
+                    style={[
+                      styles.lastMsg, 
+                      chat.unreadCount > 0 && { color: '#000', fontWeight: '700', fontSize: 14 }
+                    ]} 
+                    numberOfLines={1}
+                  >
                     {getConversationPreview(chat)}
                   </Text>
                 </View>
@@ -1288,7 +1316,7 @@ export default function HomeScreen({
     );
   };
 
-  const FriendsView = () => (
+  const renderFriendsView = () => (
     <ScrollView style={styles.scrollContainer}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Danh sách bạn bè</Text>
@@ -1446,7 +1474,7 @@ export default function HomeScreen({
     </ScrollView>
   );
 
-  const AIView = () => (
+  const renderAIView = () => (
     <View style={styles.centeredView}>
       <Text style={styles.aiIcon}>notifications</Text>
       <Text style={styles.aiTitle}>Notifications</Text>
@@ -1543,21 +1571,21 @@ export default function HomeScreen({
   );
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={styles.safeArea}>
       <StatusBar
         barStyle="light-content"
-        backgroundColor="#0058bc"
-        translucent={false}
+        backgroundColor="transparent"
+        translucent={true}
       />
-      {activeTab !== "contacts" && renderHeader()}
+      {activeTab !== "contacts" && !selectedChat && renderHeader()}
 
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingContainer}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? insets.top + 12 : 0}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
       >
-        <View style={styles.content}>
-          {activeTab === "chat" && <ConversationsView />}
+        <View style={[styles.content, selectedChat && { paddingBottom: Platform.OS === 'ios' ? 8 : 4 }]}>
+          {activeTab === "chat" && renderConversationsView()}
           {activeTab === "contacts" && (
             <ContactsScreen
               user={user}
@@ -1567,99 +1595,107 @@ export default function HomeScreen({
               onOpenGroupConversation={handleOpenGroupConversation}
             />
           )}
-          {activeTab === "notifications" && <AIView />}
+          {activeTab === "notifications" && renderAIView()}
           {activeTab === "profile" && renderProfileView()}
         </View>
 
-        <View style={styles.floatingTabBar}>
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("chat")}
-          >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "chat" && styles.tabIconActive,
-              ]}
+        {!selectedChat && (
+          <View style={[
+            styles.floatingTabBar, 
+            Platform.OS === 'ios' && { 
+              paddingBottom: Math.max(insets.bottom, 12),
+              height: 60 + Math.max(insets.bottom, 12)
+            }
+          ]}>
+            <TouchableOpacity
+              style={styles.tabItem}
+              onPress={() => setActiveTab("chat")}
             >
-              chat
-            </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "chat" && styles.tabLabelActive,
-              ]}
-            >
-              Chat
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  activeTab === "chat" && styles.tabIconActive,
+                ]}
+              >
+                chat
+              </Text>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === "chat" && styles.tabLabelActive,
+                ]}
+              >
+                Tin nhắn
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("contacts")}
-          >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "contacts" && styles.tabIconActive,
-              ]}
+            <TouchableOpacity
+              style={styles.tabItem}
+              onPress={() => setActiveTab("contacts")}
             >
-              contact_page
-            </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "contacts" && styles.tabLabelActive,
-              ]}
-            >
-              Contacts
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  activeTab === "contacts" && styles.tabIconActive,
+                ]}
+              >
+                contact_page
+              </Text>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === "contacts" && styles.tabLabelActive,
+                ]}
+              >
+                Danh bạ
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("notifications")}
-          >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "notifications" && styles.tabIconActive,
-              ]}
+            <TouchableOpacity
+              style={styles.tabItem}
+              onPress={() => setActiveTab("notifications")}
             >
-              notifications
-            </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "notifications" && styles.tabLabelActive,
-              ]}
-            >
-              Notifications
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  activeTab === "notifications" && styles.tabIconActive,
+                ]}
+              >
+                notifications
+              </Text>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === "notifications" && styles.tabLabelActive,
+                ]}
+              >
+                Thông báo
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("profile")}
-          >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "profile" && styles.tabIconActive,
-              ]}
+            <TouchableOpacity
+              style={styles.tabItem}
+              onPress={() => setActiveTab("profile")}
             >
-              person
-            </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "profile" && styles.tabLabelActive,
-              ]}
-            >
-              Profile
-            </Text>
-          </TouchableOpacity>
-        </View>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  activeTab === "profile" && styles.tabIconActive,
+                ]}
+              >
+                person
+              </Text>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === "profile" && styles.tabLabelActive,
+                ]}
+              >
+                Cá nhân
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </KeyboardAvoidingView>
 
       {actionMessage && (
@@ -1668,591 +1704,177 @@ export default function HomeScreen({
             style={styles.actionSheet}
             onPress={(e) => e.stopPropagation()}
           >
-            <View style={styles.reactionRow}>
+            {/* Reactions Bar - Premium Design */}
+            <View style={styles.reactionBar}>
               {REACTION_OPTIONS.map((emoji) => (
                 <TouchableOpacity
                   key={`react-${emoji}`}
+                  style={styles.reactionOption}
                   onPress={() => toggleReaction(actionMessage, emoji)}
                 >
                   <Text style={styles.reactionEmoji}>{emoji}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-            <TouchableOpacity
-              style={styles.actionItem}
-              onPress={() => pinMessage(actionMessage)}
-            >
-              <Text style={styles.actionText}>Ghim tin nhắn</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.actionItem}
-              onPress={() => startReply(actionMessage)}
-            >
-              <Text style={styles.actionText}>Trả lời</Text>
-            </TouchableOpacity>
-            {actionMessage.senderId === user?.email &&
-              !actionMessage.recalled && (
+
+            <View style={styles.actionGrid}>
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => startReply(actionMessage)}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#f0f7ff' }]}>
+                  <Text style={[styles.actionIcon, { color: Colors.primary }]}>reply</Text>
+                </View>
+                <Text style={styles.actionText}>Trả lời</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => copyToClipboard(actionMessage.content)}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#f0fff4' }]}>
+                  <Text style={[styles.actionIcon, { color: '#22c55e' }]}>content_copy</Text>
+                </View>
+                <Text style={styles.actionText}>Sao chép</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => startForward(actionMessage)}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#fff7ed' }]}>
+                  <Text style={[styles.actionIcon, { color: '#f97316' }]}>forward</Text>
+                </View>
+                <Text style={styles.actionText}>Chuyển tiếp</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => pinMessage(actionMessage)}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#fef3c7' }]}>
+                  <Text style={[styles.actionIcon, { color: '#d97706' }]}>push_pin</Text>
+                </View>
+                <Text style={styles.actionText}>{actionMessage.pinned ? 'Bỏ ghim' : 'Ghim'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.actionList}>
+              {actionMessage.senderId === user?.email && !actionMessage.recalled && (
                 <TouchableOpacity
-                  style={styles.actionItem}
+                  style={styles.actionListItem}
                   onPress={() => recallMessage(actionMessage.id)}
                 >
-                  <Text style={[styles.actionText, { color: "#e53935" }]}>
-                    Thu hồi
+                  <Text style={styles.actionListIcon}>history_toggle_off</Text>
+                  <Text style={[styles.actionListText, { color: '#ef4444' }]}>
+                    Thu hồi tin nhắn
                   </Text>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity
+                style={styles.actionListItem}
+                onPress={() => deleteMessageForMe(actionMessage.id)}
+              >
+                <Text style={[styles.actionListIcon, { color: '#ef4444' }]}>delete</Text>
+                <Text style={[styles.actionListText, { color: '#ef4444' }]}>
+                  Xóa ở phía tôi
+                </Text>
+              </TouchableOpacity>
+            </View>
           </Pressable>
         </Pressable>
       )}
-    </SafeAreaView>
+
+      {/* Forward Modal */}
+      <Modal
+        visible={isForwardModalOpen}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setIsForwardModalOpen(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setIsForwardModalOpen(false)}
+        >
+          <View style={styles.forwardSheet} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Chuyển tiếp đến...</Text>
+              <TouchableOpacity onPress={() => setIsForwardModalOpen(false)}>
+                <Text style={styles.closeIcon}>close</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.forwardList}>
+              {safeConversations.map((conv) => (
+                <TouchableOpacity
+                  key={conv.id}
+                  style={styles.forwardItem}
+                  onPress={() => handleForwardSelect(conv.id)}
+                >
+                  <Image
+                    style={styles.forwardAvatar}
+                  />
+                  <Text style={styles.forwardName} numberOfLines={1}>
+                    {conv.type === 'direct' ? getDisplayName(conv.partner) : conv.name}
+                  </Text>
+                  <Text style={styles.forwardSendIcon}>send</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Quick Action Menu (+) */}
+      <Modal
+        visible={isAddMenuOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsAddMenuOpen(false)}
+      >
+        <Pressable 
+          style={styles.addMenuOverlay} 
+          onPress={() => setIsAddMenuOpen(false)}
+        >
+          <View style={[styles.addMenuDropdown, { top: insets.top + 50 }]}>
+            <View style={styles.addMenuArrow} />
+            
+            <TouchableOpacity style={styles.addMenuItem}>
+              <Text style={styles.addMenuIcon}>person_add</Text>
+              <Text style={styles.addMenuLabel}>Thêm bạn</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.addMenuItem}>
+              <Text style={styles.addMenuIcon}>group_add</Text>
+              <Text style={styles.addMenuLabel}>Tạo nhóm</Text>
+            </TouchableOpacity>
+
+            <View style={styles.addMenuDivider} />
+
+            <TouchableOpacity style={styles.addMenuItem}>
+              <Text style={styles.addMenuIcon}>folder_shared</Text>
+              <Text style={styles.addMenuLabel}>My Documents</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.addMenuItem}>
+              <Text style={styles.addMenuIcon}>calendar_today</Text>
+              <Text style={styles.addMenuLabel}>Lịch Zalo</Text>
+            </TouchableOpacity>
+
+            <View style={styles.addMenuDivider} />
+
+            <TouchableOpacity style={styles.addMenuItem}>
+              <Text style={styles.addMenuIcon}>videocam</Text>
+              <Text style={styles.addMenuLabel}>Tạo cuộc gọi nhóm</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.addMenuItem}>
+              <Text style={styles.addMenuIcon}>devices</Text>
+              <Text style={styles.addMenuLabel}>Thiết bị đăng nhập</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#f7f9fb" },
-  keyboardAvoidingContainer: { flex: 1 },
-  header: { paddingBottom: 14, paddingHorizontal: 16 },
-  headerContent: { flexDirection: "row", alignItems: "center", gap: 12 },
-  headerAvatar: { width: 40, height: 40 },
-  avatarImage: { width: 40, height: 40, borderRadius: 20 },
-  avatarFallback: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.2)",
-  },
-  avatarInitial: { color: "#fff", fontWeight: "700", fontSize: 18 },
-  searchContainer: {
-    flex: 1,
-    height: 42,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    borderRadius: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-  },
-  searchIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 20,
-    color: "#fff",
-    marginRight: 8,
-  },
-  searchInput: { flex: 1, color: "#fff", ...Typography.body, fontSize: 15 },
-  searchActionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.2)",
-    marginLeft: 8,
-  },
-  searchActionIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 18,
-    color: "#fff",
-  },
-  iconButton: { padding: 6 },
-  headerIconText: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 24,
-    color: "#fff",
-  },
-
-  content: { flex: 1, paddingBottom: 92 },
-  scrollContainer: { flex: 1 },
-
-  sectionHeader: { padding: 16, paddingBottom: 8 },
-  sectionTitle: { ...Typography.heading, fontSize: 18, color: "#00418f" },
-
-  chatList: { paddingBottom: 110 },
-  chatItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    backgroundColor: "#fff",
-    borderBottomWidth: Platform.OS === "android" ? 1 : 0.5,
-    borderBottomColor: "#eceef0",
-  },
-  avatar: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    marginRight: 14,
-    backgroundColor: "#e0e3e5",
-  },
-  chatInfo: { flex: 1 },
-  chatHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 2,
-  },
-  chatName: {
-    ...Typography.heading,
-    fontSize: 15,
-    color: "#191c1e",
-    flex: 1,
-    marginRight: 8,
-  },
-  chatTime: { ...Typography.body, fontSize: 12, color: "#727784" },
-  lastMsg: { ...Typography.body, fontSize: 13, color: "#727784" },
-
-  chatPane: { flex: 1, backgroundColor: "#f7f9fb" },
-  chatPaneHeader: {
-    height: 58,
-    paddingHorizontal: 12,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e8ecf0",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  chatPaneBack: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 26,
-    color: "#00418f",
-  },
-  chatPaneAvatar: { width: 38, height: 38, borderRadius: 19 },
-  chatPaneName: { ...Typography.heading, fontSize: 15, color: "#191c1e" },
-  chatPaneSub: { ...Typography.body, fontSize: 12, color: "#727784" },
-
-  pinStrip: { paddingHorizontal: 10, paddingTop: 8, gap: 6 },
-  pinItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e0e6f0",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    gap: 8,
-  },
-  pinIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 16,
-    color: "#0058bc",
-  },
-  pinText: { flex: 1, ...Typography.body, fontSize: 12, color: "#2f3a4a" },
-  pinUnpin: { ...Typography.label, fontSize: 11, color: "#0058bc" },
-
-  messagesContainer: { flex: 1 },
-  messageRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
-  messageRowMe: { justifyContent: "flex-end" },
-  messageRowOther: { justifyContent: "flex-start" },
-  msgAvatar: { width: 28, height: 28, borderRadius: 14 },
-  messageBubble: {
-    maxWidth: "78%",
-    borderRadius: 16,
-    padding: 10,
-    borderWidth: 1,
-  },
-  messageBubbleMe: { backgroundColor: "#dfefff", borderColor: "#c8dcff" },
-  messageBubbleOther: { backgroundColor: "#fff", borderColor: "#e3e8f0" },
-  messageText: { ...Typography.body, fontSize: 14, color: "#1f2631" },
-  recalledText: { fontStyle: "italic", opacity: 0.72 },
-  replyBlock: {
-    backgroundColor: "rgba(255,255,255,0.6)",
-    borderWidth: 1,
-    borderColor: "#d9e1f0",
-    borderRadius: 8,
-    padding: 6,
-    marginBottom: 6,
-  },
-  replySender: { ...Typography.label, fontSize: 11, color: "#0058bc" },
-  replyContent: { ...Typography.body, fontSize: 12, color: "#5f6570" },
-  messageImage: {
-    width: 190,
-    height: 190,
-    borderRadius: 10,
-    backgroundColor: "#e8edf5",
-  },
-  messageFile: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: "#dfe5ef",
-    borderRadius: 10,
-    padding: 8,
-  },
-  messageFileIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 20,
-    color: "#51617a",
-  },
-  messageFileName: { ...Typography.label, fontSize: 12, color: "#1f2631" },
-  messageFileSize: { ...Typography.body, fontSize: 11, color: "#7a8391" },
-
-  replyComposer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#e5eaf2",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "#fff",
-  },
-  replyComposerTitle: { ...Typography.label, fontSize: 12, color: "#0058bc" },
-  replyComposerText: { ...Typography.body, fontSize: 12, color: "#6e7683" },
-  replyComposerCancel: {
-    ...Typography.heading,
-    fontSize: 16,
-    color: "#6e7683",
-  },
-
-  attachmentStrip: { maxHeight: 56, backgroundColor: "#fff" },
-  attachmentChip: {
-    height: 34,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    backgroundColor: "#f4f7fb",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#dfe5ef",
-  },
-  attachmentIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 16,
-    color: "#5b6b84",
-  },
-  attachmentName: {
-    ...Typography.body,
-    fontSize: 12,
-    maxWidth: 150,
-    color: "#2f3a4a",
-  },
-  attachmentRemove: { ...Typography.heading, fontSize: 12, color: "#677389" },
-
-  composer: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
-    backgroundColor: "#fff",
-    borderTopWidth: 1,
-    borderTopColor: "#e5eaf2",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    paddingBottom: Platform.OS === "ios" ? 14 : 8,
-  },
-  composerAction: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#f1f5fa",
-  },
-  composerActionIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 20,
-    color: "#52627f",
-  },
-  composerInput: {
-    flex: 1,
-    maxHeight: 110,
-    minHeight: 40,
-    borderWidth: 1,
-    borderColor: "#dfe5ef",
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 8,
-    ...Typography.body,
-    fontSize: 14,
-    color: "#1f2631",
-    backgroundColor: "#fff",
-  },
-  sendButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#0058bc",
-  },
-  sendButtonText: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 20,
-    color: "#fff",
-  },
-
-  friendItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    backgroundColor: "#fff",
-    borderBottomWidth: Platform.OS === "android" ? 1 : 0.5,
-    borderBottomColor: "#eceef0",
-  },
-  friendAvatar: { width: 48, height: 48, borderRadius: 24, marginRight: 16 },
-  friendInfo: { flex: 1 },
-  friendName: { ...Typography.heading, fontSize: 16, color: "#191c1e" },
-  friendStatus: { ...Typography.body, fontSize: 12, color: "#727784" },
-  friendAction: { padding: 8 },
-  friendActionIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 24,
-    color: "#00418f",
-  },
-
-  searchResultCard: {
-    marginHorizontal: 16,
-    marginBottom: 10,
-    padding: 12,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e0e6f0",
-  },
-  searchResultHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  searchResultAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    marginRight: 10,
-    backgroundColor: "#e8edf5",
-  },
-  searchResultName: { ...Typography.heading, fontSize: 15, color: "#1f2631" },
-  searchResultEmail: { ...Typography.body, fontSize: 12, color: "#6d7685" },
-  searchResultHint: { ...Typography.body, fontSize: 12, color: "#5f697a" },
-  searchResultPrimaryButton: {
-    backgroundColor: "#0058bc",
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 9,
-  },
-  searchResultPrimaryText: { ...Typography.label, fontSize: 13, color: "#fff" },
-
-  pendingSection: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e0e6f0",
-    overflow: "hidden",
-  },
-  pendingSectionTitle: {
-    ...Typography.heading,
-    fontSize: 14,
-    color: "#1f2631",
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 4,
-  },
-  pendingItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#edf1f7",
-  },
-  pendingName: { ...Typography.heading, fontSize: 14, color: "#1f2631" },
-  pendingEmail: { ...Typography.body, fontSize: 11, color: "#6d7685" },
-  pendingAcceptButton: {
-    backgroundColor: "#0058bc",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  pendingAcceptText: { ...Typography.label, fontSize: 12, color: "#fff" },
-
-  centeredView: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 20,
-  },
-  aiIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 80,
-    color: "#00418f",
-    marginBottom: 20,
-    opacity: 0.8,
-  },
-  aiTitle: {
-    ...Typography.heading,
-    fontSize: 24,
-    color: "#191c1e",
-    marginBottom: 8,
-  },
-  aiSubtitle: {
-    ...Typography.body,
-    fontSize: 16,
-    color: "#727784",
-    textAlign: "center",
-  },
-
-  profileHeader: {
-    alignItems: "center",
-    padding: 32,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eceef0",
-  },
-  largeAvatarBox: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: "#0058bc",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  largeAvatarImage: { width: 100, height: 100, borderRadius: 50 },
-  profileName: {
-    ...Typography.heading,
-    fontSize: 22,
-    color: "#191c1e",
-    marginBottom: 4,
-  },
-  profileEmail: { ...Typography.body, fontSize: 14, color: "#727784" },
-  menuContainer: { padding: 16, paddingTop: 24 },
-  menuItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    marginBottom: 12,
-  },
-  menuIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 16,
-  },
-  menuIcon: { fontFamily: "Material Symbols Outlined", fontSize: 22 },
-  menuLabel: { flex: 1, ...Typography.heading, fontSize: 16, color: "#191c1e" },
-  menuArrow: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 20,
-    color: "#c2c6d5",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#eceef0",
-    marginVertical: 12,
-    marginHorizontal: 8,
-  },
-
-  fileHistoryItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#edf1f6",
-  },
-  fileHistoryIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 20,
-    color: "#5a6781",
-  },
-  fileHistoryName: { ...Typography.label, fontSize: 13, color: "#1f2631" },
-  fileHistoryMeta: { ...Typography.body, fontSize: 11, color: "#7a8391" },
-
-  floatingTabBar: {
-    position: "absolute",
-    bottom: Platform.OS === "ios" ? 24 : 16,
-    left: 20,
-    right: 20,
-    height: 64,
-    backgroundColor: "#fff",
-    borderRadius: 32,
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.05)",
-    elevation: 12,
-  },
-  tabItem: { flex: 1, alignItems: "center", justifyContent: "center" },
-  tabIcon: {
-    fontFamily: "Material Symbols Outlined",
-    fontSize: 24,
-    color: "#727784",
-    marginBottom: 4,
-  },
-  tabIconActive: { color: "#00418f", fontVariationSettings: "'FILL' 1" },
-  tabLabel: { ...Typography.label, fontSize: 10, color: "#727784" },
-  tabLabelActive: { color: "#00418f" },
-
-  overlay: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    justifyContent: "flex-end",
-  },
-  actionSheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    padding: 12,
-    paddingBottom: 20,
-  },
-  reactionRow: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    marginBottom: 10,
-    paddingVertical: 6,
-  },
-  reactionEmoji: { fontSize: 24 },
-  reactionSummaryRow: {
-    marginTop: 8,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  reactionSummaryChip: {
-    borderWidth: 1,
-    borderColor: "#dce4ef",
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    backgroundColor: "#fff",
-  },
-  reactionSummaryText: {
-    ...Typography.body,
-    fontSize: 11,
-    color: "#2f3a4a",
-  },
-  messageMetaRow: {
-    marginTop: 6,
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-  },
-  messageMetaRowMe: {
-    justifyContent: 'flex-end',
-  },
-  messageTime: {
-    ...Typography.body,
-    fontSize: 10,
-    color: '#7a8391',
-    fontWeight: '600',
-  },
-  actionItem: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eef2f7",
-  },
-  actionText: { ...Typography.body, fontSize: 15, color: "#1f2631" },
-});

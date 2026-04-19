@@ -18,10 +18,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { Colors, Typography } from "../constants/Theme";
-import Alert from "../utils/Alert";
-import { apiRequest } from "../utils/api";
-import SocketService from "../utils/socket";
+import { Colors, Typography } from '../../constants/Theme';
+import Alert from '../../utils/Alert';
+import { apiRequest } from '../../utils/api';
+import SocketService from '../../utils/socket';
 
 const DEFAULT_AVATAR =
   "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
