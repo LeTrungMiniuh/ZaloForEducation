@@ -1,9 +1,9 @@
-import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
-import { ChatGateway } from './chat.gateway';
-import { DynamoDBService } from '../../infrastructure/dynamodb.service';
-import { PutCommand, GetCommand, QueryCommand, BatchGetCommand, UpdateCommand, TransactWriteCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { Conversation, User } from '@zalo-edu/shared';
+import { BatchGetCommand, GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { BadRequestException, Inject, Injectable, forwardRef } from '@nestjs/common';
+import { Conversation } from '@zalo-edu/shared';
 import { v4 as uuidv4 } from 'uuid';
+import { DynamoDBService } from '../../infrastructure/dynamodb.service';
+import { ChatGateway } from './chat.gateway';
 import { FriendshipService } from './friendship.service';
 
 @Injectable()
@@ -213,6 +213,19 @@ export class ChatService {
         
         const sanitizedConv = { ...c, lastReadAt };
 
+        if (sanitizedConv.autoDeleteDays && sanitizedConv.lastMessageTimestamp) {
+          const expireMs = Number(sanitizedConv.autoDeleteDays) * 24 * 60 * 60 * 1000;
+          const isExpired = Date.now() - sanitizedConv.lastMessageTimestamp >= expireMs;
+          if (isExpired) {
+            return {
+              ...sanitizedConv,
+              lastMessageContent: '',
+              lastMessageSenderId: undefined,
+              lastMessageTimestamp: 0,
+            };
+          }
+        }
+
         if (lastClearedAt && c.lastMessageTimestamp) {
           const clearTime = new Date(lastClearedAt).getTime();
           if (c.lastMessageTimestamp <= clearTime) {
@@ -240,6 +253,42 @@ export class ChatService {
     this.chatGateway.emitConversationRead(email, convId);
 
     return { success: true };
+  }
+
+  async setConversationAutoDelete(convId: string, userEmail: string, days: number | null) {
+    const allowedDays = [1, 7, 30];
+    const normalizedDays = days == null || Number(days) === 0 ? null : Number(days);
+
+    if (normalizedDays !== null && !allowedDays.includes(normalizedDays)) {
+      throw new BadRequestException('Auto delete days must be 1, 7, 30 or null');
+    }
+
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata) {
+      throw new BadRequestException('Conversation not found');
+    }
+
+    if (!Array.isArray(metadata.members) || !metadata.members.includes(userEmail)) {
+      throw new BadRequestException('You are not a member of this conversation');
+    }
+
+    const now = new Date().toISOString();
+
+    await this.db.docClient.send(new UpdateCommand({
+      TableName: this.db.tableName,
+      Key: { PK: convId, SK: 'METADATA' },
+      UpdateExpression: 'SET autoDeleteDays = :days, autoDeleteUpdatedAt = :updatedAt, updatedAt = :updatedAt',
+      ExpressionAttributeValues: {
+        ':days': normalizedDays,
+        ':updatedAt': now,
+      },
+    }));
+
+    return {
+      convId,
+      autoDeleteDays: normalizedDays,
+      autoDeleteUpdatedAt: now,
+    };
   }
 
   /**

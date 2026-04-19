@@ -1,32 +1,32 @@
 import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Delete,
-  Body,
-  Req,
-  UseGuards,
-  UploadedFile,
-  UseInterceptors,
-  Param,
-  Query,
-  ParseIntPipe,
   BadRequestException,
-  NotFoundException,
+  Body,
+  Controller,
+  Delete,
+  Get,
   Inject,
+  NotFoundException,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
   forwardRef,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import { ChatService } from "./chat.service";
-import { MessageService } from "./message.service";
-import { FriendshipService } from "./friendship.service";
-import { ChatGateway } from "./chat.gateway";
-import { NotificationService } from "./notification.service";
+import { S3Service } from "../../infrastructure/s3.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { ProfileCompleteGuard } from "../auth/guards/profile-complete.guard";
 import { UserService } from "../user/user.service";
-import { S3Service } from "../../infrastructure/s3.service";
+import { ChatGateway } from "./chat.gateway";
+import { ChatService } from "./chat.service";
+import { FriendshipService } from "./friendship.service";
+import { MessageService } from "./message.service";
+import { NotificationService } from "./notification.service";
 
 @Controller("chat")
 @UseGuards(JwtAuthGuard, ProfileCompleteGuard)
@@ -144,9 +144,15 @@ export class ChatController {
     // 3. SEND PUSH NOTIFICATION (FRAMEWORK READY)
     if (convMetadata) {
       const recipients = convMetadata.members.filter(m => m !== email);
+      const hasSticker = Array.isArray(body.media) && body.media.some((item: any) => {
+        const mime = String(item?.mimeType || item?.fileType || '').toLowerCase();
+        return mime.includes('sticker') || item?.isSticker === true;
+      });
+      const hasHDImage = Array.isArray(body.media) && body.media.some((item: any) => item?.isHD === true);
+
       this.notificationService.broadcastNotification(recipients, {
         title: convMetadata.name || 'Tin nhắn mới',
-        body: body.content || '[Hình ảnh/Tệp tin]',
+        body: body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]'),
         data: { convId, messageId: res.id }
       });
     }
@@ -332,6 +338,31 @@ export class ChatController {
   @Patch("conversations/:id/read")
   async markAsRead(@Param("id") id: string, @Req() req: any) {
     return await this.chatService.markConversationAsRead(id, req.user.email);
+  }
+
+  @Patch("conversations/:id/auto-delete")
+  async setConversationAutoDelete(
+    @Param("id") id: string,
+    @Body() body: { days?: number | null },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    const result = await this.chatService.setConversationAutoDelete(id, email, body?.days ?? null);
+
+    const metadata = await this.chatService.getConversationMetadata(id);
+    if (metadata?.members?.length) {
+      for (const member of metadata.members) {
+        const userRoom = `user#${member.toLowerCase()}`;
+        this.chatGateway.server.to(userRoom).emit('conversation_auto_delete_updated', {
+          convId: id,
+          autoDeleteDays: result.autoDeleteDays,
+          autoDeleteUpdatedAt: result.autoDeleteUpdatedAt,
+          updatedBy: email,
+        });
+      }
+    }
+
+    return result;
   }
 
   @Post("friends/reject")

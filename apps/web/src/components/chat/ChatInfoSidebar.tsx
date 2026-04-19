@@ -1,12 +1,14 @@
 import {
-  BellOff,
-  FileDigit,
-  FileImage,
-  FileText,
-  Link as LinkIcon,
-  Music,
-  Trash2,
-  Video
+    BellOff,
+    Clock3,
+    FileDigit,
+    FileImage,
+    FileText,
+    Link as LinkIcon,
+    Music,
+    Trash2,
+    Video,
+    X
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -17,12 +19,15 @@ import { formatFileSize, getDisplayAvatar, getDisplayName, normalizeAttachment }
 const ChatInfoSidebar: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { conversations, activeConvId, userProfiles, messages } = useChatStore();
+  const { conversations, activeConvId, userProfiles, messages, setConversationAutoDelete } = useChatStore();
 
   const activeChat = conversations.find(c => c.id === activeConvId);
   const [activeStorageTab, setActiveStorageTab] = useState<'media' | 'file' | 'link'>('media');
   const [senderFilter, setSenderFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
+  const [showAutoDeleteModal, setShowAutoDeleteModal] = useState(false);
+  const [pendingAutoDeleteDays, setPendingAutoDeleteDays] = useState<1 | 7 | 30 | null>(null);
+  const [savingAutoDelete, setSavingAutoDelete] = useState(false);
 
   if (!activeChat) return null;
 
@@ -37,6 +42,33 @@ const ChatInfoSidebar: React.FC = () => {
   const chatAvatar = activeChat.type === 'direct'
     ? getDisplayAvatar(partnerEmail, user, userProfiles)
     : (activeChat.avatar || '/logo_blue.png');
+
+  const currentAutoDeleteDays = activeChat.autoDeleteDays ?? null;
+
+  const autoDeleteLabel = (days: 1 | 7 | 30 | null) => {
+    if (days === 1) return '1 ngày';
+    if (days === 7) return '7 ngày';
+    if (days === 30) return '30 ngày';
+    return 'Không bao giờ';
+  };
+
+  const openAutoDeleteModal = () => {
+    setPendingAutoDeleteDays(currentAutoDeleteDays as 1 | 7 | 30 | null);
+    setShowAutoDeleteModal(true);
+  };
+
+  const confirmAutoDelete = async () => {
+    if (!activeConvId) return;
+    setSavingAutoDelete(true);
+    try {
+      await setConversationAutoDelete(activeConvId, pendingAutoDeleteDays);
+      setShowAutoDeleteModal(false);
+    } catch {
+      // Errors are logged in store; modal stays open for retry.
+    } finally {
+      setSavingAutoDelete(false);
+    }
+  };
 
   // Helper to render file icon components
   const FileIconComponent = ({ fileName }: { fileName: string }) => {
@@ -251,6 +283,16 @@ const ChatInfoSidebar: React.FC = () => {
 
           {/* Section: Settings */}
           <div className="mt-4 px-4 space-y-1">
+            <button
+              onClick={openAutoDeleteModal}
+              className="w-full flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all"
+            >
+              <span className="flex items-center gap-3">
+                <Clock3 size={20} className="text-on-surface-variant" />
+                Tin nhắn tự xóa
+              </span>
+              <span className="text-[12px] font-bold text-primary">{autoDeleteLabel(currentAutoDeleteDays as 1 | 7 | 30 | null)}</span>
+            </button>
             <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all">
               <BellOff size={20} className="text-on-surface-variant" />
               Tắt thông báo
@@ -262,6 +304,65 @@ const ChatInfoSidebar: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {showAutoDeleteModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-[460px] rounded-2xl bg-white dark:bg-surface-container shadow-2xl border border-outline-variant/20 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20">
+              <h3 className="text-[18px] font-extrabold text-on-surface">Cài đặt tin nhắn tự xóa</h3>
+              <button
+                onClick={() => setShowAutoDeleteModal(false)}
+                type="button"
+                className="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center text-on-surface-variant"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-5">
+              {[1, 7, 30].map((days) => (
+                <label key={days} className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={pendingAutoDeleteDays === days}
+                    onChange={() => setPendingAutoDeleteDays(days as 1 | 7 | 30)}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-[18px] text-on-surface">{days} ngày</span>
+                </label>
+              ))}
+
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  checked={pendingAutoDeleteDays === null}
+                  onChange={() => setPendingAutoDeleteDays(null)}
+                  className="w-4 h-4"
+                />
+                <span className="text-[18px] text-on-surface">Không bao giờ</span>
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-outline-variant/20 bg-surface-container/40">
+              <button
+                onClick={() => setShowAutoDeleteModal(false)}
+                className="px-6 py-3 rounded-lg bg-surface-container-high text-on-surface font-bold hover:opacity-90"
+                type="button"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={confirmAutoDelete}
+                disabled={savingAutoDelete || pendingAutoDeleteDays === currentAutoDeleteDays}
+                className="px-6 py-3 rounded-lg bg-primary text-white font-bold disabled:opacity-50"
+                type="button"
+              >
+                {savingAutoDelete ? 'Đang lưu...' : 'Xác nhận'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

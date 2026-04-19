@@ -1,17 +1,16 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
-import { DynamoDBService } from "../../infrastructure/dynamodb.service";
-import { S3Service } from "../../infrastructure/s3.service";
 import {
-  GetCommand,
-  PutCommand,
-  QueryCommand,
-  UpdateCommand,
   BatchGetCommand,
   BatchWriteCommand,
+  GetCommand,
+  QueryCommand,
   TransactWriteCommand,
+  UpdateCommand
 } from "@aws-sdk/lib-dynamodb";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { Message } from "@zalo-edu/shared";
 import { v4 as uuidv4 } from "uuid";
+import { DynamoDBService } from "../../infrastructure/dynamodb.service";
+import { S3Service } from "../../infrastructure/s3.service";
 
 @Injectable()
 export class MessageService {
@@ -83,7 +82,18 @@ export class MessageService {
             ":content": (() => {
               if (type === 'system') return content;
               if (!content || content.startsWith('MSG#')) {
-                if (media && media.length > 0) return '[Hình ảnh]';
+                if (media && media.length > 0) {
+                  const hasSticker = media.some((item: any) => {
+                    const mime = String(item?.mimeType || item?.fileType || '').toLowerCase();
+                    return mime.includes('sticker') || item?.isSticker === true;
+                  });
+                  if (hasSticker) return '[Sticker]';
+
+                  const hasHDImage = media.some((item: any) => item?.isHD === true);
+                  if (hasHDImage) return '[Ảnh HD]';
+
+                  return '[Hình ảnh]';
+                }
                 if (files && files.length > 0) return '[Tệp tin]';
                 return 'Tin nhắn mới';
               }
@@ -373,6 +383,12 @@ export class MessageService {
     limit: number = 50,
     lastEvaluatedKey?: any,
   ) {
+    const metadataRes = await this.db.docClient.send(new GetCommand({
+      TableName: this.db.tableName,
+      Key: { PK: convId, SK: 'METADATA' },
+    }));
+    const autoDeleteDays = Number(metadataRes.Item?.autoDeleteDays || 0);
+
     // 1. Get user's lastClearedAt timestamp for this conversation
     const userMapping = await this.db.docClient.send(new GetCommand({
       TableName: this.db.tableName,
@@ -401,9 +417,17 @@ export class MessageService {
     const items = (result.Items || []) as Message[];
     
     // Filter out messages that the user has "deleted for me"
-    const filteredItems = userEmail 
+    let filteredItems = userEmail 
       ? items.filter(msg => !msg.removed?.includes(userEmail))
       : items;
+
+    if ([1, 7, 30].includes(autoDeleteDays)) {
+      const threshold = Date.now() - autoDeleteDays * 24 * 60 * 60 * 1000;
+      filteredItems = filteredItems.filter((msg) => {
+        const createdAtTs = new Date(msg.createdAt).getTime();
+        return Number.isFinite(createdAtTs) && createdAtTs >= threshold;
+      });
+    }
 
     // Convert LastEvaluatedKey to a format easy for Frontend
     let nextCursor = null;

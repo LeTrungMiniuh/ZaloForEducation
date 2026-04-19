@@ -7,6 +7,8 @@ export interface Attachment {
   size: number;
   dataUrl?: string;
   file?: File;
+  isSticker?: boolean;
+  isHD?: boolean;
 }
 
 // --- FORMATTERS ---
@@ -69,7 +71,18 @@ export const getDisplayAvatar = (email: string | undefined, currentUser: any, us
 export const getMessagePreview = (message: any): string => {
   if (!message) return 'Tin nhắn';
   if (message.recalled) return 'Tin nhắn đã được thu hồi';
-  if (Array.isArray(message.media) && message.media.length > 0) return '[Ảnh/Video]';
+  if (Array.isArray(message.media) && message.media.length > 0) {
+    const hasSticker = message.media.some((item: any) => {
+      const mime = String(item?.mimeType || item?.fileType || '').toLowerCase();
+      return mime.includes('sticker') || item?.isSticker === true;
+    });
+    if (hasSticker) return '[Sticker]';
+
+    const hasHDImage = message.media.some((item: any) => item?.isHD === true);
+    if (hasHDImage) return '[Ảnh HD]';
+
+    return '[Ảnh/Video]';
+  }
   if (Array.isArray(message.files) && message.files.length > 0) return '[Tệp đính kèm]';
   return String(message.content || 'Tin nhắn');
 };

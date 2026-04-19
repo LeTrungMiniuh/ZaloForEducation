@@ -54,6 +54,8 @@ export interface Conversation {
   online?: boolean;
   lastReadAt?: number;
   pinnedMessageIds?: string[];
+  autoDeleteDays?: 1 | 7 | 30 | null;
+  autoDeleteUpdatedAt?: string;
 }
 
 export interface Friendship {

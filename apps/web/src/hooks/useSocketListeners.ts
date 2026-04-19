@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useCallback, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useChatStore } from '../store/chatStore';
 import { useCallStore } from '../store/callStore';
-import { leaveCurrentSession } from './useChime';
+import { useChatStore } from '../store/chatStore';
 import { getMessagePreview } from '../utils/chatUtils';
+import { leaveCurrentSession } from './useChime';
 
 export const useSocketListeners = () => {
   const { socket, user } = useAuth();
@@ -16,12 +17,11 @@ export const useSocketListeners = () => {
     localClearHistory,
     updateMessage,
     setUserProfiles,
-    setMessages,
-    messages
+    setMessages
   } = useChatStore();
 
   // Helper to update conv list locally
-  const upsertConversationLastMessage = (convId: string, msg: any) => {
+  const upsertConversationLastMessage = useCallback((convId: string, msg: any) => {
     setConversations((prev) => {
       const index = prev.findIndex((conv) => conv.id === convId);
       if (index === -1) return prev;
@@ -40,7 +40,7 @@ export const useSocketListeners = () => {
       next.unshift(updated);
       return next;
     });
-  };
+  }, [setConversations]);
 
   useEffect(() => {
     if (!socket || !user) return;
@@ -115,12 +115,17 @@ export const useSocketListeners = () => {
       // If someone else read the conversation I am currently in,
       // I should update my sent messages to "read".
       if (data.email !== user.email && data.convId === activeConvId) {
+        const state = useChatStore.getState();
+        const updatedMessages = state.messages.map((m): typeof m => {
+          const shouldMarkRead =
+            m.senderId === user.email && (!m.status || m.status === 'sent' || m.status === 'delivered');
+
+          return shouldMarkRead ? { ...m, status: 'seen' } : m;
+        });
+
         setMessages(
-          useChatStore.getState().messages.map(m => 
-            (m.senderId === user.email && (!m.status || m.status === 'sent' || m.status === 'delivered')) 
-              ? { ...m, status: 'read' } 
-              : m
-          )
+          updatedMessages,
+          state.nextCursor
         );
       }
     };
@@ -222,5 +227,5 @@ export const useSocketListeners = () => {
       socket.off('call:upgrade_accepted', handleUpgradeAccepted);
       socket.off('call:upgrade_declined', handleUpgradeDeclined);
     };
-  }, [socket, user, activeConvId, addMessage, markAsRead, setLocalRead, localClearHistory, setUserProfiles, updateMessage]);
+  }, [socket, user, activeConvId, addMessage, markAsRead, setLocalRead, setConversations, localClearHistory, setUserProfiles, updateMessage, setMessages, upsertConversationLastMessage]);
 };

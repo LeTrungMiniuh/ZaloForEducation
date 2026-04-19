@@ -1,18 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {
-  AlertCircle,
-  Download,
-  FileDigit,
-  FileImage,
-  FileText,
-  Forward,
-  Heart,
-  Loader2,
-  MoreHorizontal,
-  Music,
-  Pin,
-  Quote,
-  Video
+    AlertCircle,
+    Download,
+    FileDigit,
+    FileImage,
+    FileText,
+    Forward,
+    Heart,
+    Loader2,
+    MoreHorizontal,
+    Music,
+    Pin,
+    Quote,
+    Video
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -72,6 +72,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
     const mime = String(mediaItem?.mimeType || mediaItem?.fileType || '').toLowerCase();
     const name = String(mediaItem?.name || mediaItem?.fileName || mediaItem?.url || mediaItem?.dataUrl || '').toLowerCase();
     return mime.startsWith('video/') || /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name);
+  };
+
+  const isStickerMedia = (mediaItem: any) => {
+    const mime = String(mediaItem?.mimeType || mediaItem?.fileType || '').toLowerCase();
+    return mime.includes('sticker') || mediaItem?.isSticker === true;
   };
 
   const bubbleClass = isMe 
@@ -263,6 +268,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
                     {message.media.map((m: any, i: number) => {
                       const src = m.dataUrl || m.url;
                       const isVideo = isVideoMedia(m);
+                      const isSticker = isStickerMedia(m);
+                      const isHD = m?.isHD === true;
                       const mediaClass = `${
                         message.media.length === 1
                           ? 'max-w-full max-h-[300px] object-contain rounded-2xl'
@@ -283,13 +290,20 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
                       }
 
                       return (
-                        <img
-                          key={i}
-                          src={src}
-                          onClick={() => setPreviewImage(src, m.fileName || m.name || 'image.png')}
-                          className={`${mediaClass} hover:opacity-90 cursor-pointer active:scale-[0.98]`}
-                          alt=""
-                        />
+                        <div key={i} className="relative inline-block">
+                          <img
+                            src={src}
+                            onClick={() => setPreviewImage(src, m.fileName || m.name || 'image.png')}
+                            className={`${isSticker ? 'max-h-[180px] object-contain bg-transparent border-0 shadow-none' : mediaClass} hover:opacity-90 cursor-pointer active:scale-[0.98]`}
+                            alt=""
+                          />
+                          {(isSticker || isHD) && (
+                            <div className="absolute left-2 bottom-2 flex gap-1">
+                              {isSticker && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-600 text-white">STK</span>}
+                              {isHD && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary text-white">HD</span>}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                    </div>

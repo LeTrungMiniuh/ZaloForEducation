@@ -1,8 +1,8 @@
-import type { Message, Conversation } from '@zalo-edu/shared';
-import api from '../services/api';
-import { create } from 'zustand';
-import type { Attachment } from '../utils/chatUtils';
+import type { Conversation, Message } from '@zalo-edu/shared';
 import Swal from 'sweetalert2';
+import { create } from 'zustand';
+import api from '../services/api';
+import type { Attachment } from '../utils/chatUtils';
 
 interface ChatState {
   conversations: Conversation[];
@@ -40,6 +40,7 @@ interface ChatState {
   setLocalRead: (convId: string) => void;
   deleteMessageOptimistic: (convId: string, messageId: string) => Promise<void>;
   patchMessageOptimistic: (convId: string, messageId: string, payload: any) => Promise<void>;
+  setConversationAutoDelete: (convId: string, days: 1 | 7 | 30 | null) => Promise<void>;
 
   // Search
   isSearching: boolean;
@@ -299,7 +300,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       dataUrl: a.dataUrl,
       name: a.name,
       mimeType: a.mimeType,
-      size: a.size
+      size: a.size,
+      isSticker: a.isSticker === true,
+      isHD: a.isHD === true
     }));
 
     const files = attachments.filter(a => !a.mimeType.startsWith('image/') && !a.mimeType.startsWith('video/')).map(a => ({
@@ -332,7 +335,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...newConvs[convIndex],
           lastMessageContent: (() => {
             if (!content || content.startsWith('MSG#')) {
-              if (media.length > 0) return '[Hình ảnh]';
+              if (media.length > 0) {
+                if (media.some((item: any) => item.isSticker === true || String(item.mimeType || '').includes('sticker'))) return '[Sticker]';
+                if (media.some((item: any) => item.isHD === true)) return '[Ảnh HD]';
+                return '[Hình ảnh]';
+              }
               if (files.length > 0) return '[Tệp tin]';
               return 'Tin nhắn mới';
             }
@@ -464,6 +471,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
           timerProgressBar: true
         });
       }
+    }
+  },
+
+  setConversationAutoDelete: async (convId, days) => {
+    const prevConversations = get().conversations;
+
+    set((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.id === convId
+          ? {
+              ...conversation,
+              autoDeleteDays: days,
+              autoDeleteUpdatedAt: new Date().toISOString(),
+            }
+          : conversation,
+      ),
+    }));
+
+    try {
+      const res = await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/auto-delete`, {
+        days,
+      });
+
+      set((state) => ({
+        conversations: state.conversations.map((conversation) =>
+          conversation.id === convId
+            ? {
+                ...conversation,
+                autoDeleteDays: res.data?.autoDeleteDays ?? days,
+                autoDeleteUpdatedAt: res.data?.autoDeleteUpdatedAt || new Date().toISOString(),
+              }
+            : conversation,
+        ),
+      }));
+    } catch (err) {
+      console.error('Failed to update conversation auto-delete setting', err);
+      set({ conversations: prevConversations });
+      throw err;
     }
   },
 
