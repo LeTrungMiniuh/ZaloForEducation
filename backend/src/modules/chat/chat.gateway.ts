@@ -64,8 +64,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { convId: string },
     @ConnectedSocket() client: Socket,
   ): void {
-    client.join(data.convId);
-    console.log(`Client ${client.id} joined room: ${data.convId}`);
+    if (!data.convId) return;
+    const room = data.convId.toLowerCase(); // Chuẩn hóa room
+    client.join(room);
+    this.logger.log(`[SOCKET] Client ${client.id} joined room: ${room}`);
   }
 
   @SubscribeMessage("join_identity")
@@ -85,6 +87,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (deviceId) {
         client.join(deviceId);
       }
+
+      this.logger.log(`[SOCKET] User ${normalizedEmail} identified. Joined rooms: [${userRoom}], [${deviceId || 'no-device'}]`);
 
       // Update Presence to Online
       const presenceKey = `presence:${normalizedEmail}`;
@@ -117,6 +121,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ): void {
     // Broadcast message to everyone in the conversation room EXCEPT the sender
     socket.to(data.convId).emit("receiveMessage", data.message);
+  }
+
+  notifyFriendRequest(email: string, payload: any) {
+    const userRoom = `user#${email.toLowerCase()}`;
+    this.server.to(userRoom).emit("friend_request_received", payload);
+    console.log(`Sent friend_request_received to room ${userRoom}`);
+  }
+
+  notifyFriendshipUpdate(email: string, payload: any) {
+    const userRoom = `user#${email.toLowerCase()}`;
+    this.server.to(userRoom).emit("friendship_updated", payload);
+    console.log(`Sent friendship_updated to room ${userRoom}`);
   }
 
   /**
@@ -277,7 +293,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // Gửi thông báo đăng xuất tới thiết bị đích (Đã gia cố để đảm bảo nhận được ở mọi màn hình)
   notifyForceLogout(email: string, targetDeviceId: string, reason?: string) {
-    const userRoom = `user#${email}`;
+    const normalizedEmail = email.toLowerCase();
+    const userRoom = `user#${normalizedEmail}`;
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
 

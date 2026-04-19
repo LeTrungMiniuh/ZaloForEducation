@@ -6,6 +6,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UserModule } from './modules/user/user.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { OtpModule } from './modules/otp/otp.module';
+import { CallModule } from './modules/call/call.module';
 import { InfrastructureModule } from './infrastructure/infrastructure.module';
 
 @Module({
@@ -14,11 +15,12 @@ import { InfrastructureModule } from './infrastructure/infrastructure.module';
       isGlobal: true,
       envFilePath: fs.existsSync('.env') ? '.env' : 'backend/.env',
     }),
-    InfrastructureModule, 
-    AuthModule, 
-    UserModule, 
-    ChatModule, 
-    OtpModule
+    InfrastructureModule,
+    AuthModule,
+    UserModule,
+    ChatModule,
+    OtpModule,
+    CallModule,
   ],
   controllers: [],
   providers: [],

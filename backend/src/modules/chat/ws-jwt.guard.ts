@@ -34,7 +34,7 @@ export class WsJwtGuard implements CanActivate {
     const token = this.extractToken(client);
 
     if (!token) {
-      this.logger.error('No token found in handshake');
+      this.logger.warn('No token found in handshake');
       throw new WsException('Unauthorized: Missing token');
     }
 

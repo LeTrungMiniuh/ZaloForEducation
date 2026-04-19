@@ -3,16 +3,22 @@ import { createClient, RedisClientType } from 'redis';
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
-  private client: RedisClientType;
+  private client: RedisClientType | null = null;
+  private enabled = true;
 
   constructor() {
     const url = process.env.REDIS_URL;
-    const host = process.env.REDIS_HOST || 'localhost';
-    const port = process.env.REDIS_PORT || '6379';
+
+    if (!url) {
+      this.enabled = false;
+      console.warn('[Redis] REDIS_URL is not defined; Redis features are disabled in this environment.');
+      return;
+    }
+
     const password = process.env.REDIS_PASSWORD;
 
     this.client = createClient({
-      url: url || `redis://${host}:${port}`,
+      url,
       password: password,
       socket: {
         reconnectStrategy: (retries) => {
@@ -36,19 +42,27 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
+    if (!this.enabled || !this.client) return;
     try {
       await this.client.connect();
     } catch (err) {
       console.error('[Redis] Initial connection failed:', err.message);
-      // We don't throw here to allow NestJS to start; reconnectStrategy will handle it.
+      this.enabled = false;
+      try {
+        await this.client.disconnect();
+      } catch {
+        // Ignore cleanup errors when Redis is unavailable.
+      }
     }
   }
 
   async onModuleDestroy() {
+    if (!this.enabled || !this.client) return;
     await this.client.quit();
   }
 
   async set(key: string, value: string, ttlSeconds?: number) {
+    if (!this.enabled || !this.client) return;
     if (ttlSeconds) {
       await this.client.set(key, value, {
         EX: ttlSeconds,
@@ -59,35 +73,43 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async get(key: string): Promise<string | null> {
+    if (!this.enabled || !this.client) return null;
     const value = await this.client.get(key);
     return value as string | null;
   }
 
   async del(key: string) {
+    if (!this.enabled || !this.client) return;
     await this.client.del(key);
   }
 
   async incr(key: string): Promise<number> {
+    if (!this.enabled || !this.client) return 0;
     return await this.client.incr(key);
   }
 
   async sAdd(key: string, value: string) {
+    if (!this.enabled || !this.client) return;
     await this.client.sAdd(key, value);
   }
 
   async sMembers(key: string): Promise<string[]> {
+    if (!this.enabled || !this.client) return [];
     return await this.client.sMembers(key);
   }
 
   async sRem(key: string, value: string) {
+    if (!this.enabled || !this.client) return;
     await this.client.sRem(key, value);
   }
 
   async expire(key: string, seconds: number) {
+    if (!this.enabled || !this.client) return;
     await this.client.expire(key, seconds);
   }
 
   async ttl(key: string): Promise<number> {
+    if (!this.enabled || !this.client) return -1;
     return await this.client.ttl(key);
   }
 }

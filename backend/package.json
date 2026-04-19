@@ -15,6 +15,7 @@
     "kill-port": "powershell -Command \"Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }\""
   },
   "dependencies": {
+    "@aws-sdk/client-chime-sdk-meetings": "^3.1031.0",
     "@aws-sdk/client-cognito-identity-provider": "^3.550.0",
     "@aws-sdk/client-dynamodb": "^3.550.0",
     "@aws-sdk/lib-dynamodb": "^3.1028.0",
@@ -25,9 +26,11 @@
     "@nestjs/platform-express": "10.3.10",
     "@nestjs/platform-socket.io": "10.3.10",
     "@nestjs/websockets": "10.3.10",
+    "@socket.io/redis-adapter": "^8.3.0",
     "bcrypt": "^5.1.1",
     "dotenv": "^16.4.5",
     "google-auth-library": "^10.6.2",
+    "ioredis": "^5.10.1",
     "nodemailer": "^6.9.13",
     "react": "19.1.0",
     "react-dom": "19.1.0",

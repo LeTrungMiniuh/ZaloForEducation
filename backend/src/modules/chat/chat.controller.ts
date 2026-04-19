@@ -124,15 +124,20 @@ export class ChatController {
       body.replyTo,
     );
 
+    const normalizedConvId = convId.toLowerCase();
+
     // 1. BROADCAST REAL-TIME VIA SOCKET
-    this.chatGateway.server.to(convId).emit('receiveMessage', res);
+    this.chatGateway.server.to(normalizedConvId).emit('receiveMessage', res);
+    console.log(`[SOCKET] Broadcasted to room: ${normalizedConvId}`);
 
     // 2. BROADCAST REAL-TIME TO ALL MEMBERS' PERSONAL ROOMS (For conversation list updates)
     const convMetadata = await this.chatService.getConversationMetadata(convId);
     if (convMetadata && convMetadata.members) {
       for (const member of convMetadata.members) {
         // Emit to user#email room so all their devices update the "tab" preview
-        this.chatGateway.server.to(`user#${member.toLowerCase()}`).emit('receiveMessage', res);
+        const userRoom = `user#${member.toLowerCase()}`;
+        this.chatGateway.server.to(userRoom).emit('receiveMessage', res);
+        console.log(`[SOCKET] Broadcasted to user room: ${userRoom}`);
       }
     }
 
@@ -327,5 +332,82 @@ export class ChatController {
   @Patch("conversations/:id/read")
   async markAsRead(@Param("id") id: string, @Req() req: any) {
     return await this.chatService.markConversationAsRead(id, req.user.email);
+  }
+
+  @Post("friends/reject")
+  async rejectFriendRequest(
+    @Body() body: { senderEmail: string },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.rejectRequest(email, body.senderEmail);
+  }
+
+  @Post("friends/unfriend")
+  async unfriend(@Body() body: { friendEmail: string }, @Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.unfriend(email, body.friendEmail);
+  }
+
+  @Post("friends/block")
+  async blockUser(@Body() body: { targetEmail: string }, @Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.blockUser(email, body.targetEmail);
+  }
+
+  @Patch("friends/nickname")
+  async setNickname(
+    @Body() body: { friendEmail: string; nickname: string },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.setNickname(
+      email,
+      body.friendEmail,
+      body.nickname,
+    );
+  }
+
+  @Patch("friends/close-friend")
+  async setCloseFriend(
+    @Body() body: { friendEmail: string; isCloseFriend: boolean },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.setCloseFriend(
+      email,
+      body.friendEmail,
+      body.isCloseFriend,
+    );
+  }
+
+  // Backward-compatible alias route
+  @Patch("friends/closeFriend")
+  async setCloseFriendAlias(
+    @Body() body: { friendEmail: string; isCloseFriend?: boolean; closeFriend?: boolean },
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.friendshipService.setCloseFriend(
+      email,
+      body.friendEmail,
+      Boolean(
+        body.isCloseFriend !== undefined
+          ? body.isCloseFriend
+          : body.closeFriend,
+      ),
+    );
+  }
+
+  @Get("friends/requests")
+  async getIncomingRequests(@Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.getIncomingRequests(email);
+  }
+
+  @Get("friends/suggestions")
+  async getFriendSuggestions(@Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.getFriendSuggestions(email);
   }
 }
