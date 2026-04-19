@@ -240,6 +240,18 @@ export class ChatService {
   }
 
   async markConversationAsRead(convId: string, email: string) {
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata || !Array.isArray(metadata.members)) {
+      throw new BadRequestException('Conversation not found');
+    }
+
+    const isMember = metadata.members.some(
+      (member) => String(member).toLowerCase() === String(email).toLowerCase(),
+    );
+    if (!isMember) {
+      throw new BadRequestException('You are not a member of this conversation');
+    }
+
     await this.db.docClient.send(new UpdateCommand({
       TableName: this.db.tableName,
       Key: { PK: `USER#${email}`, SK: convId },

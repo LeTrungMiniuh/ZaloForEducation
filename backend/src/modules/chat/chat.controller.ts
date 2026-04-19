@@ -110,6 +110,21 @@ export class ChatController {
       media?: any[];
       files?: any[];
       replyTo?: any;
+      contactCard?: {
+        email: string;
+        fullName?: string;
+        avatarUrl?: string;
+        phone?: string;
+      };
+      location?: {
+        latitude: number;
+        longitude: number;
+        label?: string;
+        isLive?: boolean;
+        liveSessionId?: string;
+        sentAt?: string;
+        expiresAt?: string;
+      };
     },
     @Req() req: any,
   ) {
@@ -122,6 +137,10 @@ export class ChatController {
       body.media,
       body.files,
       body.replyTo,
+      {
+        ...(body.contactCard ? { contactCard: body.contactCard } : {}),
+        ...(body.location ? { location: body.location } : {}),
+      },
     );
 
     const normalizedConvId = convId.toLowerCase();
@@ -152,7 +171,11 @@ export class ChatController {
 
       this.notificationService.broadcastNotification(recipients, {
         title: convMetadata.name || 'Tin nhắn mới',
-        body: body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]'),
+        body: body.type === 'contact_card'
+          ? '[Danh thiếp]'
+          : body.type === 'location'
+            ? '[Vị trí]'
+          : (body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]')),
         data: { convId, messageId: res.id }
       });
     }

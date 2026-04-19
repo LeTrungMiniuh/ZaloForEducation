@@ -96,7 +96,22 @@ export interface Message {
   replyTo?: any; // msg object or id
   recalled?: boolean;
   removed?: string[]; // user emails
-  type: "text" | "image" | "video" | "file" | "system";
+  type: "text" | "image" | "video" | "file" | "system" | "contact_card" | "location";
+  contactCard?: {
+    email: string;
+    fullName?: string;
+    avatarUrl?: string;
+    phone?: string;
+  };
+  location?: {
+    latitude: number;
+    longitude: number;
+    label?: string;
+    isLive?: boolean;
+    liveSessionId?: string;
+    sentAt?: string;
+    expiresAt?: string;
+  };
   createdAt: string;
   updatedAt?: string;
   pinned?: boolean;

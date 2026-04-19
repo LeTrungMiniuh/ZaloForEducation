@@ -157,6 +157,48 @@ const ChatPage: React.FC = () => {
     setReplyTarget(null);
   };
 
+  const handleSendContactCard = async (card: {
+    email: string;
+    fullName?: string;
+    avatarUrl?: string;
+    phone?: string;
+  }) => {
+    if (!activeConvId || !user?.email) return;
+
+    await sendMessageOptimistic(
+      activeConvId,
+      user.email,
+      '[Danh thiếp]',
+      'contact_card',
+      [],
+      replyTarget,
+      { contactCard: card },
+    );
+    setReplyTarget(null);
+  };
+
+  const handleSendLocation = async (location: {
+    latitude: number;
+    longitude: number;
+    label?: string;
+    isLive?: boolean;
+    liveSessionId?: string;
+    sentAt?: string;
+    expiresAt?: string;
+  }) => {
+    if (!activeConvId || !user?.email) return;
+
+    await sendMessageOptimistic(
+      activeConvId,
+      user.email,
+      location.isLive ? '[Vị trí trực tiếp]' : '[Vị trí]',
+      'location',
+      [],
+      null,
+      { location },
+    );
+  };
+
   const [contextMenu, setContextMenu] = useState<{ message: any; x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -306,6 +348,8 @@ const ChatPage: React.FC = () => {
 
             <ChatInput
               onSendMessage={handleSendMessage}
+              onSendContactCard={handleSendContactCard}
+              onSendLocation={handleSendLocation}
               replyTarget={replyTarget}
               onClearReply={() => setReplyTarget(null)}
             />

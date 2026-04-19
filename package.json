@@ -25,5 +25,8 @@
   "overrides": {
     "react": "19.1.0",
     "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/multer": "^2.1.0"
   }
 }

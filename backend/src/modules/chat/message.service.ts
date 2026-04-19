@@ -19,6 +19,29 @@ export class MessageService {
     private readonly s3Service: S3Service,
   ) {}
 
+  private async ensureConversationMember(convId: string, userEmail: string) {
+    const metadata = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: convId, SK: 'METADATA' },
+      }),
+    );
+
+    const members: string[] = Array.isArray(metadata.Item?.members)
+      ? metadata.Item.members
+      : [];
+
+    const isMember = members.some(
+      (member) => String(member).toLowerCase() === String(userEmail).toLowerCase(),
+    );
+
+    if (!isMember) {
+      throw new BadRequestException('You are not a member of this conversation');
+    }
+
+    return metadata.Item as any;
+  }
+
   /**
    * SEND A NEW MESSAGE
    */
@@ -32,6 +55,10 @@ export class MessageService {
     replyTo?: any,
     extraFields: Record<string, any> = {},
   ) {
+    if (senderEmail !== 'system') {
+      await this.ensureConversationMember(convId, senderEmail);
+    }
+
     const timestamp = new Date().toISOString();
     const msgId = uuidv4();
     // Sort key format: MSG#2026-04-10T...#uuid ensures chronological sorting in DynamoDB
@@ -81,6 +108,8 @@ export class MessageService {
             ":sk": SK,
             ":content": (() => {
               if (type === 'system') return content;
+              if (type === 'contact_card') return '[Danh thiếp]';
+              if (type === 'location') return '[Vị trí]';
               if (!content || content.startsWith('MSG#')) {
                 if (media && media.length > 0) {
                   const hasSticker = media.some((item: any) => {
@@ -156,6 +185,8 @@ export class MessageService {
       previousEmoji?: string;
     },
   ) {
+    await this.ensureConversationMember(convId, userEmail);
+
     const existingRes = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
@@ -344,6 +375,8 @@ export class MessageService {
    * MARK MESSAGE AS SEEN
    */
   async markAsSeen(convId: string, messageId: string, userEmail: string) {
+    await this.ensureConversationMember(convId, userEmail);
+
     const existingRes = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
@@ -383,6 +416,8 @@ export class MessageService {
     limit: number = 50,
     lastEvaluatedKey?: any,
   ) {
+    await this.ensureConversationMember(convId, userEmail);
+
     const metadataRes = await this.db.docClient.send(new GetCommand({
       TableName: this.db.tableName,
       Key: { PK: convId, SK: 'METADATA' },
@@ -445,6 +480,8 @@ export class MessageService {
    * CLEAR HISTORY FOR A CONVERSATION (SOFT DELETE FOR ME)
    */
   async clearHistory(convId: string, userEmail: string) {
+    await this.ensureConversationMember(convId, userEmail);
+
     const timestamp = new Date().toISOString();
 
     // Update the User-Conversation mapping with lastClearedAt

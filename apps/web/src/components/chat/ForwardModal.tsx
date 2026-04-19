@@ -49,14 +49,26 @@ const ForwardModal: React.FC<ForwardModalProps> = ({ isOpen, onClose, message })
           size: a.size || 0
         }));
 
-        // Strip senderId/status from original message
+        const extraFields = message.type === 'contact_card' && message.contactCard?.email
+          ? {
+              contactCard: {
+                email: message.contactCard.email,
+                fullName: message.contactCard.fullName,
+                avatarUrl: message.contactCard.avatarUrl,
+                phone: message.contactCard.phone,
+              },
+            }
+          : undefined;
+
+        // Strip senderId/status from original message but preserve card metadata when needed
         await sendMessageOptimistic(
           convId,
           user!.email,
           message.content || '',
           message.type || 'text',
           combinedAttachments,
-          null
+          null,
+          extraFields
         );
       }
     } catch (err) {

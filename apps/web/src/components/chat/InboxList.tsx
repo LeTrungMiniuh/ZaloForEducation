@@ -3,12 +3,13 @@ import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import { getDisplayName, getDisplayAvatar, isUnread } from '../../utils/chatUtils';
 import CreateGroupModal from './CreateGroupModal';
+import Swal from 'sweetalert2';
 
 import { 
+  Lock,
+  MoreHorizontal,
   UserPlus, 
   Users, 
-  MessageSquarePlus, 
-  Settings, 
   Menu 
 } from 'lucide-react';
 
@@ -20,21 +21,29 @@ const InboxList: React.FC = () => {
     fetchConversations, 
     searchQuery, 
     setSearchQuery, 
-    setIsSearching,
     setActiveConversation,
     loadUserProfile,
     userProfiles,
+    hiddenConversations,
+    hideConversationWithPin,
+    unhideConversationWithPin,
     setIsAddFriendModalOpen,
     isCreateGroupModalOpen,
     setIsCreateGroupModalOpen
   } = useChatStore();
 
   const [chatFilter, setChatFilter] = useState<'all' | 'unread'>('all');
+  const [openMenuConvId, setOpenMenuConvId] = useState<string | null>(null);
 
   // Fetch conversations on mount
   React.useEffect(() => {
     fetchConversations();
   }, [fetchConversations]);
+
+  // Keep inbox search inline, do not open global search modal from this input.
+  React.useEffect(() => {
+    useChatStore.getState().setIsSearching(false);
+  }, []);
 
   // Auto-load profiles for partners in conversations
   React.useEffect(() => {
@@ -55,12 +64,88 @@ const InboxList: React.FC = () => {
 
   const handleSearchTrigger = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value);
-    setIsSearching(true);
+    useChatStore.getState().setIsSearching(false);
   };
 
-  const filteredConversations = conversations.filter(conv => 
-    chatFilter === 'all' || isUnread(conv, user?.email)
-  );
+  const normalizedSearch = String(searchQuery || '').trim().toLowerCase();
+
+  const conversationMatchesSearch = (conv: any) => {
+    if (!normalizedSearch) return true;
+
+    const partnerEmail = conv.type === 'direct'
+      ? (Array.isArray(conv.members) ? conv.members.find((m: string) => m !== user?.email) : '')
+      : '';
+
+    const name = conv.type === 'direct'
+      ? getDisplayName(partnerEmail, user, userProfiles)
+      : (conv.name || '');
+
+    const haystack = [
+      String(name || ''),
+      String(partnerEmail || ''),
+      String(conv.lastMessageContent || ''),
+      String(conv.lastMessage || ''),
+    ].join(' ').toLowerCase();
+
+    return haystack.includes(normalizedSearch);
+  };
+
+  const filteredConversations = conversations
+    .filter(conv => chatFilter === 'all' || isUnread(conv, user?.email))
+    .filter((conv) => {
+      const isHidden = !!hiddenConversations[conv.id];
+      if (!isHidden) return conversationMatchesSearch(conv);
+
+      // Hidden conversations only appear in list when user searches them.
+      return normalizedSearch.length > 0 && conversationMatchesSearch(conv);
+    });
+
+  const handleHideConversation = async (convId: string) => {
+    const res = await Swal.fire({
+      title: 'Ẩn trò chuyện',
+      text: 'Thiết lập mã PIN cá nhân (4-6 số) để ẩn hội thoại này.',
+      input: 'password',
+      inputPlaceholder: 'Nhập mã PIN',
+      inputAttributes: { maxlength: '6', autocapitalize: 'off', autocorrect: 'off' },
+      showCancelButton: true,
+      confirmButtonText: 'Ẩn',
+      cancelButtonText: 'Hủy',
+      confirmButtonColor: '#00418f',
+      inputValidator: (value) => {
+        if (!/^\d{4,6}$/.test(String(value || ''))) {
+          return 'PIN phải gồm 4-6 chữ số.';
+        }
+        return undefined;
+      }
+    });
+
+    if (!res.isConfirmed || !res.value) return;
+    hideConversationWithPin(convId, String(res.value));
+    setOpenMenuConvId(null);
+    Swal.fire({ icon: 'success', title: 'Đã ẩn trò chuyện', timer: 1300, showConfirmButton: false });
+  };
+
+  const handleUnhideConversation = async (convId: string) => {
+    const res = await Swal.fire({
+      title: 'Mở khóa trò chuyện',
+      text: 'Nhập mã PIN để hiện lại hội thoại.',
+      input: 'password',
+      inputPlaceholder: 'Nhập mã PIN',
+      showCancelButton: true,
+      confirmButtonText: 'Mở khóa',
+      cancelButtonText: 'Hủy',
+      confirmButtonColor: '#00418f',
+    });
+    if (!res.isConfirmed || !res.value) return;
+
+    const ok = unhideConversationWithPin(convId, String(res.value));
+    if (!ok) {
+      Swal.fire('Sai mã PIN', 'PIN không đúng, vui lòng thử lại.', 'error');
+      return;
+    }
+    setOpenMenuConvId(null);
+    Swal.fire({ icon: 'success', title: 'Đã hiện lại trò chuyện', timer: 1300, showConfirmButton: false });
+  };
 
   return (
     <div className="w-[340px] h-full border-r border-outline-variant/30 flex flex-col bg-white dark:bg-surface-container shrink-0">
@@ -72,7 +157,6 @@ const InboxList: React.FC = () => {
              <input
                value={searchQuery}
                onChange={handleSearchTrigger}
-               onFocus={() => setIsSearching(true)}
                className="w-full bg-surface-container-highest border-none rounded-[16px] py-2 pl-[34px] pr-4 text-[13px] outline-none text-on-surface placeholder:text-outline focus:ring-2 focus:ring-primary/20 transition-all cursor-text"
                placeholder="Tìm kiếm..."
              />
@@ -115,7 +199,7 @@ const InboxList: React.FC = () => {
       </div>
 
       {/* List Content */}
-      <div className="flex-1 overflow-y-auto hide-scrollbar p-2 space-y-1">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar p-2 space-y-1">
         {filteredConversations.length === 0 ? (
           <div className="text-center p-8 opacity-40 mt-10">
             <span className="material-symbols-outlined text-[48px] mb-2 text-on-surface-variant/20">chat_bubble</span>
@@ -138,11 +222,24 @@ const InboxList: React.FC = () => {
             
             const unread = isUnread(chat, user?.email);
             const isOnline = partnerEmail ? userProfiles[partnerEmail]?.status === 'online' : false;
+            const isHidden = !!hiddenConversations[chat.id];
 
             return (
               <div
                 key={chat.id}
-                onClick={() => setActiveConversation(chat.id)}
+                onClick={() => {
+                  if (isHidden) {
+                    Swal.fire({
+                      icon: 'info',
+                      title: 'Trò chuyện đang ẩn',
+                      text: 'Bấm dấu ... rồi chọn "Mở lại trò chuyện" để nhập PIN.',
+                      timer: 1800,
+                      showConfirmButton: false,
+                    });
+                    return;
+                  }
+                  setActiveConversation(chat.id);
+                }}
                 className={`flex items-center gap-3 p-3 rounded-[16px] cursor-pointer transition-all ${
                   isSelected ? 'bg-primary/10 shadow-sm' : 'hover:bg-surface-container/70'
                 }`}
@@ -164,12 +261,45 @@ const InboxList: React.FC = () => {
                   </div>
                   <div className="flex justify-between items-center">
                     <p className={`text-[13px] truncate ${unread ? 'font-bold text-on-surface' : 'text-on-surface-variant'}`}>
-                      {chat.lastMessageContent || chat.lastMessage || 'Chưa có tin nhắn'}
+                      {isHidden
+                        ? 'Trò chuyện đã ẩn (yêu cầu PIN)'
+                        : (chat.lastMessageContent || chat.lastMessage || 'Chưa có tin nhắn')}
                     </p>
                     {unread && (
                       <div className="w-2.5 h-2.5 bg-primary rounded-full shrink-0 ml-2 shadow-sm shadow-primary/20"></div>
                     )}
                   </div>
+                </div>
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (hiddenConversations[chat.id]) {
+                        handleUnhideConversation(chat.id);
+                        return;
+                      }
+                      setOpenMenuConvId((prev) => prev === chat.id ? null : chat.id);
+                    }}
+                    className="w-8 h-8 rounded-full hover:bg-surface-container flex items-center justify-center text-on-surface-variant"
+                  >
+                    <MoreHorizontal size={16} />
+                  </button>
+                  {openMenuConvId === chat.id && !hiddenConversations[chat.id] && (
+                    <div className="absolute right-0 top-[110%] z-20 w-44 bg-white border border-outline-variant/20 rounded-xl shadow-lg p-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleHideConversation(chat.id);
+                        }}
+                        className="w-full h-9 px-2 rounded-lg hover:bg-surface-container-low flex items-center gap-2 text-[13px] font-semibold text-on-surface"
+                      >
+                        <Lock size={14} />
+                        Ẩn trò chuyện
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             );

@@ -215,10 +215,16 @@ export default function HomeScreen({
   const [messageReactions, setMessageReactions] = useState({});
   const [replyTarget, setReplyTarget] = useState(null);
   const [actionMessage, setActionMessage] = useState(null);
+  const [showContactPicker, setShowContactPicker] = useState(false);
   const [userProfiles, setUserProfiles] = useState({});
 
   const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
+  const scrollStateRef = useRef({
+    hasMounted: false,
+    convId: null,
+    messageCount: 0,
+  });
   const safeConversations = Array.isArray(conversations) ? conversations : [];
   const safeMessages = Array.isArray(messages)
     ? messages.filter((m) => m && typeof m === "object")
@@ -276,9 +282,22 @@ export default function HomeScreen({
     dataUrl: item?.dataUrl || item?.fileUrl || item?.url || "",
   });
 
+  const normalizeContactCard = (message) => {
+    const card = message?.contactCard;
+    if (!card?.email) return null;
+    return {
+      email: String(card.email).toLowerCase(),
+      fullName: card.fullName || card.fullname || card.email,
+      avatarUrl: card.avatarUrl || card.urlAvatar,
+      phone: card.phone,
+    };
+  };
+
   const getMessagePreview = (message) => {
     if (!message) return "Tin nhắn";
     if (message.recalled) return "Tin nhắn đã được thu hồi";
+    if (message.type === "contact_card" || message.contactCard?.email)
+      return "[Danh thiếp]";
     if (Array.isArray(message.media) && message.media.length > 0)
       return "[Ảnh/Video]";
     if (Array.isArray(message.files) && message.files.length > 0)
@@ -766,6 +785,65 @@ export default function HomeScreen({
     }
   };
 
+  const openContactPicker = async () => {
+    if (!selectedChat?.id) {
+      Alert.alert("Danh thiếp", "Hãy mở một cuộc trò chuyện trước khi gửi danh thiếp.");
+      return;
+    }
+    if (acceptedFriends.length === 0) {
+      Alert.alert("Danh thiếp", "Bạn chưa có liên hệ nào để chia sẻ.");
+      return;
+    }
+
+    acceptedFriends.slice(0, 12).forEach((email) => loadUserProfile(email));
+    setShowContactPicker(true);
+  };
+
+  const sendContactCard = async (contactEmail) => {
+    if (!selectedChat?.id || !contactEmail || sending) return;
+
+    const profile = userProfiles[contactEmail] || {};
+    const contactCard = {
+      email: contactEmail,
+      fullName: profile.fullName || profile.fullname || contactEmail,
+      avatarUrl: profile.avatarUrl || profile.urlAvatar,
+      phone: profile.phone,
+    };
+
+    setShowContactPicker(false);
+    setSending(true);
+    try {
+      const res = await chatPost(
+        `/conversations/${selectedChat.id}/messages`,
+        {
+          content: "[Danh thiếp]",
+          type: "contact_card",
+          contactCard,
+          replyTo: replyTarget || undefined,
+        },
+      );
+
+      const sentMessage =
+        res?.ok && res?.data && typeof res.data === "object" ? res.data : null;
+      if (!sentMessage?.id) {
+        throw new Error("INVALID_CONTACT_CARD_RESPONSE");
+      }
+
+      addMessage(sentMessage);
+      setReplyTarget(null);
+      setConversationPreviewMap((prev) => ({
+        ...prev,
+        [selectedChat.id]: "[Danh thiếp]",
+      }));
+      upsertConversationLastMessage(selectedChat.id, "[Danh thiếp]");
+    } catch (err) {
+      console.error("Send contact card failed", err);
+      Alert.alert("Lỗi", "Không gửi được danh thiếp. Vui lòng thử lại.");
+    } finally {
+      setSending(false);
+    }
+  };
+
   const acceptedFriends = useMemo(
     () =>
       friendships
@@ -882,12 +960,25 @@ export default function HomeScreen({
   }, [addMessage]);
 
   useEffect(() => {
-    if (messagesScrollRef.current) {
-      setTimeout(() => {
-        messagesScrollRef.current?.scrollToEnd?.({ animated: true });
-      }, 60);
-    }
-  }, [messages]);
+    if (!messagesScrollRef.current || !selectedChat?.id) return;
+
+    const prev = scrollStateRef.current;
+    const currentCount = safeMessages.length;
+    const switchedConversation = prev.convId !== selectedChat.id;
+    const batchLoaded = currentCount > prev.messageCount + 1;
+    const shouldAnimate =
+      prev.hasMounted && !switchedConversation && !batchLoaded;
+
+    setTimeout(() => {
+      messagesScrollRef.current?.scrollToEnd?.({ animated: shouldAnimate });
+    }, shouldAnimate ? 60 : 0);
+
+    scrollStateRef.current = {
+      hasMounted: true,
+      convId: selectedChat.id,
+      messageCount: currentCount,
+    };
+  }, [selectedChat?.id, safeMessages.length]);
 
   const handleLogoutPress = () => {
     Alert.alert(
@@ -1008,6 +1099,7 @@ export default function HomeScreen({
             {safeMessages.map((message, index) => {
               const isMe = message.senderId === user?.email;
               const reactionSummary = getReactionSummary(message);
+              const contactCard = normalizeContactCard(message);
               return (
                 <Pressable
                   key={message.id || `msg-${index}`}
@@ -1047,6 +1139,39 @@ export default function HomeScreen({
                     >
                       {message.content}
                     </Text>
+
+                    {!message.recalled && contactCard && (
+                      <View style={styles.contactCardBox}>
+                        <Text style={styles.contactCardLabel}>Danh thiếp liên hệ</Text>
+                        <View style={styles.contactCardHeader}>
+                          <Image
+                            source={{ uri: contactCard.avatarUrl || getDisplayAvatar(contactCard.email) }}
+                            style={styles.contactCardAvatar}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text numberOfLines={1} style={styles.contactCardName}>
+                              {contactCard.fullName || contactCard.email}
+                            </Text>
+                            <Text numberOfLines={1} style={styles.contactCardEmail}>
+                              {contactCard.email}
+                            </Text>
+                            {contactCard.phone ? (
+                              <Text numberOfLines={1} style={styles.contactCardPhone}>
+                                {contactCard.phone}
+                              </Text>
+                            ) : null}
+                          </View>
+                        </View>
+                        {contactCard.email !== user?.email && (
+                          <TouchableOpacity
+                            style={styles.contactCardAction}
+                            onPress={() => handleOpenDirectChat(contactCard.email)}
+                          >
+                            <Text style={styles.contactCardActionText}>Nhắn tin</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
 
                     {(Array.isArray(message.media) ||
                       Array.isArray(message.files)) && (
@@ -1197,6 +1322,12 @@ export default function HomeScreen({
               style={styles.composerAction}
             >
               <Text style={styles.composerActionIcon}>image</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={openContactPicker}
+              style={styles.composerAction}
+            >
+              <Text style={styles.composerActionIcon}>contact_page</Text>
             </TouchableOpacity>
             <TextInput
               value={inputText}
@@ -1662,6 +1793,38 @@ export default function HomeScreen({
         </View>
       </KeyboardAvoidingView>
 
+      {showContactPicker && (
+        <Pressable style={styles.overlay} onPress={() => setShowContactPicker(false)}>
+          <Pressable
+            style={styles.actionSheet}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={styles.contactPickerTitle}>Chia sẻ danh thiếp</Text>
+            <ScrollView style={styles.contactPickerList}>
+              {acceptedFriends.map((email) => {
+                const profile = userProfiles[email] || {};
+                const displayName = profile.fullName || profile.fullname || email;
+                const avatar = profile.avatarUrl || profile.urlAvatar || getDisplayAvatar(email);
+                return (
+                  <TouchableOpacity
+                    key={`card-${email}`}
+                    style={styles.contactPickerItem}
+                    onPress={() => sendContactCard(email)}
+                  >
+                    <Image source={{ uri: avatar }} style={styles.contactPickerAvatar} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.contactPickerName} numberOfLines={1}>{displayName}</Text>
+                      <Text style={styles.contactPickerEmail} numberOfLines={1}>{email}</Text>
+                    </View>
+                    <Text style={styles.contactPickerSend}>Gửi</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      )}
+
       {actionMessage && (
         <Pressable style={styles.overlay} onPress={closeMessageAction}>
           <Pressable
@@ -1886,6 +2049,43 @@ const styles = StyleSheet.create({
   },
   messageFileName: { ...Typography.label, fontSize: 12, color: "#1f2631" },
   messageFileSize: { ...Typography.body, fontSize: 11, color: "#7a8391" },
+  contactCardBox: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#cfe0ff",
+    borderRadius: 12,
+    backgroundColor: "#f8fbff",
+    padding: 10,
+    gap: 8,
+  },
+  contactCardLabel: {
+    ...Typography.label,
+    fontSize: 10,
+    color: "#0058bc",
+    textTransform: "uppercase",
+  },
+  contactCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  contactCardAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#e8edf5",
+  },
+  contactCardName: { ...Typography.heading, fontSize: 13, color: "#1f2631" },
+  contactCardEmail: { ...Typography.body, fontSize: 11, color: "#5f697a" },
+  contactCardPhone: { ...Typography.body, fontSize: 11, color: "#6d7685" },
+  contactCardAction: {
+    alignSelf: "flex-start",
+    backgroundColor: "#0058bc",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  contactCardActionText: { ...Typography.label, fontSize: 12, color: "#fff" },
 
   replyComposer: {
     flexDirection: "row",
@@ -2207,6 +2407,44 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 18,
     padding: 12,
     paddingBottom: 20,
+  },
+  contactPickerTitle: {
+    ...Typography.heading,
+    fontSize: 16,
+    color: "#1f2631",
+    marginBottom: 10,
+  },
+  contactPickerList: {
+    maxHeight: 360,
+  },
+  contactPickerItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eef2f7",
+    paddingVertical: 10,
+  },
+  contactPickerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#e8edf5",
+  },
+  contactPickerName: {
+    ...Typography.heading,
+    fontSize: 14,
+    color: "#1f2631",
+  },
+  contactPickerEmail: {
+    ...Typography.body,
+    fontSize: 11,
+    color: "#6d7685",
+  },
+  contactPickerSend: {
+    ...Typography.label,
+    fontSize: 12,
+    color: "#0058bc",
   },
   reactionRow: {
     flexDirection: "row",
