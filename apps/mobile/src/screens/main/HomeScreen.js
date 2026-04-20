@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useCallback, useRef, useState } from "react";
+import { v4 as uuidv4 } from 'uuid';
 import {
   View,
   Text,
@@ -13,6 +14,7 @@ import {
   Pressable,
   ActivityIndicator,
   KeyboardAvoidingView,
+  PermissionsAndroid,
 } from "react-native";
 import {
   SafeAreaView,
@@ -28,6 +30,7 @@ import { useAuth } from '../../context/AuthContext';
 import { apiRequest, API_URL } from '../../utils/api';
 import SocketService from '../../utils/socket';
 import { useChatStore } from '../../store/chatStore';
+import { useCallStore } from "../../store/callStore";
 import ContactsScreen from './ContactsScreen';
 import MessageBubble from '../../components/chat/MessageBubble';
 import ChatInput from '../../components/chat/ChatInput';
@@ -220,6 +223,8 @@ export default function HomeScreen({
     setConversations,
   } = useChatStore();
 
+  const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
+
   const [activeTab, setActiveTab] = useState(initialTab || "messages");
   const [inputText, setInputText] = useState("");
   const [attachments, setAttachments] = useState([]);
@@ -247,7 +252,26 @@ export default function HomeScreen({
 
   const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
-  const safeConversations = Array.isArray(conversations) ? conversations : [];
+  
+  const normalizeConversation = useCallback((conv) => {
+    if (conv?.type !== "direct") return conv;
+    const partner =
+      conv.partner ||
+      (Array.isArray(conv.members)
+        ? conv.members.find((member) => member !== user?.email)
+        : undefined);
+
+    return {
+      ...conv,
+      partner,
+    };
+  }, [user?.email]);
+
+  const safeConversations = useMemo(() => {
+    const raw = Array.isArray(conversations) ? conversations : [];
+    return raw.map(normalizeConversation);
+  }, [conversations, normalizeConversation]);
+
   const safeMessages = Array.isArray(messages)
     ? messages.filter((m) => m && typeof m === "object")
     : [];
@@ -323,22 +347,6 @@ export default function HomeScreen({
     if (!raw) return "Chưa có tin nhắn";
     if (raw.startsWith("MSG#")) return "Đang tải nội dung...";
     return raw;
-  };
-
-  const normalizeConversation = (conv) => {
-    if (conv?.type !== "direct") return conv;
-    const partner =
-      conv.partner ||
-      (Array.isArray(conv.members)
-        ? conv.members.find((member) => member !== user?.email)
-        : undefined);
-
-    return {
-      ...conv,
-      partner,
-      name: conv.name || getDisplayName(partner),
-      avatar: conv.avatar || getDisplayAvatar(partner),
-    };
   };
 
   const upsertConversationLastMessage = (convId, content, senderId, isNewMessage = false, msgId = null) => {
@@ -716,10 +724,10 @@ export default function HomeScreen({
   };
 
   const handleForwardSelect = async (targetConvId) => {
-    if (!forwardTargetMessage || !targetConvId) return;
+    if (!messageToForward || !targetConvId) return;
 
     setIsForwardModalOpen(false);
-    const msg = forwardTargetMessage;
+    const msg = messageToForward;
 
     try {
       // Logic similar to Web: Send a new message to the target conversation
@@ -740,12 +748,12 @@ export default function HomeScreen({
       console.error("Forward failed", err);
       Alert.alert("Lỗi", "Không thể chuyển tiếp tin nhắn.");
     } finally {
-      setForwardTargetMessage(null);
+      setMessageToForward(null);
     }
   };
 
   const startForward = (message) => {
-    setForwardTargetMessage(message);
+    setMessageToForward(message);
     setIsForwardModalOpen(true);
     closeMessageAction();
   };
@@ -901,6 +909,87 @@ export default function HomeScreen({
       Alert.alert("Lỗi", "Không gửi được tin nhắn. Vui lòng thử lại.");
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleStartCall = async (type) => {
+    if (!selectedChat || selectedChat.type !== 'direct') {
+      Alert.alert('Thất bại', 'Hiện tại chỉ hỗ trợ gọi 1:1');
+      return;
+    }
+    if (!selectedChat.id) {
+      Alert.alert('Thất bại', 'Không tìm thấy cuộc trò chuyện để gọi.');
+      return;
+    }
+
+    if (Platform.OS === 'android') {
+      try {
+        const audioGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (audioGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Chưa cấp quyền', 'Vui lòng cấp quyền Microphone để thực hiện cuộc gọi.');
+          return;
+        }
+        if (type === 'video') {
+          const cameraGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+          if (cameraGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+            Alert.alert('Chưa cấp quyền', 'Vui lòng cấp quyền Camera để thực hiện cuộc gọi Video.');
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Lỗi xin quyền:', err);
+        return;
+      }
+    }
+
+    const partnerEmail = selectedChat.partner;
+    const partnerProfile = userProfiles[partnerEmail] || { 
+      email: partnerEmail,
+      fullName: getDisplayName(partnerEmail)
+    };
+
+    const activeCallId = uuidv4(); // [SENIOR] Generate unique Call ID
+
+    // 1. Khởi tạo UI state
+    startOutgoingCall(partnerProfile, type, selectedChat.id, activeCallId);
+
+    try {
+      // 2. Tạo meeting qua API (Keep it for backward compatibility or Chime fallback)
+      const res = await apiRequest('/call/create', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          conversationId: selectedChat.id, 
+          callId: activeCallId,
+          type 
+        })
+      });
+
+      if (res.ok) {
+        // 3. Lưu thông tin meeting
+        setMeetingInfo(res.meeting, res.attendee);
+        
+        // 4. Gửi tín hiệu mời gọi qua Socket
+        SocketService.socket.emit('call:invite', {
+          convId: selectedChat.id,
+          callId: activeCallId, // [SENIOR]
+          fromEmail: user.email,
+          toEmail: partnerEmail,
+          callerProfile: {
+            email: user.email,
+            fullName: user.fullName || user.fullname || user.email,
+            avatarUrl: user.avatarUrl || user.avatar
+          },
+          callType: type
+        });
+      } else {
+        console.error('[CALL] Init failed:', res.message);
+        resetCall();
+        Alert.alert('Lỗi', res.message || 'Không thể khởi tạo cuộc gọi');
+      }
+    } catch (err) {
+      console.error('[CALL] UI Error:', err);
+      resetCall();
+      Alert.alert('Lỗi kết nối', 'Vui lòng kiểm tra lại mạng');
     }
   };
 
@@ -1152,10 +1241,16 @@ export default function HomeScreen({
             </View>
 
             <View style={styles.chatHeaderIcons}>
-              <TouchableOpacity style={styles.chatHeaderIconButton}>
+              <TouchableOpacity 
+                style={styles.chatHeaderIconButton}
+                onPress={() => handleStartCall('audio')}
+              >
                 <Text style={styles.chatHeaderIcon}>call</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.chatHeaderIconButton}>
+              <TouchableOpacity 
+                style={styles.chatHeaderIconButton}
+                onPress={() => handleStartCall('video')}
+              >
                 <Text style={styles.chatHeaderIcon}>videocam</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.chatHeaderIconButton}>

@@ -1,396 +1,322 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   PhoneOff, Mic, MicOff, Camera, CameraOff,
-  Video, VideoOff, Loader2, CheckCircle, XCircle,
+  Loader2, User,
+  Clock, Calendar
 } from 'lucide-react';
 import { useCallStore } from '../../store/callStore';
 import { useAuth } from '../../context/AuthContext';
 import {
   setGlobalVideoRefs,
-  toggleCamera,
-  toggleMic,
+  toggleCamera as toggleCameraChime,
+  toggleMic as toggleMicChime,
   leaveCurrentSession,
-  rebindAllTilesGlobal,
 } from '../../hooks/useChime';
 import api from '../../services/api';
 
 const CallOverlay: React.FC = () => {
-  // ── ALL HOOKS MUST BE AT THE TOP ────────────────────────────────────────────
   const {
-    callState, conversationId, callType, peerProfile, isIncoming, setCallType,
+    callState, conversationId, callType, peerProfile, isIncoming,
     peerJoined, isCameraOn, setCameraOn, isMicOn, setMicOn, toEmail,
-    upgradeRequestPending, setUpgradeRequestPending,
-    incomingUpgradeRequest, setIncomingUpgradeRequest,
-    upgradeRequesterEmail, setUpgradeRequesterEmail,
-    resetCall,
+    activeCallId, startTime, isRemoteCameraOn, remoteTiles
   } = useCallStore();
 
-  const { socket, user } = useAuth();
+  const { socket } = useAuth();
 
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  // [SENIOR] Synchronous LOCAL Video Binding via Ref Callback
+  const localVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    if (node) {
+      console.log('[Web-Chime] 🎬 Local <video> element mounted in DOM!');
+      setGlobalVideoRefs(node, undefined);
+    } else {
+      setGlobalVideoRefs(null, undefined);
+    }
+  }, []);
 
-  const [declineToast, setDeclineToast] = useState(false);
-  const [upgradeTimeout, setUpgradeTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
+  // [SENIOR] Resilient REMOTE Video Binding via Ref Callback
+  const remoteVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    if (node) {
+      console.log('[Web-Chime] 🎬 Remote <video> element mounted in DOM!');
+      setGlobalVideoRefs(undefined, node);
+    } else {
+      setGlobalVideoRefs(undefined, null);
+    }
+  }, []);
 
-  // Retry tile binding sau khi CONNECTED (tiles appear async)
+  const [duration, setDuration] = useState(0);
+  const [lastDuration, setLastDuration] = useState<number | null>(null);
+
+  // Timer Logic
   useEffect(() => {
-    if (callState === 'CONNECTED' && callType === 'video') {
-      const t = setTimeout(() => rebindAllTilesGlobal(), 400);
-      return () => clearTimeout(t);
+    let interval: any;
+    if (callState === 'CONNECTED' && startTime) {
+      interval = setInterval(() => {
+        setDuration(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
+    } else if (callState === 'ENDED') {
+      if (duration > 0) setLastDuration(duration);
+    } else {
+      setDuration(0);
     }
-  }, [callState, callType]);
+    return () => clearInterval(interval);
+  }, [callState, startTime, duration]);
 
-  // Auto-dismiss incoming upgrade toast sau 30s
-  useEffect(() => {
-    if (incomingUpgradeRequest) {
-      const t = setTimeout(() => setIncomingUpgradeRequest(false), 30000);
-      setUpgradeTimeout(t);
-      return () => clearTimeout(t);
-    }
-  }, [incomingUpgradeRequest, setIncomingUpgradeRequest]);
-
-  // Auto-hide decline toast sau 3s
-  useEffect(() => {
-    if (declineToast) {
-      const t = setTimeout(() => setDeclineToast(false), 3000);
-      return () => clearTimeout(t);
-    }
-  }, [declineToast]);
-
-  // ── Early return AFTER all hooks ─────────────────────────────────────────────
-  if (callState !== 'CONNECTED' && callState !== 'JOINING') return null;
-
-  // ── Derived values ────────────────────────────────────────────────────────────
-  const statusText =
-    callState === 'JOINING' ? 'Đang kết nối...'
-    : !isIncoming && !peerJoined ? 'Đang chờ đối phương...'
-    : 'Đang trò chuyện';
-
-  const peer = peerProfile || { fullName: toEmail || 'Người dùng ZaloEdu', email: toEmail, avatar: null };
-
-  // ── Event handlers ─────────────────────────────────────────────────────────
-  const handleHangup = async () => {
-    // Thông báo đối phương
-    if (socket && conversationId && toEmail) {
-      socket.emit('call:hangup', { convId: conversationId, toEmail });
-    }
-    // Cleanup Chime meeting trên server
-    try {
-      await api.post('/call/hangup', { conversationId });
-    } catch (e) { /* ignore */ }
-    // Cleanup Chime session
-    await leaveCurrentSession();
-    resetCall();
+  const formatTime = (s: number) => {
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const handleHangup = async () => {
+    if (socket && conversationId && toEmail && activeCallId) {
+      socket.emit('call:hangup', { convId: conversationId, callId: activeCallId, toEmail });
+    }
+    try {
+      await api.post('/call/hangup', { conversationId, callId: activeCallId });
+    } catch (e) { /* ignore */ }
+    await leaveCurrentSession();
+    
+    // Switch to ENDED state for 4 seconds
+    useCallStore.getState().hangupCall();
+  };
+
+  // 1. Logic Status thông minh hơn (Không phụ thuộc vào peerJoined nữa)
+  const statusText = (() => {
+    if (callState === 'JOINING') return 'Đang kết nối...';
+    if (callState === 'RINGING') return 'Đang đổ chuông...';
+    if (callState === 'ENDED') return 'Cuộc gọi đã kết thúc';
+    if (callState === 'CONNECTED') return formatTime(duration);
+    return 'Đang chờ đối phương...';
+  })();
+
+  // 2. Fallback Thông tin đối phương "bao sống"
+  const getFallbackName = () => {
+    if (toEmail) return toEmail.split('@')[0]; // Lấy phần đầu của email làm tên
+    return 'Người dùng ZaloEdu';
+  };
+
+  const peer = {
+    fullName: peerProfile?.fullName || getFallbackName(),
+    avatar: peerProfile?.avatar || null,
+  };
+
+  // PREMIUM ENDED SCREEN
+  const renderEnded = () => (
+    <div className="fixed inset-0 z-[120] bg-[#0a0a0a]/90 backdrop-blur-3xl flex flex-col items-center justify-center text-white animate-in fade-in zoom-in duration-500 px-6">
+      {/* Background Profile Blur */}
+      <div className="absolute inset-0 -z-10 overflow-hidden opacity-20">
+         <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[#0a0a0a]" />
+         {peer.avatar ? (
+           <img src={peer.avatar} className="w-full h-full object-cover blur-[100px] scale-150" alt="" />
+         ) : (
+           <div className="w-full h-full bg-blue-900/30 blur-[100px] scale-150" />
+         )}
+      </div>
+
+      <div className="relative mb-10">
+        <div className="absolute inset-0 bg-red-500/20 rounded-full animate-ping blur-2xl" />
+        <div className="w-28 h-28 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/30 relative z-10">
+          <PhoneOff size={44} className="text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]" />
+        </div>
+      </div>
+
+      <h2 className="text-4xl font-black mb-3 tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">Cuộc gọi đã kết thúc</h2>
+      <p className="text-white/40 font-bold uppercase tracking-[0.25em] text-[10px] mb-12">ZaloEdu Live • Professional Experience</p>
+      
+      <div className="bg-white/5 border border-white/10 rounded-[32px] p-8 flex flex-col gap-6 w-full max-w-sm backdrop-blur-md shadow-2xl">
+        <div className="flex items-center justify-between px-2">
+          <div className="flex items-center gap-4">
+             <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center border border-blue-500/20">
+                <Clock size={20} className="text-blue-400" />
+             </div>
+             <span className="text-white/60 text-sm font-semibold">Thời gian gọi</span>
+          </div>
+          <span className="text-white font-mono text-2xl font-black">{formatTime(lastDuration || duration)}</span>
+        </div>
+        
+        <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+        
+        <div className="flex items-center justify-between px-2">
+          <div className="flex items-center gap-4">
+             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center border border-emerald-500/20">
+                <Calendar size={20} className="text-emerald-400" />
+             </div>
+             <span className="text-white/60 text-sm font-semibold">Ngày thực hiện</span>
+          </div>
+          <span className="text-white font-bold text-sm tracking-wide">{new Date().toLocaleDateString('vi-VN')}</span>
+        </div>
+      </div>
+      
+      <div className="mt-16 flex items-center gap-3 py-3 px-6 rounded-full bg-white/5 border border-white/5">
+         <Loader2 size={16} className="animate-spin text-white/30" />
+         <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20">Đang quay lại màn hình chat</span>
+      </div>
+    </div>
+  );
+
+  if (callState === 'ENDED') return renderEnded();
+  if (callState !== 'CONNECTED' && callState !== 'JOINING') return null;
 
   const handleToggleCamera = async () => {
     const next = !isCameraOn;
     setCameraOn(next);
-    await toggleCamera(next);
+    await toggleCameraChime(next);
   };
 
   const handleToggleMic = async () => {
     const next = !isMicOn;
     setMicOn(next);
-    await toggleMic(next);
+    await toggleMicChime(next);
   };
 
-  const handleRequestUpgrade = () => {
-    if (!socket || !conversationId || !toEmail) return;
-    socket.emit('call:upgrade_request', {
-      convId: conversationId,
-      toEmail,
-      fromProfile: {
-        email: user?.email,
-        fullName: user?.fullName,
-        avatar: user?.avatar,
-      },
-    });
-    setUpgradeRequestPending(true);
-  };
-
-  const handleAcceptUpgrade = async () => {
-    if (upgradeTimeout) clearTimeout(upgradeTimeout);
-    setIncomingUpgradeRequest(false);
-
-    const requesterEmail = upgradeRequesterEmail;
-    if (!requesterEmail) {
-      console.error('[Overlay] Cannot accept upgrade: requester email unknown');
-      return;
-    }
-
-    socket?.emit('call:upgrade_accepted', { convId: conversationId, toEmail: requesterEmail });
-    setUpgradeRequesterEmail(null);
-
-    // Bật camera phía mình
-    setCallType('video');
-    setCameraOn(true);
-    await toggleCamera(true);
-  };
-
-  const handleDeclineUpgrade = () => {
-    if (upgradeTimeout) clearTimeout(upgradeTimeout);
-    setIncomingUpgradeRequest(false);
-
-    const requesterEmail = upgradeRequesterEmail;
-    if (requesterEmail) {
-      socket?.emit('call:upgrade_declined', { convId: conversationId, toEmail: requesterEmail });
-    }
-    setUpgradeRequesterEmail(null);
-    setDeclineToast(false);
-  };
-
-  // ── Audio Layout ─────────────────────────────────────────────────────────────
   const renderAudioLayout = () => (
-    <div className="flex-grow flex flex-col items-center justify-center relative overflow-hidden">
-      <div className="absolute inset-0 bg-[#0a0a0a]" />
-      <div className="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none">
-        <div className="flex gap-1 items-center h-48">
-          {[...Array(24)].map((_, i) => (
-            <div key={i} className="w-1.5 bg-blue-400 rounded-full animate-pulse"
-              style={{ height: `${20 + Math.sin(i * 0.5) * 60}%`, animationDelay: `${i * 0.08}s` }} />
-          ))}
-        </div>
-      </div>
-      <div className="relative z-10 flex flex-col items-center gap-6">
-        <div className="relative">
-          <div className="absolute inset-0 rounded-full bg-blue-500/15 animate-ping" style={{ animationDuration: '3s' }} />
-          <div className="w-40 h-40 rounded-[52px] border-4 border-white/10 overflow-hidden bg-[#1c1c1e]">
-            <img
-              src={peer?.avatarUrl || peer?.avatar || `https://i.pravatar.cc/160?u=${peer?.email}`}
-              className="w-full h-full object-cover" alt="partner avatar"
-            />
+    <div className="flex-grow flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-b from-[#0a0a0a] to-[#111118]">
+      {/* Background Blur Effect dựa trên Avatar */}
+      {peer.avatar && (
+         <div className="absolute inset-0 opacity-20 pointer-events-none">
+            <img src={peer.avatar} className="w-full h-full object-cover blur-[120px] scale-150" alt="bg" />
+         </div>
+      )}
+
+      <div className="flex flex-col items-center gap-8 relative z-10 animate-in slide-in-from-bottom-10 fade-in duration-700">
+        <div className="relative group">
+          {/* Vòng Ripple hiệu ứng âm thanh (chỉ hiện khi đang CONNECTED) */}
+          {callState === 'CONNECTED' && (
+            <>
+              <div className="absolute inset-0 bg-blue-500/20 rounded-full animate-ping opacity-50" />
+              <div className="absolute inset-0 bg-blue-500/10 rounded-full animate-pulse scale-125 duration-1000" />
+            </>
+          )}
+          
+          <div className="w-48 h-48 rounded-full border-[6px] border-white/5 overflow-hidden relative z-10 shadow-[0_0_80px_rgba(59,130,246,0.15)] bg-[#1c1c2e]">
+            {peer.avatar ? (
+              <img src={peer.avatar} alt={peer.fullName} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-br from-blue-900/40 to-[#0a0a0a] flex items-center justify-center">
+                <span className="text-6xl font-black text-white/30 uppercase">
+                  {peer.fullName.charAt(0)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
-        <div className="text-center">
-          <h1 className="text-3xl font-black text-white tracking-tight">
-            {peer?.fullName || peer?.fullname || peer?.email || 'Đối phương'}
-          </h1>
-          <div className="mt-3 flex items-center gap-2 px-4 py-1.5 bg-green-500/10 rounded-full border border-green-500/20">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-green-400">{statusText}</span>
+        
+        <div className="text-center flex flex-col items-center">
+          <h2 className="text-4xl font-black text-white mb-4 tracking-tight drop-shadow-lg capitalize">
+            {peer.fullName}
+          </h2>
+          <div className="flex items-center justify-center gap-3 bg-white/5 px-6 py-2 rounded-full border border-white/10 backdrop-blur-md">
+             <span className={`w-2 h-2 rounded-full ${callState === 'CONNECTED' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+             <p className={`font-bold uppercase tracking-[0.2em] text-[12px] ${callState === 'CONNECTED' ? 'text-green-400' : 'text-white/60'}`}>
+               {statusText}
+             </p>
           </div>
         </div>
       </div>
     </div>
   );
 
-  // ── Video Layout ─────────────────────────────────────────────────────────────
   const renderVideoLayout = () => (
-    <div className="flex-grow p-6 grid grid-cols-2 gap-4 items-center">
-      {/* Local */}
-      <div className="relative bg-black rounded-3xl overflow-hidden aspect-video border border-white/5 shadow-xl">
-        {isCameraOn ? (
-          <video
-            ref={(el) => {
-              localVideoRef.current = el;
-              setGlobalVideoRefs(el, undefined);
-              if (el) rebindAllTilesGlobal();
-            }}
-            autoPlay muted playsInline
-            className="w-full h-full object-cover scale-x-[-1]"
-          />
+    <div className="flex-grow relative bg-[#0a0a0a] overflow-hidden">
+      {/* [Web-Chime] Remote Video Stage */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        {isRemoteCameraOn ? (
+          <video ref={remoteVideoRef} className="w-full h-full object-cover animate-in fade-in duration-700" autoPlay playsInline />
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-[#1c1c1e] gap-3">
-            <CameraOff size={32} className="text-white/30" />
-            <span className="text-xs text-white/30 font-semibold">Camera tắt</span>
+          <div className="flex flex-col items-center gap-6 animate-in zoom-in duration-500">
+            <div className="w-28 h-28 rounded-full bg-white/5 animate-pulse flex items-center justify-center border border-white/10 shadow-inner relative">
+              <div className="absolute inset-0 bg-blue-500/10 rounded-full blur-xl" />
+              {peer.avatar ? (
+                <img src={peer.avatar} className="w-full h-full object-cover rounded-full opacity-40 grayscale" alt="" />
+              ) : (
+                <User size={48} className="text-white/10 relative z-10" />
+              )}
+            </div>
+            <div className="text-center">
+               <p className="text-white/20 font-black uppercase tracking-[0.2em] text-[10px] mb-2 flex items-center justify-center gap-2">
+                 <CameraOff size={12} /> Camera Đang Tắt
+               </p>
+               <p className="text-white/40 font-bold text-xs">Đang chờ tín hiệu video từ {peer.fullName}...</p>
+            </div>
           </div>
         )}
-        <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur px-3 py-1 rounded-xl text-[9px] font-black tracking-widest uppercase text-white/80">Tôi</div>
       </div>
 
-      {/* Remote */}
-      <div className="relative bg-black rounded-3xl overflow-hidden aspect-video border border-white/5 shadow-xl">
-        <video
-          ref={(el) => {
-            remoteVideoRef.current = el;
-            setGlobalVideoRefs(undefined, el);
-            if (el) rebindAllTilesGlobal();
-          }}
-          autoPlay playsInline
-          className="w-full h-full object-cover"
-        />
-        <div className="absolute bottom-3 left-3 bg-blue-600/80 backdrop-blur px-3 py-1 rounded-xl text-[9px] font-black tracking-widest uppercase text-white/80">Đối phương</div>
+      {/* Local Mini Pip */}
+      <div className="absolute top-8 right-8 w-64 aspect-video rounded-3xl bg-[#1c1c2e]/60 backdrop-blur-2xl overflow-hidden border border-white/10 shadow-2xl z-20 group transition-all hover:scale-105 hover:shadow-blue-500/10">
+        {isCameraOn ? (
+          <video ref={localVideoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-[#1c1c2e]/80">
+            <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
+               <User size={24} className="text-white/20" />
+            </div>
+            <p className="text-[9px] font-black text-white/30 uppercase tracking-[0.2em]">Camera Của Bạn Đang Tắt</p>
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-5">
+          <p className="text-[10px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Bạn
+          </p>
+        </div>
+      </div>
+      
+      <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/90 to-transparent pointer-events-none" />
+      
+      <div className="absolute left-10 bottom-10 z-10">
+         <p className="text-white font-black text-3xl mb-2 tracking-tight">{peer.fullName}</p>
+         <div className="flex items-center gap-3">
+            <div className={`w-2 h-2 rounded-full ${peerJoined ? "bg-green-500" : "bg-yellow-500"} shadow-[0_0_8px_rgba(34,197,94,0.5)]`} />
+            <p className="text-white/50 text-[11px] font-black uppercase tracking-[0.2em]">{statusText}</p>
+         </div>
       </div>
     </div>
   );
 
-  // ── Upgrade Request Toast (hiển thị cho B) ────────────────────────────────────
-  const renderUpgradeToast = () => {
-    if (!incomingUpgradeRequest) return null;
-    return (
-      <div className="absolute bottom-36 left-1/2 -translate-x-1/2 z-50">
-        <div className="bg-[#1c1c2e] border border-blue-500/30 rounded-2xl px-6 py-4 shadow-2xl flex flex-col gap-3 min-w-[320px]">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center">
-              <Video size={18} className="text-blue-400" />
-            </div>
-            <div>
-              <p className="text-white font-bold text-sm">Yêu cầu Video Call</p>
-              <p className="text-white/50 text-xs">Đối phương muốn chuyển sang gọi video</p>
-            </div>
-          </div>
-          <div className="flex gap-3">
-            <button onClick={handleDeclineUpgrade}
-              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-white/60 hover:text-red-400 text-xs font-bold transition-all">
-              <XCircle size={14} /> Từ chối
-            </button>
-            <button onClick={handleAcceptUpgrade}
-              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-lg shadow-blue-500/30">
-              <CheckCircle size={14} /> Đồng ý
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ── Status & Connection Overlays ───────────────────────────────────────────
-  const renderStatusOverlay = () => {
-    const { isConnecting, connectionError } = useCallStore.getState();
-    if (!isConnecting && !connectionError) return null;
-
-    return (
-      <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-2">
-        {isConnecting && (
-          <div className="bg-blue-600/90 backdrop-blur px-4 py-2 rounded-full flex items-center gap-2 border border-blue-400/30 animate-pulse">
-            <Loader2 size={16} className="animate-spin" />
-            <span className="text-[11px] font-bold uppercase tracking-widest">Đang thiết lập kết nối...</span>
-          </div>
-        )}
-        {connectionError && (
-          <div className="bg-red-600/90 backdrop-blur px-4 py-2 rounded-full flex items-center gap-2 border border-red-400/30">
-            <XCircle size={16} />
-            <span className="text-[11px] font-bold uppercase tracking-widest">{connectionError}</span>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderDebugInfo = () => {
-    // Chỉ bật debug nếu nhấn phím 'D' (giữ cho giao diện sạch cho user thông thường)
-    if (localStorage.getItem('CALL_DEBUG') !== 'true') return null;
-    
-    const { meetingData, attendeeData } = useCallStore.getState();
-    return (
-      <div className="absolute top-4 left-4 z-[100] bg-black/80 p-3 rounded-lg text-[10px] font-mono text-green-500 border border-green-500/30 pointer-events-none">
-        <p>MId: {meetingData?.MeetingId?.substring(0, 8)}...</p>
-        <p>AId: {attendeeData?.AttendeeId?.substring(0, 8)}...</p>
-        <p>Join: {peerJoined ? 'YES' : 'NO'}</p>
-        <p>Cam: {isCameraOn ? 'ON' : 'OFF'}</p>
-      </div>
-    );
-  };
-
-  // ── Decline Feedback Toast (hiển thị cho A) ───────────────────────────────────
-  const renderDeclineToast = () => {
-    if (!declineToast) return null;
-    return (
-      <div className="absolute bottom-36 left-1/2 -translate-x-1/2 z-50">
-        <div className="bg-[#1c1c2e] border border-red-500/30 rounded-2xl px-5 py-3 shadow-xl flex items-center gap-3">
-          <XCircle size={18} className="text-red-400 shrink-0" />
-          <span className="text-white/80 text-sm font-semibold">Đối phương từ chối chuyển sang Video</span>
-        </div>
-      </div>
-    );
-  };
-
-  // ── Main Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 z-[110] bg-[#0a0a0a] text-white flex flex-col">
-      {/* Header */}
-      <div className="h-20 flex items-center justify-between px-8 border-b border-white/5 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10">
-            {callType === 'video'
-              ? <Video size={20} className="text-blue-400" />
-              : <Mic size={20} className="text-green-400" />}
+    <div className="fixed inset-0 z-[110] bg-[#0a0a0a] text-white flex flex-col font-sans">
+      {/* Top Header Overlay */}
+      <div className="h-24 flex items-center justify-between px-10 border-b border-white/5 shrink-0 bg-black/20 backdrop-blur-md z-20">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10 shadow-lg">
+             <Loader2 size={24} className="text-blue-400 animate-spin-slow" />
           </div>
           <div>
-            <p className="font-black text-white text-sm leading-tight">ZaloEdu Live</p>
-            <p className="text-[9px] font-bold uppercase tracking-widest text-white/30">
-              {callType === 'video' ? 'Video Call' : 'Voice Call'}
-            </p>
+            <p className="font-black text-white text-lg leading-tight tracking-tight">ZaloEdu Live <span className="text-blue-500 ml-1">Pro</span></p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/20">{callType === 'video' ? 'Kênh Video Bảo Mật' : 'Kênh Thoại Bảo Mật'}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-white/40">
-          <div className={`w-1.5 h-1.5 rounded-full ${
-            peerJoined || isIncoming ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)]' : 'bg-yellow-500'
-          }`} />
-          {statusText}
+        <div className="bg-white/5 rounded-full px-5 py-2 border border-white/10">
+           <div className="flex items-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] text-white/50">
+             <div className={`w-2 h-2 rounded-full ${peerJoined ? 'bg-green-500' : 'bg-yellow-400'}`} />
+             {statusText}
+           </div>
         </div>
       </div>
 
-      {/* Content */}
       <div className="relative flex-grow overflow-hidden flex flex-col">
-        {renderDebugInfo()}
-        {renderStatusOverlay()}
         {callType === 'video' ? renderVideoLayout() : renderAudioLayout()}
-        {renderUpgradeToast()}
-        {renderDeclineToast()}
       </div>
 
-      {/* Controls */}
-      <div className="h-28 flex items-center justify-center pb-8 shrink-0">
-        <div className="bg-white/5 backdrop-blur-2xl border border-white/10 px-6 py-3 rounded-[36px] flex items-center gap-3">
-          {/* Mic */}
-          <button
-            onClick={handleToggleMic}
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-              isMicOn
-                ? 'bg-white/5 text-white hover:bg-white/10'
-                : 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
-            }`}
-            title={isMicOn ? 'Tắt Mic' : 'Bật Mic'}
-          >
-            {isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
+      {/* Control Bar Overlay */}
+      <div className="h-32 flex items-center justify-center pb-10 shrink-0 z-20">
+        <div className="bg-white/5 backdrop-blur-3xl border border-white/10 px-8 py-4 rounded-[40px] flex items-center gap-5 shadow-2xl">
+          <button onClick={handleToggleMic} className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${isMicOn ? 'bg-white/5 text-white' : 'bg-red-500/20 text-red-500 border border-red-500/20'}`}>
+            {isMicOn ? <Mic size={24} /> : <MicOff size={24} />}
           </button>
-
-          {/* Camera Toggle — chỉ hiện khi video call */}
-          {callType === 'video' && (
-            <button
-              onClick={handleToggleCamera}
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-                isCameraOn
-                  ? 'bg-blue-600 text-white hover:bg-blue-500'
-                  : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white'
-              }`}
-              title={isCameraOn ? 'Tắt camera' : 'Bật camera'}
-            >
-              {isCameraOn ? <Camera size={20} /> : <CameraOff size={20} />}
-            </button>
-          )}
-
-          {/* Upgrade to Video — chỉ hiện khi audio call */}
-          {callType === 'audio' && (
-            <button
-              onClick={handleRequestUpgrade}
-              disabled={upgradeRequestPending}
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-                upgradeRequestPending
-                  ? 'bg-blue-600/40 text-blue-300 cursor-not-allowed'
-                  : 'bg-white/5 text-white/40 hover:bg-blue-500/20 hover:text-blue-400'
-              }`}
-              title={upgradeRequestPending ? 'Đang chờ đối phương...' : 'Yêu cầu Video Call'}
-            >
-              {upgradeRequestPending ? <Loader2 size={20} className="animate-spin" /> : <VideoOff size={20} />}
-            </button>
-          )}
-
-          <div className="w-px h-6 bg-white/10 mx-1" />
-
-          {/* Hang up */}
-          <button
-            onClick={handleHangup}
-            className="w-14 h-14 rounded-2xl bg-red-500 hover:bg-red-600 flex items-center justify-center transition-all shadow-lg shadow-red-500/30"
-            title="Kết thúc"
-          >
-            <PhoneOff size={24} />
+          
+          <button onClick={handleToggleCamera} className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${isCameraOn ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]' : 'bg-white/5 text-white/30 border border-white/5'}`}>
+            <Camera size={24} />
+          </button>
+          
+          <div className="w-px h-8 bg-white/10 mx-2" />
+          
+          <button onClick={handleHangup} className="w-16 h-16 rounded-2xl bg-red-500 hover:bg-red-600 flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 shadow-[0_0_30px_rgba(239,68,68,0.3)]">
+            <PhoneOff size={28} className="text-white" />
           </button>
         </div>
       </div>
+      {/* Note: Audio tag is now globally managed in App.tsx */}
     </div>
   );
 };

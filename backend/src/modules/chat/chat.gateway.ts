@@ -14,6 +14,8 @@ import { UseGuards, Logger, Inject, forwardRef } from "@nestjs/common";
 import { WsJwtGuard } from "./ws-jwt.guard";
 import { RedisService } from "../../infrastructure/redis.service";
 
+export const userPlatformMap = new Map<string, string>();
+
 @WebSocketGateway({
   cors: { origin: "*" },
 })
@@ -45,6 +47,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       await this.redisService.del(presenceKey);
       this.server.emit('presence_update', { email, status: 'offline' });
       this.logger.log(`User ${email} went offline (Presence DEL)`);
+      userPlatformMap.delete(email);
     }
     this.logger.log(`Client disconnected: ${client.id}`);
   }
@@ -73,7 +76,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @UseGuards(WsJwtGuard)
   @SubscribeMessage("join_identity")
   async handleJoinIdentity(
-    @MessageBody() data: { email: string; deviceId: string },
+    @MessageBody() data: { email: string; deviceId: string; platform?: string },
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
     const user = client['user']; // Payload from WsJwtGuard
@@ -96,8 +99,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       await this.redisService.set(presenceKey, 'online', 3600); // 1 hour TTL
       this.server.emit('presence_update', { email: normalizedEmail, status: 'online' });
 
-      this.logger.log(`User ${normalizedEmail} identified and is online (Presence SET)`);
+      userPlatformMap.set(normalizedEmail, data.platform || 'web');
+
+      this.logger.log(`User ${normalizedEmail} identified and is online [Platform: ${data.platform || 'web'}]`);
     }
+  }
+
+  @SubscribeMessage("get_platform")
+  handleGetPlatform(
+    @MessageBody() data: { email: string },
+    @ConnectedSocket() client: Socket,
+  ): { platform: string } {
+    if (!data?.email) return { platform: 'web' };
+    return { platform: userPlatformMap.get(data.email.toLowerCase()) || 'web' };
   }
 
   @UseGuards(WsJwtGuard)
@@ -147,156 +161,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // Tell the room that this user has read the chat
     this.server.to(convId).emit("participant_read", { convId, email, timestamp: Date.now() });
     this.logger.log(`Notified user ${email} that conversation ${convId} was read`);
-  }
-
-  @UseGuards(WsJwtGuard)
-  @SubscribeMessage("call:invite")
-  handleCallInvite(
-    @MessageBody()
-    data: {
-      convId: string;
-      fromEmail: string;
-      toEmail?: string;
-      callType?: "video" | "audio";
-    },
-    @ConnectedSocket() client: Socket,
-  ): void {
-    if (!data?.convId || !data?.fromEmail) return;
-
-    const payload = {
-      convId: data.convId,
-      fromEmail: data.fromEmail,
-      toEmail: data.toEmail,
-      callType: data.callType || "video",
-      ts: Date.now(),
-    };
-
-    if (data.toEmail) {
-      this.server.to(`user#${data.toEmail}`).emit("call:incoming", payload);
-      return;
-    }
-
-    client.to(data.convId).emit("call:incoming", payload);
-  }
-
-  @UseGuards(WsJwtGuard)
-  @SubscribeMessage("call:offer")
-  handleCallOffer(
-    @MessageBody()
-    data: {
-      convId: string;
-      fromEmail: string;
-      toEmail?: string;
-      offer: any;
-    },
-    @ConnectedSocket() client: Socket,
-  ): void {
-    if (!data?.convId || !data?.fromEmail || !data?.offer) return;
-
-    const payload = {
-      convId: data.convId,
-      fromEmail: data.fromEmail,
-      toEmail: data.toEmail,
-      offer: data.offer,
-      ts: Date.now(),
-    };
-
-    if (data.toEmail) {
-      this.server.to(`user#${data.toEmail}`).emit("call:offer", payload);
-      return;
-    }
-
-    client.to(data.convId).emit("call:offer", payload);
-  }
-
-  @UseGuards(WsJwtGuard)
-  @SubscribeMessage("call:answer")
-  handleCallAnswer(
-    @MessageBody()
-    data: {
-      convId: string;
-      fromEmail: string;
-      toEmail?: string;
-      answer: any;
-    },
-    @ConnectedSocket() client: Socket,
-  ): void {
-    if (!data?.convId || !data?.fromEmail || !data?.answer) return;
-
-    const payload = {
-      convId: data.convId,
-      fromEmail: data.fromEmail,
-      toEmail: data.toEmail,
-      answer: data.answer,
-      ts: Date.now(),
-    };
-
-    if (data.toEmail) {
-      this.server.to(`user#${data.toEmail}`).emit("call:answer", payload);
-      return;
-    }
-
-    client.to(data.convId).emit("call:answer", payload);
-  }
-
-  @UseGuards(WsJwtGuard)
-  @SubscribeMessage("call:ice")
-  handleCallIce(
-    @MessageBody()
-    data: {
-      convId: string;
-      fromEmail: string;
-      toEmail?: string;
-      candidate: any;
-    },
-    @ConnectedSocket() client: Socket,
-  ): void {
-    if (!data?.convId || !data?.fromEmail || !data?.candidate) return;
-
-    const payload = {
-      convId: data.convId,
-      fromEmail: data.fromEmail,
-      toEmail: data.toEmail,
-      candidate: data.candidate,
-      ts: Date.now(),
-    };
-
-    if (data.toEmail) {
-      this.server.to(`user#${data.toEmail}`).emit("call:ice", payload);
-      return;
-    }
-
-    client.to(data.convId).emit("call:ice", payload);
-  }
-
-  @UseGuards(WsJwtGuard)
-  @SubscribeMessage("call:end")
-  handleCallEnd(
-    @MessageBody()
-    data: {
-      convId: string;
-      fromEmail: string;
-      toEmail?: string;
-      reason?: string;
-    },
-    @ConnectedSocket() client: Socket,
-  ): void {
-    if (!data?.convId || !data?.fromEmail) return;
-
-    const payload = {
-      convId: data.convId,
-      fromEmail: data.fromEmail,
-      toEmail: data.toEmail,
-      reason: data.reason || "ended",
-      ts: Date.now(),
-    };
-
-    if (data.toEmail) {
-      this.server.to(`user#${data.toEmail}`).emit("call:end", payload);
-      return;
-    }
-
-    client.to(data.convId).emit("call:end", payload);
   }
 
   // Gửi thông báo đăng xuất tới thiết bị đích (Đã gia cố để đảm bảo nhận được ở mọi màn hình)

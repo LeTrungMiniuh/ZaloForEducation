@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import {
   DefaultDeviceController,
   DefaultMeetingSession,
@@ -8,12 +8,23 @@ import {
 } from 'amazon-chime-sdk-js';
 import { useCallStore } from '../store/callStore';
 
-// Module-level singletons: survive React re-renders và component unmounts
+// Module-level singletons: survive React re-renders and component unmounts
 let globalSession: DefaultMeetingSession | null = null;
 let globalTiles: { local?: number; remote?: number } = {};
 let globalVideoStarted = false;
 let globalLocalVideo: HTMLVideoElement | null = null;
 let globalRemoteVideo: HTMLVideoElement | null = null;
+
+const isValidTileId = (tileId: unknown): tileId is number =>
+  typeof tileId === 'number' && Number.isFinite(tileId);
+
+/**
+ * [Web-Chime] Normalize Chime attendee IDs (strips modality suffix like #1, #2)
+ */
+const normalizeAttendeeId = (id?: string | null): string | null => {
+  if (!id) return null;
+  return id.split('#')[0];
+};
 
 /**
  * Cập nhật video element refs từ CallOverlay.
@@ -22,27 +33,35 @@ let globalRemoteVideo: HTMLVideoElement | null = null;
 export const setGlobalVideoRefs = (
   local: HTMLVideoElement | null | undefined,
   remote: HTMLVideoElement | null | undefined,
+  localTileId?: number,
+  remoteTileId?: number
 ) => {
   if (local !== undefined) {
     globalLocalVideo = local;
-    if (local && globalTiles.local !== undefined && globalSession) {
-      globalSession.audioVideo.bindVideoElement(globalTiles.local, local);
+    const tId = localTileId ?? globalTiles.local;
+    // CRITICAL: Bind IMMEDIATELY when the local DOM node arrives!
+    if (globalLocalVideo && tId !== undefined && globalSession) {
+      console.log(`[Web-Chime] 🔗 DOM Node Arrived! Binding LOCAL tile ${tId}`);
+      globalSession.audioVideo.bindVideoElement(tId, globalLocalVideo);
     }
   }
   if (remote !== undefined) {
     globalRemoteVideo = remote;
-    if (remote && globalTiles.remote !== undefined && globalSession) {
-      globalSession.audioVideo.bindVideoElement(globalTiles.remote, remote);
+    const tId = remoteTileId ?? globalTiles.remote;
+    // CRITICAL: Bind IMMEDIATELY when the remote DOM node arrives!
+    if (globalRemoteVideo && tId !== undefined && globalSession) {
+      console.log(`[Web-Chime] 🔗 DOM Node Arrived! Binding remote tile ${tId}`);
+      globalSession.audioVideo.bindVideoElement(tId, globalRemoteVideo);
     }
   }
 };
 
 /**
  * Dừng toàn bộ hardware và cleanup Chime session.
- * Có thể gọi từ bất kỳ đâu (socket hangup handler, v.v.).
  */
 export const leaveCurrentSession = async () => {
   if (globalSession) {
+    console.log('[Chime] Cleaning up global session...');
     try {
       if (globalVideoStarted) await globalSession.audioVideo.stopVideoInput();
       await globalSession.audioVideo.stopAudioInput();
@@ -52,32 +71,18 @@ export const leaveCurrentSession = async () => {
         (globalLocalVideo.srcObject as MediaStream).getTracks().forEach(t => t.stop());
         globalLocalVideo.srcObject = null;
       }
-    } catch (e) { /* ignore cleanup errors */ }
+    } catch (e) { console.warn('[Chime] Cleanup error:', e); }
     globalSession = null;
     globalTiles = {};
     globalVideoStarted = false;
     globalLocalVideo = null;
     globalRemoteVideo = null;
-  }
-};
-
-/**
- * Re-bind tất cả video tiles đang được track.
- * Gọi được từ bất kỳ đâu (không cần hook).
- */
-export const rebindAllTilesGlobal = () => {
-  if (!globalSession) return;
-  if (globalTiles.local !== undefined && globalLocalVideo) {
-    globalSession.audioVideo.bindVideoElement(globalTiles.local, globalLocalVideo);
-  }
-  if (globalTiles.remote !== undefined && globalRemoteVideo) {
-    globalSession.audioVideo.bindVideoElement(globalTiles.remote, globalRemoteVideo);
+    console.log('[Chime] Session cleaned up.');
   }
 };
 
 /**
  * Bật/tắt camera trong phiên đang hoạt động.
- * Không đóng session — chỉ start/stop video track.
  */
 export const toggleCamera = async (turnOn: boolean) => {
   if (!globalSession) {
@@ -86,19 +91,27 @@ export const toggleCamera = async (turnOn: boolean) => {
   }
   if (turnOn) {
     try {
-      await globalSession.audioVideo.startVideoInput({ video: true } as any);
+      console.log('[Chime] Starting Video Input...');
+      const devices = await globalSession.audioVideo.listVideoInputDevices();
+      if (devices.length > 0) {
+         await globalSession.audioVideo.startVideoInput(devices[0].deviceId);
+      } else {
+         await globalSession.audioVideo.startVideoInput({ video: true } as any);
+      }
       globalSession.audioVideo.startLocalVideoTile();
       globalVideoStarted = true;
+      // Trì hoãn nhẹ để gán ref nếu thẻ video local được render sau đó
       setTimeout(() => {
         if (globalTiles.local !== undefined && globalLocalVideo) {
           globalSession!.audioVideo.bindVideoElement(globalTiles.local, globalLocalVideo);
         }
-      }, 300);
+      }, 500);
     } catch (e: any) {
       console.error('[Chime] toggleCamera ON failed:', e?.message);
     }
   } else {
     try {
+      console.log('[Chime] Stopping Video Input...');
       globalSession.audioVideo.stopLocalVideoTile();
       await globalSession.audioVideo.stopVideoInput();
       if (globalLocalVideo?.srcObject) {
@@ -116,10 +129,7 @@ export const toggleCamera = async (turnOn: boolean) => {
  * Bật/Tắt Micro.
  */
 export const toggleMic = async (turnOn: boolean) => {
-  if (!globalSession) {
-    console.warn('[Chime] toggleMic called but no active session');
-    return;
-  }
+  if (!globalSession) return;
   if (turnOn) {
     globalSession.audioVideo.realtimeUnmuteLocalAudio();
     console.log('[Chime] Microphone UNMUTED');
@@ -130,43 +140,45 @@ export const toggleMic = async (turnOn: boolean) => {
 };
 
 export const useChime = () => {
-  const { meetingData, attendeeData, callType, setCallState, resetCall, setConnecting, setConnectionError } = useCallStore();
-
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const { 
+    meetingData, attendeeData, 
+    setCallState, resetCall, setConnecting, setConnectionError,
+    setRemoteCameraOn,
+  } = useCallStore();
 
   const bindTile = useCallback((tileId: number, isLocal: boolean) => {
     if (!globalSession) return;
+    if (!isValidTileId(tileId)) return;
+    
     const el = isLocal ? globalLocalVideo : globalRemoteVideo;
     if (el) {
       console.log(`[Chime] Binding tile ${tileId} to ${isLocal ? 'LOCAL' : 'REMOTE'} video element`);
       globalSession.audioVideo.bindVideoElement(tileId, el);
     } else {
-      console.warn(`[Chime] Cannot bind tile ${tileId}: ${isLocal ? 'LOCAL' : 'REMOTE'} video element is MISSING`);
+      console.warn(`[Chime] Cannot bind tile ${tileId}: ${isLocal ? 'LOCAL' : 'REMOTE'} video element is currently NULL`);
     }
   }, []);
 
   const rebindAllTiles = useCallback(() => {
-    if (globalTiles.local !== undefined) bindTile(globalTiles.local, true);
-    if (globalTiles.remote !== undefined) bindTile(globalTiles.remote, false);
+    if (isValidTileId(globalTiles.local)) bindTile(globalTiles.local, true);
+    if (isValidTileId(globalTiles.remote)) bindTile(globalTiles.remote, false);
   }, [bindTile]);
 
   const setupSession = useCallback(async (type: 'audio' | 'video') => {
+    // [DEFENSIVE] Nếu có session cũ bị treo, dọn dẹp trước khi bắt đầu cái mới
     if (globalSession) {
-      console.log('[Chime] Session already exists, skipping setup');
-      return;
+      console.log('[Chime] Existing session found, cleaning up before new call...');
+      await leaveCurrentSession();
     }
 
-    // ⚠️ IMPORTANT: Read meetingData/attendeeData directly from store via getState()
-    // to avoid stale closure issues (hook was created before data arrived)
     const { meetingData: meeting, attendeeData: attendee } = useCallStore.getState();
     if (!meeting || !attendee) {
-      console.error('[Chime] setupSession called but meeting/attendee data is missing!');
+      console.error('[Chime] setupSession ABORTED: Missing meeting/attendee data');
       setConnectionError('Mất dữ liệu cuộc gọi (Missing Data)');
       return;
     }
 
-    console.log(`[Chime] ===== SETUP SESSION START: type=${type} =====`);
+    console.log(`[Chime] >>> Starting session setup (type=${type}) <<<`);
     setConnecting(true);
     setConnectionError(null);
 
@@ -174,54 +186,113 @@ export const useChime = () => {
     const deviceController = new DefaultDeviceController(logger);
     const config = new MeetingSessionConfiguration(meeting, attendee);
     const session = new DefaultMeetingSession(config, logger, deviceController);
+    
     globalSession = session;
     globalTiles = {};
     globalVideoStarted = false;
 
     try {
       // 1. Audio Input
+      console.log('[Chime] Step 1: Listing audio devices...');
       const audioInputDevices = await session.audioVideo.listAudioInputDevices();
-      console.log(`[Chime] Audio devices found: ${audioInputDevices.length}`);
       if (audioInputDevices.length > 0) {
+        console.log(`[Chime] Using audio device: ${audioInputDevices[0].label || 'Default'}`);
         await session.audioVideo.startAudioInput(audioInputDevices[0].deviceId);
-        console.log('[Chime] Audio input started');
       } else {
-        throw new Error('Không tìm thấy Micro (No Mic)');
+        throw new Error('Không tìm thấy Micro');
       }
 
-      // 2. Video Input (video calls only)
+      // 2. Video Input
       if (type === 'video') {
+         console.log('[Chime] Step 2: Listing video devices...');
         try {
-          await session.audioVideo.startVideoInput({ video: true } as any);
+          const videoInputDevices = await session.audioVideo.listVideoInputDevices();
+          if (videoInputDevices.length > 0) {
+            await session.audioVideo.startVideoInput(videoInputDevices[0].deviceId);
+          } else {
+            await session.audioVideo.startVideoInput({ video: true } as any);
+          }
           globalVideoStarted = true;
-          console.log('[Chime] Video input started');
         } catch (videoErr: any) {
-          console.error('[Chime] Video input failed:', videoErr?.message);
-          // Video fail doesn't stop the call, but we log it
+          console.error('[Chime] Step 2 FAIL: Video setup failed', videoErr);
         }
       }
 
       // 3. Observer
       session.audioVideo.addObserver({
         videoTileDidUpdate: (tileState: any) => {
-          if (!tileState.boundAttendeeId) return;
-          console.log(`[Chime] videoTileDidUpdate: id=${tileState.tileId} local=${tileState.localTile} active=${tileState.active}`);
-          if (tileState.localTile) {
-            globalTiles.local = tileState.tileId;
+          const tileId = tileState.tileId;
+          const isLocal = !!tileState.localTile;
+          const attendeeId = normalizeAttendeeId(tileState.boundExternalUserId || tileState.boundAttendeeId);
+          
+          console.log(`[Web-Chime] 🎥 Tile Update: id=${tileId} isLocal=${isLocal} attendee=${attendeeId} active=${tileState.active}`);
+          
+          if (isLocal) {
+            globalTiles.local = tileId;
           } else {
-            globalTiles.remote = tileState.tileId;
+            globalTiles.remote = tileId;
+
+            // 🚀 AGGRESSIVELY FORCE UI MOUNT (DO NOT CHECK tileState.active)
+            console.log(`[Web-Chime] 🚀 Forcing remote video mount for tile ${tileId}`);
+            
+            const store = useCallStore.getState();
+            store.setRemoteCameraOn(true);
+            
+            const exists = store.remoteTiles.find(t => t.tileId === tileId);
+            if (!exists) {
+              store.setRemoteTiles([...store.remoteTiles, { tileId, attendeeId }]);
+            }
+
+            // Attempt to bind immediately if the DOM node somehow already exists
+            if (globalRemoteVideo) {
+              console.log(`[Web-Chime] 🔗 Direct binding tile ${tileId} to existing remote video`);
+              globalSession?.audioVideo.bindVideoElement(tileId, globalRemoteVideo);
+            }
           }
-          bindTile(tileState.tileId, !!tileState.localTile);
+          bindTile(tileId, isLocal);
+        },
+        videoTileWasRemoved: (tileId: number) => {
+          console.log(`[Web-Chime] ❌ Tile Removed: ${tileId}`);
+          if (!isValidTileId(tileId)) return;
+          
+          const { remoteTiles, setRemoteTiles, setRemoteCameraOn } = useCallStore.getState();
+
+          if (globalTiles.local === tileId) {
+            globalTiles.local = undefined;
+          }
+          if (globalTiles.remote === tileId) {
+            globalTiles.remote = undefined;
+            
+            try {
+              session.audioVideo.unbindVideoElement(tileId);
+            } catch (e) {
+              console.warn(`[Web-Chime] unbindVideoElement failed for tile ${tileId}`, e);
+            }
+            
+            // Clear from store
+            const nextTiles = remoteTiles.filter(t => t.tileId !== tileId);
+            setRemoteTiles(nextTiles);
+
+            if (nextTiles.length === 0) {
+              setRemoteCameraOn(false);
+            }
+          }
         },
         audioVideoDidStart: () => {
-          console.log('[Chime] ✅ Session STARTED successfully (Observer)');
+          console.log('[Web-Chime] ✅ Session STARTED successfully');
           setConnecting(false);
           setCallState('CONNECTED');
         },
         audioVideoDidStop: (sessionStatus: any) => {
           const code = sessionStatus?.statusCode();
-          console.log(`[Chime] Session STOPPED (Code: ${code})`);
-          if (code !== undefined && code !== 0 && code !== 1) {
+          console.log(`[Web-Chime] Session STOPPED (Code: ${code})`);
+          
+          const currentState = useCallStore.getState().callState;
+          if (
+            currentState !== 'ENDED' && 
+            currentState !== 'IDLE' && 
+            code !== undefined && code !== 0 && code !== 1 && code !== 5
+          ) {
              setConnectionError(`Lỗi kết nối (Code: ${code})`);
           }
           setConnecting(false);
@@ -229,83 +300,53 @@ export const useChime = () => {
         audioVideoDidStartConnecting: (reconnecting: boolean) => {
           console.log(`[Chime] Connecting... (reconnecting=${reconnecting})`);
           setConnecting(true);
-        },
-        videoAvailabilityDidChange: (availability: any) => {
-          console.log(`[Chime] Video availability: ${availability.canStartLocalVideo ? 'CAN' : 'CANNOT'} start local video`);
         }
       });
 
-      // 4. Audio Output
+      // 4. Audio Output binding (Search for #chime-audio in DOM)
+      console.log('[Chime] Step 4: Binding audio element...');
       const audioEl = document.getElementById('chime-audio') as HTMLAudioElement | null;
       if (audioEl) {
         await session.audioVideo.bindAudioElement(audioEl);
-        console.log('[Chime] Audio element bound');
+        console.log('[Chime] Step 4 OK: Audio element bound');
       } else {
-        console.error('[Chime] ❌ #chime-audio NOT FOUND in DOM!');
+        console.warn('[Chime] Step 4 WARNING: #chime-audio NOT FOUND in DOM - call may have no audio');
       }
 
       // 5. Start session
+      console.log('[Chime] Step 5: Calling audioVideo.start()...');
       await session.audioVideo.start();
-      console.log('[Chime] session.audioVideo.start() sequence initiated');
 
       // 6. Start local video tile
       if (type === 'video') {
+         console.log('[Chime] Step 6: Starting local video tile...');
         session.audioVideo.startLocalVideoTile();
       }
 
-      // 8. Retry binding (tiles activate asynchronously)
-      setTimeout(() => { console.log('[Chime] Retry bind 1s'); rebindAllTiles(); }, 1000);
-      setTimeout(() => { console.log('[Chime] Retry bind 3s'); rebindAllTiles(); }, 3000);
+      // 7. Periodic rebinds
+      setTimeout(() => rebindAllTiles(), 1500);
 
     } catch (error: any) {
-      console.error('[Chime] ❌ Setup FAILED:', error?.message, error);
-      setConnectionError(error?.message || 'Lỗi khởi tạo Chime');
+      console.error('[Chime] ❌ setupSession CRASHED:', error);
+      setConnectionError(error?.message || 'Lỗi khởi tạo Media');
       setConnecting(false);
       globalSession = null;
-      // Trì hoãn reset để user kịp đọc lỗi nếu cần
-      setTimeout(() => resetCall(), 5000);
+       // Reset call sau 5s nếu lỗi khởi tạo
+      setTimeout(() => {
+         if (useCallStore.getState().callState === 'JOINING') resetCall();
+      }, 5000);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setCallState, resetCall, bindTile, rebindAllTiles, setConnecting, setConnectionError]);
-  // ⚠️ meetingData/attendeeData intentionally removed from deps — read via getState()
+  }, [setCallState, resetCall, bindTile, rebindAllTiles, setConnecting, setConnectionError, setRemoteCameraOn]);
 
-  // Trigger setup khi meeting data sẵn sàng
-  // Dùng meetingData từ store hook (không phải getState) để React react được với change
   useEffect(() => {
+    // ⚠️ Chỉ chạy khi có meeting data và chưa có session
     if (meetingData && attendeeData && !globalSession) {
       const type = useCallStore.getState().callType;
-      console.log('[Chime] meetingData arrived, calling setupSession with type:', type);
       setupSession(type);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingData?.MeetingId, attendeeData?.AttendeeId]);
-  // ⚠️ Dùng ID cụ thể thay vì object reference để tránh infinite loop
-
-  // Mid-call upgrade: Audio → Video
-  useEffect(() => {
-    if (!globalSession || callType !== 'video' || globalVideoStarted) return;
-
-    (async () => {
-      try {
-        await globalSession!.audioVideo.startVideoInput({ video: true } as any);
-        globalSession!.audioVideo.startLocalVideoTile();
-        globalVideoStarted = true;
-        setTimeout(() => rebindAllTiles(), 500);
-      } catch (e) {
-        console.error('[Chime] Video upgrade failed:', e);
-      }
-    })();
-  }, [callType, rebindAllTiles]);
-
-  const leaveMeeting = useCallback(async () => {
-    await leaveCurrentSession();
-    resetCall();
-  }, [resetCall]);
+  }, [meetingData?.MeetingId, attendeeData?.AttendeeId, setupSession]);
 
   return {
-    localVideoRef,
-    remoteVideoRef,
-    leaveMeeting,
     rebindAllTiles,
   };
 };

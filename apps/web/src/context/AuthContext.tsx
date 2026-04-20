@@ -149,7 +149,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       // FIX 1: gửi cả deviceId khi join_identity
       const currentDeviceId =
         deviceId || localStorage.getItem("deviceId") || "";
-      newSocket.emit("join_identity", { email, deviceId: currentDeviceId });
+      newSocket.emit("join_identity", { 
+        email, 
+        deviceId: currentDeviceId,
+        platform: "web",
+      });
     });
 
     newSocket.on("force_logout", (data) => {

@@ -24,6 +24,7 @@ import SettingsScreen from './src/screens/profile/SettingsScreen';
 import ChangePasswordScreen from './src/screens/profile/ChangePasswordScreen';
 import LoginOtpScreen from './src/screens/auth/LoginOtpScreen';
 import SplashScreen from './src/components/SplashScreen';
+import CallOverlay from './src/components/chat/CallOverlay';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Alert from './src/utils/Alert';
@@ -193,6 +194,7 @@ export default function App() {
           params={params}
           setParams={setParams}
         />
+        <CallOverlay />
       </AuthProvider>
     </SafeAreaProvider>
   );

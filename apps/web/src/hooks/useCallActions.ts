@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { useAuth } from '../context/AuthContext';
 import { useCallStore } from '../store/callStore';
 import { useChatStore } from '../store/chatStore';
@@ -18,6 +19,8 @@ export const useCallActions = () => {
       console.warn('[useCallActions] Missing convId, user or socket');
       return;
     }
+
+    const activeCallId = uuidv4(); // [SENIOR] Generate unique Call ID
 
     // Tìm email của đối phương từ conversation hiện tại
     const activeConv = conversations.find(c => c.id === activeConvId);
@@ -43,21 +46,27 @@ export const useCallActions = () => {
     };
 
     try {
+      // Xác định platform của đối phương
+      const { platform: targetPlatform } = await socket.emitWithAck('get_platform', { email: partnerEmail });
       // 1. Khởi tạo UI state ngay lập tức (optimistic)
-      initiateCall(activeConvId, type, partnerEmail, partnerProfile);
+      // [SENIOR] Force chime engine for everyone as we migrated both Web and Mobile to Chime SDK
+      const engine = 'chime';
+      initiateCall(activeConvId, activeCallId, type, partnerEmail, partnerProfile, engine);
 
-      // 2. Tạo Chime meeting trên server
-      const res = await api.post('/call/create', {
-        conversationId: activeConvId,
-        type,
-      });
+      if (engine === 'chime') {
+        // Cuộc gọi Web -> Web: Tạo hoặc lấy Chime meeting
+        const res = await api.post('/call/create', {
+          conversationId: activeConvId,
+          callId: activeCallId,
+          type,
+        });
+        setMeetingData(res.data.meeting, res.data.attendee, res.data.callType);
+      }
 
-      // 3. Lưu meeting data → useChime sẽ setup session
-      setMeetingData(res.data.meeting, res.data.attendee, res.data.callType);
-
-      // 4. Thông báo đối phương qua Socket.IO
+      // 4. Thông báo đối phương qua Socket.IO (Bỏ qua tạo Chime meeting nếu WebRTC)
       socket.emit('call:invite', {
         convId: activeConvId,
+        callId: activeCallId, // [SENIOR]
         fromEmail: user.email,
         toEmail: partnerEmail,
         callerProfile: {

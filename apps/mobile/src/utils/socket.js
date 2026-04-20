@@ -9,6 +9,17 @@ class SocketService {
     force_logout: [],
     sessions_update: [],
     profile_update: [],
+    "call:invite": [],
+    "call:incoming": [],
+    "call:offer": [],
+    "call:answer_sdp": [],
+    "call:ice_candidate": [],
+    "call:accept": [],
+    "call:reject": [],
+    "call:dismiss": [],
+    "call:hangup": [],
+    "call:timeout": [],
+    "call:peer_joined": [],
   };
 
   async connect(email, deviceId, tokenOverride) {
@@ -46,6 +57,7 @@ class SocketService {
         this.socket.emit("join_identity", {
           email: this.currentEmail,
           deviceId: deviceId,
+          platform: 'mobile',
         });
       }
     });
@@ -75,6 +87,15 @@ class SocketService {
     this.socket.on("profile_update", (data) => {
       console.log("Profile update event received", data);
       this.listeners.profile_update.forEach((cb) => cb(data));
+    });
+
+    // Tự động map tất cả các sự kiện bắt đầu bằng "call:" từ listeners
+    Object.keys(this.listeners).forEach((eventName) => {
+      if (eventName.startsWith("call:")) {
+        this.socket.on(eventName, (data) => {
+          this.listeners[eventName].forEach((cb) => cb(data));
+        });
+      }
     });
 
     this.socket.on("disconnect", (reason) => {

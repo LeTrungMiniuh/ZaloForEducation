@@ -17,21 +17,15 @@ export class CallService {
     private readonly redis: RedisService,
   ) {}
 
-  async createMeeting(conversationId: string, userEmail: string, type: 'audio' | 'video' = 'video') {
-    this.logger.log(`Creating ${type} meeting for ${conversationId} by ${userEmail}`);
+  async createMeeting(conversationId: string, callId: string, userEmail: string, type: 'audio' | 'video' = 'video') {
+    this.logger.log(`Creating ${type} meeting for ${conversationId} (CallId: ${callId}) by ${userEmail}`);
 
     try {
-      // Idempotency check — nếu meeting cùng type đã tồn tại, tái sử dụng
-      const existing = await this.redis.get(`call:${conversationId}`);
+      // [SENIOR] Idempotency check theo callId
+      const existing = await this.redis.get(`call:session:${callId}`);
       if (existing) {
-        const parsed = JSON.parse(existing);
-        if (parsed.callType === type) {
-          this.logger.log(`Reusing existing ${type} meeting for ${conversationId}`);
-          return parsed;
-        }
-        // Type mismatch — xóa session cũ và tạo mới
-        this.logger.log(`Type mismatch (${parsed.callType} vs ${type}). Purging old session.`);
-        await this.redis.del(`call:${conversationId}`);
+        this.logger.log(`Reusing existing session for CallId: ${callId}`);
+        return JSON.parse(existing);
       }
 
       const meetingResponse = await this.chime.send(
@@ -55,7 +49,9 @@ export class CallService {
         callType: type,
       };
 
-      await this.redis.set(`call:${conversationId}`, JSON.stringify(result), 1800); // 30 min TTL
+      await this.redis.set(`call:session:${callId}`, JSON.stringify(result), 1800);
+      // Đồng thời lưu vết cuộc gọi gần nhất của conversation để dễ cleanup
+      await this.redis.set(`call:active:${conversationId}`, callId, 1800);
       return result;
     } catch (error) {
       this.logger.error(`AWS_CHIME_ERROR`, error.stack);
@@ -63,14 +59,14 @@ export class CallService {
     }
   }
 
-  async joinMeeting(conversationId: string, userEmail: string) {
-    this.logger.log(`User ${userEmail} joining ${conversationId}`);
-
+  async joinMeeting(conversationId: string, callId: string, userEmail: string) {
+    this.logger.log(`User ${userEmail} joining ${conversationId} (CallId: ${callId})`);
+ 
     try {
-      const meetingData = await this.redis.get(`call:${conversationId}`);
+      const meetingData = await this.redis.get(`call:session:${callId}`);
       if (!meetingData) {
-        this.logger.warn(`Redis data NOT FOUND for key: call:${conversationId}`);
-        throw new BadRequestException(`Meeting session not found for ${conversationId}`);
+        this.logger.warn(`Redis session NOT FOUND for CallId: ${callId}`);
+        throw new BadRequestException(`Meeting session not found for this call ID`);
       }
 
       const parsed = JSON.parse(meetingData);
@@ -99,23 +95,26 @@ export class CallService {
     }
   }
 
-  async hangupMeeting(conversationId: string, userEmail: string) {
-    this.logger.log(`Hangup ${conversationId} by ${userEmail}`);
+  async hangupMeeting(conversationId: string, callId: string, userEmail: string) {
+    this.logger.log(`Hangup CallId: ${callId} (Conv: ${conversationId}) by ${userEmail}`);
     try {
-      const meetingData = await this.redis.get(`call:${conversationId}`);
+      const sessionKey = `call:session:${callId}`;
+      const meetingData = await this.redis.get(sessionKey);
       if (meetingData) {
         const parsed = JSON.parse(meetingData);
         if (parsed.meeting?.MeetingId) {
+          this.logger.log(`[AWS] Deleting Chime Meeting: ${parsed.meeting.MeetingId}`);
           await this.chime.send(
             new DeleteMeetingCommand({ MeetingId: parsed.meeting.MeetingId }),
           );
         }
-        await this.redis.del(`call:${conversationId}`);
+        await this.redis.del(sessionKey);
+        await this.redis.del(`call:active:${conversationId}`);
       }
       return { success: true };
     } catch (error) {
       // Dù Chime lỗi vẫn xóa Redis để cleanup
-      await this.redis.del(`call:${conversationId}`).catch(() => {});
+      await this.redis.del(`call:active:${conversationId}`).catch(() => {});
       return { success: true };
     }
   }

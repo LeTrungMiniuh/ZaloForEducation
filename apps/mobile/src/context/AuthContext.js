@@ -4,6 +4,8 @@ import Alert from '../utils/Alert';
 import SocketService from '../utils/socket';
 import { getDeviceId } from '../utils/deviceId';
 import { apiRequest } from '../utils/api';
+import { useCallStore } from '../store/callStore';
+import { chimeRef } from '../utils/chimeRef';
 
 const AuthContext = createContext();
 
@@ -16,6 +18,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
   const [pendingGoogleUser, setPendingGoogleUser] = useState(null);
 
   const isKickingRef = useRef(false);
+  const callTimeoutRef = useRef(null);
 
   const checkSessionStatus = async () => {
     const token = await AsyncStorage.getItem('token');
@@ -147,6 +150,116 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
 
       SocketService.on('profile_update', (data) => {
         if (data && data.profile) updateUser(data.profile);
+      });
+
+      // ===== CALL SIGNALING =====
+      
+      SocketService.on('call:incoming', (data) => {
+        const { callState, activeCallId, receiveIncomingCall } = useCallStore.getState();
+        
+        // Auto-reject if already in a call (and not the same callId)
+        if (callState !== 'IDLE') {
+          if (activeCallId === data.callId) {
+            console.log('[AUTH] Duplicate incoming signal for same callId, ignoring:', data.callId);
+            return;
+          }
+          console.warn('[AUTH] Busy: auto-rejecting call info from', data.fromEmail);
+          SocketService.socket.emit('call:reject', {
+            convId: data.convId,
+            callId: data.callId,
+            fromEmail: user?.email,
+            toEmail: data.fromEmail,
+            reason: 'BUSY'
+          });
+          return;
+        }
+
+        console.log('[AUTH] Incoming call from:', data.callerProfile?.fullName, '| CallId:', data.callId);
+        receiveIncomingCall(data.callerProfile, data.callType, data.convId, data.callId, data.engine);
+
+        // Start 30s timeout
+        if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = setTimeout(() => {
+          console.log('[AUTH] Call timeout (30s) reached');
+          const state = useCallStore.getState();
+          if (state.callState === 'RINGING' && state.activeCallId === data.callId) {
+            SocketService.socket?.emit('call:reject', {
+              convId: data.convId,
+              callId: data.callId,
+              toEmail: data.fromEmail,
+              reason: 'NO_ANSWER',
+            });
+            useCallStore.getState().resetCall();
+          }
+          callTimeoutRef.current = null;
+        }, 30000);
+      });
+
+      SocketService.on('call:dismiss', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Call dismissed (reason:', data.reason + ')');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+          chimeRef.current?.cleanup();
+          useCallStore.getState().resetCall();
+        }
+      });
+
+      SocketService.on('call_handled_elsewhere', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Call handled on another device, cleaning up.');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+          chimeRef.current?.cleanup();
+          useCallStore.getState().resetCall();
+        }
+      });
+
+      SocketService.on('call:accept', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Call accepted by peer');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+          
+          useCallStore.getState().acceptCall(data.meetingInfo || {});
+          // [MIGRATED] Chime starts automatically via useChime effect when meetingData is populated.
+        }
+      });
+
+      SocketService.on('call:reject', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Call rejected by peer');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+          chimeRef.current?.cleanup();
+          useCallStore.getState().rejectCall();
+        }
+      });
+
+      SocketService.on('call:hangup', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Peer hung up');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+          chimeRef.current?.cleanup();
+          useCallStore.getState().hangupCall();
+        }
+      });
+
+      SocketService.on('call:timeout', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Call timed out on peer side');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+          chimeRef.current?.cleanup();
+          useCallStore.getState().resetCall();
+        }
       });
     };
 
