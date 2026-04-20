@@ -39,12 +39,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleDisconnect(client: Socket) {
-    const user = client['user'];
+    const user = client["user"];
     if (user && user.email) {
       const email = user.email.toLowerCase();
       const presenceKey = `presence:${email}`;
       await this.redisService.del(presenceKey);
-      this.server.emit('presence_update', { email, status: 'offline' });
+      this.server.emit("presence_update", { email, status: "offline" });
       this.logger.log(`User ${email} went offline (Presence DEL)`);
     }
     this.logger.log(`Client disconnected: ${client.id}`);
@@ -75,7 +75,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { email: string; deviceId: string },
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
-    const user = client['user']; // Payload from WsJwtGuard
+    const user = client["user"]; // Payload from WsJwtGuard
     const email = user?.email || data.email;
     const deviceId = user?.deviceId || data.deviceId;
 
@@ -88,14 +88,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.join(deviceId);
       }
 
-      this.logger.log(`[SOCKET] User ${normalizedEmail} identified. Joined rooms: [${userRoom}], [${deviceId || 'no-device'}]`);
+      this.logger.log(
+        `[SOCKET] User ${normalizedEmail} identified. Joined rooms: [${userRoom}], [${deviceId || "no-device"}]`,
+      );
 
       // Update Presence to Online
       const presenceKey = `presence:${normalizedEmail}`;
-      await this.redisService.set(presenceKey, 'online', 3600); // 1 hour TTL
-      this.server.emit('presence_update', { email: normalizedEmail, status: 'online' });
+      await this.redisService.set(presenceKey, "online", 3600); // 1 hour TTL
+      this.server.emit("presence_update", {
+        email: normalizedEmail,
+        status: "online",
+      });
 
-      this.logger.log(`User ${normalizedEmail} identified and is online (Presence SET)`);
+      this.logger.log(
+        `User ${normalizedEmail} identified and is online (Presence SET)`,
+      );
     }
   }
 
@@ -104,7 +111,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { convId: string; isTyping: boolean },
     @ConnectedSocket() client: Socket,
   ): void {
-    const user = client['user'];
+    const user = client["user"];
     if (!user || !data.convId) return;
 
     client.to(data.convId).emit("typing_update", {
@@ -141,7 +148,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   emitConversationRead(email: string, convId: string) {
     const userRoom = `user#${email.toLowerCase()}`;
     this.server.to(userRoom).emit("conversation_marked_read", { convId });
-    this.logger.log(`Notified user ${email} that conversation ${convId} was read`);
+    this.logger.log(
+      `Notified user ${email} that conversation ${convId} was read`,
+    );
   }
 
   @SubscribeMessage("call:invite")
@@ -336,6 +345,26 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userRoom = `user#${email}`;
     this.server.to(userRoom).emit("profile_update", { profile });
     console.log(`Sent profile_update to room ${userRoom}`);
+  }
+
+  notifySecurityAlert(
+    email: string,
+    payload: {
+      type: "NEW_DEVICE_LOGIN" | "PASSWORD_CHANGED";
+      title: string;
+      message: string;
+      at?: string;
+      metadata?: Record<string, any>;
+    },
+  ) {
+    const userRoom = `user#${email.toLowerCase()}`;
+    this.server.to(userRoom).emit("security_alert", {
+      ...payload,
+      at: payload.at || new Date().toISOString(),
+    });
+    this.logger.warn(
+      `[SOCKET] security_alert emitted to ${userRoom}: ${payload.type}`,
+    );
   }
 
   notifyHistoryCleared(email: string, convId: string) {

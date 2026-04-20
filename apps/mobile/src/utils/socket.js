@@ -9,6 +9,7 @@ class SocketService {
     force_logout: [],
     sessions_update: [],
     profile_update: [],
+    security_alert: [],
   };
 
   async connect(email, deviceId, tokenOverride) {
@@ -77,6 +78,11 @@ class SocketService {
       this.listeners.profile_update.forEach((cb) => cb(data));
     });
 
+    this.socket.on("security_alert", (data) => {
+      console.log("Security alert event received", data);
+      this.listeners.security_alert.forEach((cb) => cb(data));
+    });
+
     this.socket.on("disconnect", (reason) => {
       console.log("Mobile disconnected:", reason);
     });
@@ -113,6 +119,7 @@ class SocketService {
       this.listeners.force_logout = [];
       this.listeners.sessions_update = [];
       this.listeners.profile_update = [];
+      this.listeners.security_alert = [];
     }
   }
 }

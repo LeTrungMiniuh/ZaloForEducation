@@ -1,10 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
-import { getDisplayName, getDisplayAvatar, normalizeAttachment, formatFileSize } from '../../utils/chatUtils';
+import {
+  clearConversationMuteSchedule,
+  createConversationMuteScheduleFromDuration,
+  createConversationMuteScheduleUntilMorning,
+  formatFileSize,
+  formatMuteScheduleLabel,
+  getDisplayAvatar,
+  getDisplayName,
+  getConversationMuteSchedule,
+  normalizeAttachment,
+  setConversationMuteSchedule,
+  type ConversationMuteSchedule,
+} from '../../utils/chatUtils';
 import { 
   ChevronDown, 
   BellOff, 
+  Bell,
+  Check,
+  X,
   Trash2, 
   FileText, 
   FileImage, 
@@ -24,6 +39,25 @@ const ChatInfoSidebar: React.FC = () => {
     link: true,
     members: true
   });
+  const [showMutePanel, setShowMutePanel] = useState(false);
+  const [showCustomMuteInputs, setShowCustomMuteInputs] = useState(false);
+  const [muteStartTime, setMuteStartTime] = useState('22:00');
+  const [muteEndTime, setMuteEndTime] = useState('07:00');
+  const [muteSummary, setMuteSummary] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeChat) return;
+    const schedule = getConversationMuteSchedule(activeChat.id);
+    if (schedule) {
+      setMuteStartTime(schedule.startTime);
+      setMuteEndTime(schedule.endTime);
+      setMuteSummary(formatMuteScheduleLabel(schedule));
+    } else {
+      setMuteSummary(null);
+    }
+    setShowMutePanel(false);
+    setShowCustomMuteInputs(false);
+  }, [activeChat]);
 
   if (!activeChat) return null;
 
@@ -41,6 +75,36 @@ const ChatInfoSidebar: React.FC = () => {
 
   const toggleSection = (section: string) => {
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const applyMuteSchedule = (schedule: {
+    enabled: boolean;
+    startTime: string;
+    endTime: string;
+  }) => {
+    if (!activeChat) return;
+
+    setConversationMuteSchedule(activeChat.id, schedule as ConversationMuteSchedule);
+    setMuteSummary(formatMuteScheduleLabel(schedule as ConversationMuteSchedule));
+    setShowMutePanel(false);
+    setShowCustomMuteInputs(false);
+  };
+
+  const handleSaveMuteSchedule = () => {
+    applyMuteSchedule({
+      enabled: true,
+      startTime: muteStartTime,
+      endTime: muteEndTime,
+    });
+  };
+
+  const handleClearMuteSchedule = () => {
+    if (!activeChat) return;
+
+    clearConversationMuteSchedule(activeChat.id);
+    setMuteSummary(null);
+    setShowMutePanel(false);
+    setShowCustomMuteInputs(false);
   };
 
   // Helper to render file icon components
@@ -122,10 +186,112 @@ const ChatInfoSidebar: React.FC = () => {
 
            {/* Section: Settings */}
            <div className="mt-4 px-4 space-y-1">
-              <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all">
+              <button
+                onClick={() => setShowMutePanel((prev) => !prev)}
+                className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all"
+              >
                 <BellOff size={20} className="text-on-surface-variant" />
-                Tắt thông báo
+                <span className="flex-1 text-left">Tắt thông báo</span>
+                {muteSummary ? (
+                  <span className="text-[11px] font-medium text-primary">{muteSummary}</span>
+                ) : null}
               </button>
+              {muteSummary && (
+                <button
+                  onClick={handleClearMuteSchedule}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-primary font-semibold text-[13px] transition-all"
+                >
+                  <Bell size={20} className="text-primary" />
+                  <span className="flex-1 text-left">Bật thông báo</span>
+                </button>
+              )}
+              {showMutePanel && (
+                <div className="rounded-2xl border border-outline-variant/20 bg-surface-container/90 p-3 space-y-3 shadow-lg">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-[12px] font-semibold text-on-surface">
+                      <Bell size={16} className="text-primary" />
+                      Tắt thông báo
+                    </div>
+                    <button
+                      onClick={handleClearMuteSchedule}
+                      className="inline-flex items-center justify-center gap-1 rounded-full border border-outline-variant/20 px-2.5 py-1 text-[11px] font-semibold text-on-surface"
+                    >
+                      <X size={14} />
+                      Bỏ
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(1))}
+                      className="rounded-xl border border-outline-variant/20 bg-white px-3 py-2 text-[13px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
+                    >
+                      1 tiếng
+                    </button>
+                    <button
+                      onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(4))}
+                      className="rounded-xl border border-outline-variant/20 bg-white px-3 py-2 text-[13px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
+                    >
+                      4 tiếng
+                    </button>
+                    <button
+                      onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(8))}
+                      className="rounded-xl border border-outline-variant/20 bg-white px-3 py-2 text-[13px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
+                    >
+                      8 tiếng
+                    </button>
+                    <button
+                      onClick={() => applyMuteSchedule(createConversationMuteScheduleUntilMorning(8))}
+                      className="rounded-xl border border-outline-variant/20 bg-white px-3 py-2 text-[13px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
+                    >
+                      Đến 8:00 am
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => setShowCustomMuteInputs((prev) => !prev)}
+                    className="w-full rounded-xl bg-primary/10 px-3 py-2 text-[13px] font-semibold text-primary"
+                  >
+                    {showCustomMuteInputs ? 'Ẩn khung giờ tuỳ chỉnh' : 'Chọn khung giờ tuỳ chỉnh'}
+                  </button>
+
+                  {showCustomMuteInputs && (
+                    <div className="space-y-3 rounded-xl border border-outline-variant/20 bg-white p-3">
+                      <div className="flex items-center gap-2 text-[12px] font-semibold text-on-surface">
+                        <BellOff size={16} className="text-on-surface-variant" />
+                        Tắt theo khung giờ
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="space-y-1">
+                          <span className="block text-[11px] text-on-surface-variant">Từ</span>
+                          <input
+                            type="time"
+                            value={muteStartTime}
+                            onChange={(event) => setMuteStartTime(event.target.value)}
+                            className="w-full rounded-xl border border-outline-variant/20 bg-white px-3 py-2 text-[13px] outline-none focus:border-primary"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="block text-[11px] text-on-surface-variant">Đến</span>
+                          <input
+                            type="time"
+                            value={muteEndTime}
+                            onChange={(event) => setMuteEndTime(event.target.value)}
+                            className="w-full rounded-xl border border-outline-variant/20 bg-white px-3 py-2 text-[13px] outline-none focus:border-primary"
+                          />
+                        </label>
+                      </div>
+                      <button
+                        onClick={handleSaveMuteSchedule}
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2 text-[13px] font-semibold text-white"
+                      >
+                        <Check size={16} />
+                        Lưu khung giờ
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-error font-bold text-[13px] transition-all">
                 <Trash2 size={20} />
                 Xóa lịch sử trò chuyện

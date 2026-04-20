@@ -244,6 +244,28 @@ const HomePage: React.FC = () => {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Request notification permission on component mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Show browser notification
+  const showNotification = (title: string, options?: NotificationOptions) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(title, {
+          icon: '/logo_blue.png',
+          badge: '/logo_blue.png',
+          ...options,
+        });
+      } catch (err) {
+        console.warn('Failed to show notification:', err);
+      }
+    }
+  };
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -830,6 +852,17 @@ const HomePage: React.FC = () => {
         // RULE 2: Nếu đang mở room này, tự động đánh dấu đã đọc
         if (incomingConvId === activeConvId) {
           markAsRead(incomingConvId);
+        }
+
+        // Show notification if message is from another user and not the active conversation
+        if (msg.senderId && msg.senderId !== user?.email && incomingConvId !== activeConvId) {
+          const senderName = getDisplayName(msg.senderId);
+          const messagePreview = getMessagePreview(msg);
+          showNotification(`Tin nhắn từ ${senderName}`, {
+            body: messagePreview,
+            tag: `msg-${incomingConvId}`, // Group notifications by conversation
+            requireInteraction: false,
+          });
         }
       }
     };

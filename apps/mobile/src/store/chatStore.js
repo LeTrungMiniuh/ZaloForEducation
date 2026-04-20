@@ -67,6 +67,16 @@ const normalizeMessage = (message) => {
   return normalized;
 };
 
+const dedupeMessagesById = (messages) => {
+  const seen = new Set();
+  return (Array.isArray(messages) ? messages : []).filter((message) => {
+    const id = String(message?.id || "").trim();
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
+
 const chatGet = async (path, query) => {
   const queryString = query
     ? `?${Object.entries(query)
@@ -109,8 +119,11 @@ export const useChatStore = create((set, get) => ({
   isLoadingMessages: false,
   nextCursor: null,
 
-  setConversations: (conversations) =>
-    set({ conversations: Array.isArray(conversations) ? conversations : [] }),
+  setConversations: (input) => {
+    const current = Array.isArray(get().conversations) ? get().conversations : [];
+    const resolved = typeof input === "function" ? input(current) : input;
+    set({ conversations: Array.isArray(resolved) ? resolved : current });
+  },
 
   setActiveConversation: (convId) => {
     if (get().activeConvId === convId) return;
@@ -124,11 +137,21 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  setMessages: (messages, nextCursor) => {
-    const safeMessages = Array.isArray(messages)
-      ? messages.map(normalizeMessage).filter(Boolean)
-      : [];
-    set({ messages: safeMessages, nextCursor });
+  setMessages: (messagesOrUpdater, nextCursor) => {
+    const current = Array.isArray(get().messages) ? get().messages : [];
+    const resolved =
+      typeof messagesOrUpdater === "function"
+        ? messagesOrUpdater(current)
+        : messagesOrUpdater;
+
+    const safeMessages = dedupeMessagesById(
+      Array.isArray(resolved) ? resolved.map(normalizeMessage).filter(Boolean) : current,
+    );
+
+    const patch = { messages: safeMessages };
+    if (nextCursor !== undefined) patch.nextCursor = nextCursor;
+
+    set(patch);
     if (get().activeConvId) {
       setCachedMessages(get().activeConvId, safeMessages);
     }
@@ -177,12 +200,13 @@ export const useChatStore = create((set, get) => ({
           : [])
         .map(normalizeMessage)
         .filter(Boolean);
+      const uniqueMessages = dedupeMessagesById(newMessages);
       set({
-        messages: newMessages,
+        messages: uniqueMessages,
         nextCursor: payload?.nextCursor || null,
         isLoadingMessages: false,
       });
-      setCachedMessages(convId, newMessages);
+      setCachedMessages(convId, uniqueMessages);
     } catch (err) {
       set({ isLoadingMessages: false });
       console.error("Failed to fetch messages", err);

@@ -4,6 +4,7 @@ import Alert from '../utils/Alert';
 import SocketService from '../utils/socket';
 import { getDeviceId } from '../utils/deviceId';
 import { apiRequest } from '../utils/api';
+import { pushSecurityAlert } from '../utils/securityAlerts';
 
 const AuthContext = createContext();
 
@@ -145,6 +146,12 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
         }
       });
 
+      SocketService.on('security_alert', (data) => {
+        pushSecurityAlert(data).catch((error) => {
+          console.warn('[AUTH] Failed to persist security alert', error?.message);
+        });
+      });
+
       SocketService.on('profile_update', (data) => {
         if (data && data.profile) updateUser(data.profile);
       });
@@ -160,6 +167,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
 
     return () => {
       SocketService.off('force_logout');
+      SocketService.off('security_alert');
       subscription.remove();
     };
   }, []);

@@ -23,6 +23,7 @@ import ProfileMoreScreen from './src/screens/ProfileMoreScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ChangePasswordScreen from './src/screens/ChangePasswordScreen';
 import LoginOtpScreen from './src/screens/LoginOtpScreen';
+import NotificationScreen from './src/screens/NotificationScreen';
 import SplashScreen from './src/components/SplashScreen';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -152,6 +153,7 @@ function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, pa
     case 'profile-more': return <ProfileMoreScreen onNavigate={navigate} goBack={goBack} />;
     case 'settings': return <SettingsScreen onNavigate={navigate} onLogout={handleLogout} goBack={goBack} />;
     case 'change-password': return <ChangePasswordScreen onNavigate={navigate} goBack={goBack} />;
+    case 'notifications': return <NotificationScreen onNavigate={navigate} goBack={goBack} />;
     case 'login-otp': return <LoginOtpScreen onNavigate={navigate} goBack={goBack} params={params} />;
     case 'login':
     default: return <LoginScreen onNavigate={navigate} />;

@@ -9,6 +9,125 @@ export interface Attachment {
   file?: File;
 }
 
+export interface ConversationMuteSchedule {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+}
+
+const MUTE_SCHEDULE_STORAGE_PREFIX = 'chat_notification_mute_schedule:';
+
+const getMuteScheduleStorageKey = (convId: string) =>
+  `${MUTE_SCHEDULE_STORAGE_PREFIX}${convId}`;
+
+const timeToMinutes = (time: string) => {
+  const [hours, minutes] = String(time || '00:00').split(':').map(Number);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return 0;
+  return hours * 60 + minutes;
+};
+
+const minutesToTime = (totalMinutes: number) => {
+  const safeMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+  const hours = Math.floor(safeMinutes / 60)
+    .toString()
+    .padStart(2, '0');
+  const minutes = (safeMinutes % 60).toString().padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+export const getConversationMuteSchedule = (
+  convId: string,
+): ConversationMuteSchedule | null => {
+  if (typeof window === 'undefined' || !convId) return null;
+
+  const raw = localStorage.getItem(getMuteScheduleStorageKey(convId));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as ConversationMuteSchedule;
+    if (!parsed?.enabled) return null;
+    if (!parsed.startTime || !parsed.endTime) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const setConversationMuteSchedule = (
+  convId: string,
+  schedule: ConversationMuteSchedule,
+) => {
+  if (typeof window === 'undefined' || !convId) return;
+
+  localStorage.setItem(
+    getMuteScheduleStorageKey(convId),
+    JSON.stringify(schedule),
+  );
+};
+
+export const clearConversationMuteSchedule = (convId: string) => {
+  if (typeof window === 'undefined' || !convId) return;
+  localStorage.removeItem(getMuteScheduleStorageKey(convId));
+};
+
+export const isConversationMutedNow = (
+  convId: string,
+  now = new Date(),
+) => {
+  const schedule = getConversationMuteSchedule(convId);
+  if (!schedule) return false;
+
+  const start = timeToMinutes(schedule.startTime);
+  const end = timeToMinutes(schedule.endTime);
+  const current = now.getHours() * 60 + now.getMinutes();
+
+  if (start === end) return true;
+
+  if (start < end) {
+    return current >= start && current < end;
+  }
+
+  return current >= start || current < end;
+};
+
+export const formatMuteScheduleLabel = (schedule: ConversationMuteSchedule) => {
+  if (!schedule.enabled) return 'Đã tắt';
+  return `${minutesToTime(timeToMinutes(schedule.startTime))} - ${minutesToTime(
+    timeToMinutes(schedule.endTime),
+  )}`;
+};
+
+export const createConversationMuteScheduleFromDuration = (
+  hours: number,
+  now = new Date(),
+): ConversationMuteSchedule => {
+  const startMinutes = now.getHours() * 60 + now.getMinutes();
+  const endMinutes = startMinutes + hours * 60;
+
+  return {
+    enabled: true,
+    startTime: minutesToTime(startMinutes),
+    endTime: minutesToTime(endMinutes),
+  };
+};
+
+export const createConversationMuteScheduleUntilMorning = (
+  targetHour = 8,
+  now = new Date(),
+): ConversationMuteSchedule => {
+  const startMinutes = now.getHours() * 60 + now.getMinutes();
+  const targetMinutes = targetHour * 60;
+  const endMinutes = startMinutes < targetMinutes
+    ? targetMinutes
+    : targetMinutes + 24 * 60;
+
+  return {
+    enabled: true,
+    startTime: minutesToTime(startMinutes),
+    endTime: minutesToTime(endMinutes),
+  };
+};
+
 // --- FORMATTERS ---
 export const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return '0 Bytes';

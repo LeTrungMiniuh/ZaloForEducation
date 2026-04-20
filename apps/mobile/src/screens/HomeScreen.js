@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Linking,
   KeyboardAvoidingView,
+  Modal,
 } from "react-native";
 import {
   SafeAreaView,
@@ -30,6 +31,8 @@ import { useChatStore } from "../store/chatStore";
 import ContactsScreen from "./ContactsScreen";
 const REACTION_OPTIONS = ["❤️", "👍", "😂", "😮", "😢", "😡"];
 const MAX_ATTACHMENTS_PER_MESSAGE = 8;
+const CHAT_MUTE_SCHEDULE_KEY = "chat_notification_mute_schedule_v1";
+const MOBILE_SETTINGS_KEY = "mobile_settings";
 const TAB_ALIAS = {
   messages: "chat",
   friends: "contacts",
@@ -170,6 +173,84 @@ const formatFileSize = (size) => {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const timeToMinutes = (timeString) => {
+  const [hours, minutes] = String(timeString || "00:00")
+    .split(":")
+    .map(Number);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return 0;
+  return hours * 60 + minutes;
+};
+
+const isValidTimeString = (value) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || "").trim());
+
+const createMuteUntilHours = (hours) => {
+  const now = Date.now();
+  const endAt = now + hours * 60 * 60 * 1000;
+  return {
+    enabled: true,
+    mode: `hours_${hours}`,
+    endAt,
+    createdAt: now,
+  };
+};
+
+const createMuteUntilMorning = (targetHour = 8) => {
+  const now = new Date();
+  const end = new Date(now);
+  end.setHours(targetHour, 0, 0, 0);
+  if (end.getTime() <= now.getTime()) {
+    end.setDate(end.getDate() + 1);
+  }
+  return {
+    enabled: true,
+    mode: "until_morning",
+    endAt: end.getTime(),
+    createdAt: now.getTime(),
+  };
+};
+
+const createCustomWindowMuteSchedule = (startTime, endTime) => ({
+  enabled: true,
+  mode: "custom_window",
+  startTime,
+  endTime,
+  createdAt: Date.now(),
+});
+
+const pruneExpiredSchedules = (map) => {
+  const safeMap = map && typeof map === "object" ? map : {};
+  const now = Date.now();
+  const next = {};
+
+  Object.entries(safeMap).forEach(([convId, schedule]) => {
+    if (!schedule || schedule.enabled !== true) return;
+    if (schedule.mode === "custom_window") {
+      if (!isValidTimeString(schedule.startTime) || !isValidTimeString(schedule.endTime)) return;
+      next[convId] = schedule;
+      return;
+    }
+
+    if (typeof schedule.endAt !== "number") return;
+    if (schedule.endAt <= now) return;
+    next[convId] = schedule;
+  });
+
+  return next;
+};
+
+const getMuteLabel = (schedule) => {
+  if (!schedule) return "Đã tắt thông báo";
+  if (schedule.mode === "custom_window" && schedule.startTime && schedule.endTime) {
+    return `Đã tắt theo khung ${schedule.startTime} - ${schedule.endTime}`;
+  }
+  if (typeof schedule.endAt !== "number") return "Đã tắt thông báo";
+  const endTime = new Date(schedule.endAt).toLocaleTimeString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `Đã tắt thông báo đến ${endTime}`;
+};
+
 export default function HomeScreen({
   onNavigate,
   onLogout,
@@ -204,6 +285,12 @@ export default function HomeScreen({
   const [friendSearchLoading, setFriendSearchLoading] = useState(false);
   const [friendSearchResult, setFriendSearchResult] = useState(null);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
+  const [muteScheduleMap, setMuteScheduleMap] = useState({});
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [showMuteMenuModal, setShowMuteMenuModal] = useState(false);
+  const [showCustomMuteModal, setShowCustomMuteModal] = useState(false);
+  const [customMuteStartTime, setCustomMuteStartTime] = useState("22:00");
+  const [customMuteEndTime, setCustomMuteEndTime] = useState("07:00");
 
   const [conversationPreviewMap, setConversationPreviewMap] = useState({});
   const [messageReactions, setMessageReactions] = useState({});
@@ -220,9 +307,91 @@ export default function HomeScreen({
 
   // Derived State
   const selectedChat = safeConversations.find((c) => c.id === activeConvId);
+  const selectedChatMuteSchedule =
+    selectedChat?.id && muteScheduleMap[selectedChat.id]
+      ? muteScheduleMap[selectedChat.id]
+      : null;
+  const isSelectedChatMuted = Boolean(selectedChatMuteSchedule);
+
+  const persistMuteSchedules = async (nextMap) => {
+    const normalized = pruneExpiredSchedules(nextMap);
+    setMuteScheduleMap(normalized);
+    try {
+      await AsyncStorage.setItem(
+        CHAT_MUTE_SCHEDULE_KEY,
+        JSON.stringify(normalized),
+      );
+    } catch (error) {
+      console.error("Save mute schedule failed", error);
+    }
+  };
+
+  const isConversationMutedNow = (convId) => {
+    const schedule = muteScheduleMap[convId];
+    if (!schedule || schedule.enabled !== true) return false;
+
+    if (schedule.mode === "custom_window") {
+      if (!isValidTimeString(schedule.startTime) || !isValidTimeString(schedule.endTime)) {
+        return false;
+      }
+      const start = timeToMinutes(schedule.startTime);
+      const end = timeToMinutes(schedule.endTime);
+      const now = new Date();
+      const current = now.getHours() * 60 + now.getMinutes();
+
+      if (start === end) return true;
+      if (start < end) return current >= start && current < end;
+      return current >= start || current < end;
+    }
+
+    if (typeof schedule.endAt !== "number") return false;
+    if (schedule.endAt > Date.now()) return true;
+
+    // Auto clean up expired schedule
+    const nextMap = { ...muteScheduleMap };
+    delete nextMap[convId];
+    void persistMuteSchedules(nextMap);
+    return false;
+  };
 
   useEffect(() => {
     if (checkSessionStatus) checkSessionStatus();
+  }, []);
+
+  useEffect(() => {
+    const loadNotificationPrefs = async () => {
+      try {
+        const [muteRaw, settingsRaw] = await Promise.all([
+          AsyncStorage.getItem(CHAT_MUTE_SCHEDULE_KEY),
+          AsyncStorage.getItem(MOBILE_SETTINGS_KEY),
+        ]);
+
+        if (muteRaw) {
+          const parsedMute = JSON.parse(muteRaw);
+          if (parsedMute && typeof parsedMute === "object") {
+            const cleaned = pruneExpiredSchedules(parsedMute);
+            setMuteScheduleMap(cleaned);
+            if (Object.keys(cleaned).length !== Object.keys(parsedMute).length) {
+              await AsyncStorage.setItem(
+                CHAT_MUTE_SCHEDULE_KEY,
+                JSON.stringify(cleaned),
+              );
+            }
+          }
+        }
+
+        if (settingsRaw) {
+          const parsedSettings = JSON.parse(settingsRaw);
+          if (typeof parsedSettings?.notifications === "boolean") {
+            setNotificationsEnabled(parsedSettings.notifications);
+          }
+        }
+      } catch (error) {
+        console.error("Load notification preferences failed", error);
+      }
+    };
+
+    loadNotificationPrefs();
   }, []);
 
   useEffect(() => {
@@ -234,6 +403,58 @@ export default function HomeScreen({
   }, [initialTab]);
 
   const closeMessageAction = () => setActionMessage(null);
+
+  const handleSelectMuteSchedule = async (type) => {
+    if (!selectedChat?.id) return;
+    setShowMuteMenuModal(false);
+    const convId = selectedChat.id;
+    const nextMap = { ...muteScheduleMap };
+
+    if (type === "unmute") {
+      delete nextMap[convId];
+      await persistMuteSchedules(nextMap);
+      Alert.alert("Thông báo cuộc trò chuyện", "Đã bật lại thông báo.");
+      return;
+    }
+
+    if (type === "1h") {
+      nextMap[convId] = createMuteUntilHours(1);
+    } else if (type === "4h") {
+      nextMap[convId] = createMuteUntilHours(4);
+    } else if (type === "custom") {
+      setShowCustomMuteModal(true);
+      return;
+    } else {
+      nextMap[convId] = createMuteUntilMorning(8);
+    }
+
+    await persistMuteSchedules(nextMap);
+    Alert.alert("Thông báo cuộc trò chuyện", getMuteLabel(nextMap[convId]));
+  };
+
+  const handleApplyCustomMuteSchedule = async () => {
+    if (!selectedChat?.id) return;
+    const start = customMuteStartTime.trim();
+    const end = customMuteEndTime.trim();
+
+    if (!isValidTimeString(start) || !isValidTimeString(end)) {
+      Alert.alert("Giờ không hợp lệ", "Vui lòng nhập đúng định dạng HH:mm (ví dụ 22:00).");
+      return;
+    }
+
+    const convId = selectedChat.id;
+    const nextMap = {
+      ...muteScheduleMap,
+      [convId]: createCustomWindowMuteSchedule(start, end),
+    };
+    await persistMuteSchedules(nextMap);
+    setShowCustomMuteModal(false);
+    Alert.alert("Thông báo cuộc trò chuyện", getMuteLabel(nextMap[convId]));
+  };
+
+  const openMuteMenu = () => {
+    setShowMuteMenuModal(true);
+  };
 
   const getFriendshipMeta = (friendship) => {
     const source = friendship?.senderEmail || friendship?.sender_id || "";
@@ -853,6 +1074,20 @@ export default function HomeScreen({
           [incomingConvId]: getMessagePreview(msg),
         }));
         upsertConversationLastMessage(incomingConvId, getMessagePreview(msg));
+
+        const isFromOtherUser = msg.senderId && msg.senderId !== user?.email;
+        const isActiveConversation = incomingConvId === activeConvId;
+        const isMuted = isConversationMutedNow(incomingConvId);
+
+        if (
+          notificationsEnabled &&
+          isFromOtherUser &&
+          !isActiveConversation &&
+          !isMuted
+        ) {
+          const senderName = getDisplayName(msg.senderId);
+          Alert.alert(`Tin nhắn mới từ ${senderName}`, getMessagePreview(msg));
+        }
       }
     };
 
@@ -873,7 +1108,14 @@ export default function HomeScreen({
       socket.off("receiveMessage", handleReceiveMessage);
       socket.off("presence_update", handlePresenceUpdate);
     };
-  }, [addMessage]);
+  }, [
+    activeConvId,
+    addMessage,
+    muteScheduleMap,
+    notificationsEnabled,
+    user?.email,
+    userProfiles,
+  ]);
 
   useEffect(() => {
     if (messagesScrollRef.current) {
@@ -951,7 +1193,7 @@ export default function HomeScreen({
     </LinearGradient>
   );
 
-  const ConversationsView = () => {
+  const renderConversationsView = () => {
     if (selectedChat) {
       return (
         <View style={styles.chatPane}>
@@ -974,8 +1216,20 @@ export default function HomeScreen({
                   ? getDisplayName(selectedChat.partner)
                   : selectedChat.name}
               </Text>
-              <Text style={styles.chatPaneSub}>Đang trò chuyện</Text>
+              <Text style={styles.chatPaneSub}>
+                {isSelectedChatMuted
+                  ? getMuteLabel(selectedChatMuteSchedule)
+                  : "Đang trò chuyện"}
+              </Text>
             </View>
+            <TouchableOpacity
+              style={styles.chatPaneNotifyBtn}
+              onPress={openMuteMenu}
+            >
+              <Text style={styles.chatPaneNotifyIcon}>
+                {isSelectedChatMuted ? "notifications_off" : "notifications"}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {activePinnedMessages.length > 0 && (
@@ -1004,7 +1258,7 @@ export default function HomeScreen({
               const reactionSummary = getReactionSummary(message);
               return (
                 <Pressable
-                  key={message.id || `msg-${index}`}
+                  key={`${message.id || "msg"}-${index}`}
                   onLongPress={() => setActionMessage(message)}
                   style={[
                     styles.messageRow,
@@ -1257,7 +1511,7 @@ export default function HomeScreen({
     );
   };
 
-  const FriendsView = () => (
+  const renderFriendsView = () => (
     <ScrollView style={styles.scrollContainer}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Danh sách bạn bè</Text>
@@ -1415,14 +1669,6 @@ export default function HomeScreen({
     </ScrollView>
   );
 
-  const AIView = () => (
-    <View style={styles.centeredView}>
-      <Text style={styles.aiIcon}>notifications</Text>
-      <Text style={styles.aiTitle}>Notifications</Text>
-      <Text style={styles.aiSubtitle}>Đang được nâng cấp. Sắp ra mắt!</Text>
-    </View>
-  );
-
   const renderProfileView = () => (
     <ScrollView style={styles.scrollContainer}>
       <View style={styles.profileHeader}>
@@ -1526,7 +1772,7 @@ export default function HomeScreen({
         keyboardVerticalOffset={Platform.OS === "ios" ? insets.top + 12 : 0}
       >
         <View style={styles.content}>
-          {activeTab === "chat" && <ConversationsView />}
+          {activeTab === "chat" && renderConversationsView()}
           {activeTab === "contacts" && (
             <ContactsScreen
               user={user}
@@ -1536,7 +1782,6 @@ export default function HomeScreen({
               onOpenGroupConversation={handleOpenGroupConversation}
             />
           )}
-          {activeTab === "notifications" && <AIView />}
           {activeTab === "profile" && renderProfileView()}
         </View>
 
@@ -1587,22 +1832,12 @@ export default function HomeScreen({
 
           <TouchableOpacity
             style={styles.tabItem}
-            onPress={() => setActiveTab("notifications")}
+            onPress={() => onNavigate("notifications")}
           >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "notifications" && styles.tabIconActive,
-              ]}
-            >
+            <Text style={styles.tabIcon}>
               notifications
             </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "notifications" && styles.tabLabelActive,
-              ]}
-            >
+            <Text style={styles.tabLabel}>
               Notifications
             </Text>
           </TouchableOpacity>
@@ -1673,6 +1908,134 @@ export default function HomeScreen({
           </Pressable>
         </Pressable>
       )}
+
+      <Modal
+        visible={showMuteMenuModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowMuteMenuModal(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowMuteMenuModal(false)}
+        >
+          <Pressable
+            style={styles.muteMenuCard}
+            onPress={(event) => event.stopPropagation()}
+          >
+            <Text style={styles.muteModalTitle}>Thông báo cuộc trò chuyện</Text>
+            <Text style={styles.muteModalSubtitle}>Chọn thời gian tắt thông báo</Text>
+
+            <TouchableOpacity
+              style={styles.muteMenuItem}
+              onPress={() => handleSelectMuteSchedule("1h")}
+            >
+              <Text style={styles.muteMenuItemText}>Tắt 1 giờ</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.muteMenuItem}
+              onPress={() => handleSelectMuteSchedule("4h")}
+            >
+              <Text style={styles.muteMenuItemText}>Tắt 4 giờ</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.muteMenuItem}
+              onPress={() => handleSelectMuteSchedule("morning")}
+            >
+              <Text style={styles.muteMenuItemText}>Tắt đến 8:00 sáng</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.muteMenuItem}
+              onPress={() => handleSelectMuteSchedule("custom")}
+            >
+              <Text style={styles.muteMenuItemText}>Khung giờ tùy chỉnh</Text>
+            </TouchableOpacity>
+
+            <View style={styles.muteMenuDivider} />
+
+            <TouchableOpacity
+              style={styles.muteMenuItem}
+              onPress={() => handleSelectMuteSchedule("unmute")}
+            >
+              <Text style={[styles.muteMenuItemText, styles.muteMenuPrimaryText]}>
+                Bật lại thông báo
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.muteMenuCancelBtn}
+              onPress={() => setShowMuteMenuModal(false)}
+            >
+              <Text style={styles.muteMenuCancelText}>Hủy</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={showCustomMuteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCustomMuteModal(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowCustomMuteModal(false)}
+        >
+          <Pressable
+            style={styles.muteModalCard}
+            onPress={(event) => event.stopPropagation()}
+          >
+            <Text style={styles.muteModalTitle}>Khung giờ tắt thông báo</Text>
+            <Text style={styles.muteModalSubtitle}>
+              Nhập giờ theo định dạng 24h HH:mm
+            </Text>
+
+            <View style={styles.muteInputsRow}>
+              <View style={styles.muteInputGroup}>
+                <Text style={styles.muteInputLabel}>Bắt đầu</Text>
+                <TextInput
+                  value={customMuteStartTime}
+                  onChangeText={setCustomMuteStartTime}
+                  placeholder="22:00"
+                  style={styles.muteTimeInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={5}
+                />
+              </View>
+              <View style={styles.muteInputGroup}>
+                <Text style={styles.muteInputLabel}>Kết thúc</Text>
+                <TextInput
+                  value={customMuteEndTime}
+                  onChangeText={setCustomMuteEndTime}
+                  placeholder="07:00"
+                  style={styles.muteTimeInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={5}
+                />
+              </View>
+            </View>
+
+            <View style={styles.muteModalActions}>
+              <TouchableOpacity
+                style={styles.muteModalCancelBtn}
+                onPress={() => setShowCustomMuteModal(false)}
+              >
+                <Text style={styles.muteModalCancelText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.muteModalApplyBtn}
+                onPress={handleApplyCustomMuteSchedule}
+              >
+                <Text style={styles.muteModalApplyText}>Lưu</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1787,6 +2150,19 @@ const styles = StyleSheet.create({
   chatPaneAvatar: { width: 38, height: 38, borderRadius: 19 },
   chatPaneName: { ...Typography.heading, fontSize: 15, color: "#191c1e" },
   chatPaneSub: { ...Typography.body, fontSize: 12, color: "#727784" },
+  chatPaneNotifyBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f1f5fa",
+  },
+  chatPaneNotifyIcon: {
+    fontFamily: "Material Symbols Outlined",
+    fontSize: 21,
+    color: "#32517e",
+  },
 
   pinStrip: { paddingHorizontal: 10, paddingTop: 8, gap: 6 },
   pinItem: {
@@ -2210,4 +2586,134 @@ const styles = StyleSheet.create({
     borderBottomColor: "#eef2f7",
   },
   actionText: { ...Typography.body, fontSize: 15, color: "#1f2631" },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  muteModalCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 16,
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+  },
+  muteMenuCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 16,
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  muteMenuItem: {
+    height: 44,
+    borderRadius: 10,
+    alignItems: "flex-start",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  muteMenuItemText: {
+    ...Typography.body,
+    fontSize: 14,
+    color: "#1f2631",
+  },
+  muteMenuPrimaryText: {
+    ...Typography.label,
+    color: "#0058bc",
+  },
+  muteMenuDivider: {
+    height: 1,
+    backgroundColor: "#edf1f7",
+    marginVertical: 6,
+  },
+  muteMenuCancelBtn: {
+    height: 40,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f5f8fd",
+    marginTop: 2,
+  },
+  muteMenuCancelText: {
+    ...Typography.label,
+    fontSize: 12,
+    color: "#5f697a",
+  },
+  muteModalTitle: {
+    ...Typography.heading,
+    fontSize: 17,
+    color: "#1f2631",
+  },
+  muteModalSubtitle: {
+    ...Typography.body,
+    fontSize: 12,
+    color: "#6e7683",
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  muteInputsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  muteInputGroup: {
+    flex: 1,
+  },
+  muteInputLabel: {
+    ...Typography.label,
+    fontSize: 11,
+    color: "#5f697a",
+    marginBottom: 6,
+  },
+  muteTimeInput: {
+    height: 40,
+    borderWidth: 1,
+    borderColor: "#dbe3ef",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    ...Typography.body,
+    fontSize: 14,
+    color: "#1f2631",
+    backgroundColor: "#f9fbff",
+  },
+  muteModalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 14,
+  },
+  muteModalCancelBtn: {
+    paddingHorizontal: 14,
+    height: 34,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#dbe3ef",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+  muteModalCancelText: {
+    ...Typography.label,
+    fontSize: 12,
+    color: "#5f697a",
+  },
+  muteModalApplyBtn: {
+    paddingHorizontal: 14,
+    height: 34,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0058bc",
+  },
+  muteModalApplyText: {
+    ...Typography.label,
+    fontSize: 12,
+    color: "#fff",
+  },
 });

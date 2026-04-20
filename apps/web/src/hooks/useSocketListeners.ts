@@ -1,21 +1,22 @@
-import { useEffect, useRef } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { useChatStore } from '../store/chatStore';
-import { useCallStore } from '../store/callStore';
-import { leaveCurrentSession } from './useChime';
-import { getMessagePreview } from '../utils/chatUtils';
+import { useEffect, useRef } from "react";
+import { useAuth } from "../context/AuthContext";
+import { useChatStore } from "../store/chatStore";
+import { useCallStore } from "../store/callStore";
+import { leaveCurrentSession } from "./useChime";
+import { getMessagePreview, isConversationMutedNow } from "../utils/chatUtils";
 
 export const useSocketListeners = () => {
   const { socket, user } = useAuth();
-  const { 
-    addMessage, 
-    activeConvId, 
-    markAsRead, 
-    setLocalRead, 
+  const notifiedMessageIdsRef = useRef<Set<string>>(new Set());
+  const {
+    addMessage,
+    activeConvId,
+    markAsRead,
+    setLocalRead,
     setConversations,
     localClearHistory,
     updateMessage,
-    setUserProfiles 
+    setUserProfiles,
   } = useChatStore();
 
   // Helper to update conv list locally
@@ -30,7 +31,9 @@ export const useSocketListeners = () => {
         ...target,
         lastMessageContent: getMessagePreview(msg),
         lastMessageSenderId: msg.senderId,
-        lastMessageTimestamp: msg.createdAt ? new Date(msg.createdAt).getTime() : Date.now(),
+        lastMessageTimestamp: msg.createdAt
+          ? new Date(msg.createdAt).getTime()
+          : Date.now(),
         updatedAt: msg.createdAt || new Date().toISOString(),
       };
 
@@ -40,17 +43,78 @@ export const useSocketListeners = () => {
     });
   };
 
+  // Request notification permission on first user interaction.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "default") return;
+
+    const requestPermission = () => {
+      Notification.requestPermission().catch(() => undefined);
+    };
+
+    window.addEventListener("click", requestPermission, { once: true });
+    return () => {
+      window.removeEventListener("click", requestPermission);
+    };
+  }, []);
+
+  const showIncomingMessageNotification = async (msg: any, convId: string) => {
+    if (
+      typeof window === "undefined" ||
+      !("Notification" in window) ||
+      !user?.email
+    )
+      return;
+    if (!msg?.id || notifiedMessageIdsRef.current.has(msg.id)) return;
+    if (!msg.senderId || msg.senderId === user.email) return;
+    if (isConversationMutedNow(convId)) return;
+
+    const shouldNotify =
+      document.visibilityState !== "visible" || convId !== activeConvId;
+    if (!shouldNotify) return;
+    if (Notification.permission !== "granted") return;
+
+    notifiedMessageIdsRef.current.add(msg.id);
+
+    const senderName = String(msg.senderName || msg.senderId || "Người dùng");
+    const preview = getMessagePreview(msg);
+    const title = `Tin nhắn từ ${senderName}`;
+    const options: NotificationOptions = {
+      body: preview,
+      icon: "/logo_blue.png",
+      badge: "/logo_blue.png",
+      tag: `conv-${convId}`,
+      renotify: true,
+    };
+
+    try {
+      if ("serviceWorker" in navigator) {
+        const registration = await navigator.serviceWorker.getRegistration();
+        if (registration) {
+          await registration.showNotification(title, options);
+          return;
+        }
+      }
+      new Notification(title, options);
+    } catch (err) {
+      console.warn("[notify] Failed to show notification", err);
+    }
+  };
+
   useEffect(() => {
     if (!socket || !user) return;
 
     const handleReceiveMessage = (msg: any) => {
       if (!msg?.id) return;
 
-      addMessage(msg);
-
       const incomingConvId = msg.conversationId || msg.convId;
       if (incomingConvId) {
+        if (incomingConvId === activeConvId) {
+          addMessage(msg);
+        }
+
         upsertConversationLastMessage(incomingConvId, msg);
+        void showIncomingMessageNotification(msg, incomingConvId);
 
         // Auto mark as read if we are in the active conversation
         if (incomingConvId === activeConvId) {
@@ -67,7 +131,10 @@ export const useSocketListeners = () => {
       localClearHistory(data.convId);
     };
 
-    const handlePresenceUpdate = (data: { email: string; status: 'online' | 'offline' }) => {
+    const handlePresenceUpdate = (data: {
+      email: string;
+      status: "online" | "offline";
+    }) => {
       setUserProfiles((prev: Record<string, any>) => {
         const existing = prev[data.email] || {};
         return {
@@ -75,47 +142,61 @@ export const useSocketListeners = () => {
           [data.email]: {
             ...existing,
             email: data.email,
-            status: data.status
-          }
+            status: data.status,
+          },
         };
       });
     };
 
-    const handleMessageReaction = (data: { messageId: string, reactions: any }) => {
-       updateMessage(data.messageId, { reactions: data.reactions });
+    const handleMessageReaction = (data: {
+      messageId: string;
+      reactions: any;
+    }) => {
+      updateMessage(data.messageId, { reactions: data.reactions });
     };
-    
+
     const handleMessageRecalled = (data: { messageId: string }) => {
-      updateMessage(data.messageId, { 
-        recalled: true, 
-        content: 'Tin nhắn đã được thu hồi', 
-        media: [], 
-        files: [], 
-        reactions: {} 
+      updateMessage(data.messageId, {
+        recalled: true,
+        content: "Tin nhắn đã được thu hồi",
+        media: [],
+        files: [],
+        reactions: {},
       } as any);
     };
 
-    const handleMessagePinned = (data: { messageId: string, pinned: boolean, pinnedBy: string }) => {
-      updateMessage(data.messageId, { 
-        pinned: data.pinned, 
-        pinnedBy: data.pinnedBy 
+    const handleMessagePinned = (data: {
+      messageId: string;
+      pinned: boolean;
+      pinnedBy: string;
+    }) => {
+      updateMessage(data.messageId, {
+        pinned: data.pinned,
+        pinnedBy: data.pinnedBy,
       } as any);
     };
 
-    const handlePinUpdate = (data: { conversationId: string, pinnedMessageIds: string[] }) => {
-      console.log('[SOCKET] PIN_UPDATE received:', data);
-      setConversations((prev) => prev.map(c => 
-        c.id === data.conversationId ? { ...c, pinnedMessageIds: data.pinnedMessageIds } : c
-      ));
+    const handlePinUpdate = (data: {
+      conversationId: string;
+      pinnedMessageIds: string[];
+    }) => {
+      console.log("[SOCKET] PIN_UPDATE received:", data);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === data.conversationId
+            ? { ...c, pinnedMessageIds: data.pinnedMessageIds }
+            : c,
+        ),
+      );
     };
 
     // ── Call Events ──────────────────────────────────────────────────────────
     const handleCallIncoming = (data: any) => {
-      console.log('[Socket] call:incoming', data);
+      console.log("[Socket] call:incoming", data);
       useCallStore.getState().setIncomingCall(
         data.convId,
         data.callerProfile, // This goes into 'peer' parameter
-        data.callType || 'audio',
+        data.callType || "audio",
         data.fromEmail,
       );
     };
@@ -123,7 +204,7 @@ export const useSocketListeners = () => {
     const handleCallHangup = async (data: any) => {
       const currentConvId = useCallStore.getState().conversationId;
       if (!data?.convId || data.convId === currentConvId) {
-        console.log('[Socket] call:hangup — releasing hardware');
+        console.log("[Socket] call:hangup — releasing hardware");
         await leaveCurrentSession();
         useCallStore.getState().resetCall();
       }
@@ -132,7 +213,7 @@ export const useSocketListeners = () => {
     const handleCallPeerJoined = (data: any) => {
       const currentConvId = useCallStore.getState().conversationId;
       if (!data?.convId || data.convId === currentConvId) {
-        console.log('[Socket] call:peer_joined');
+        console.log("[Socket] call:peer_joined");
         useCallStore.getState().setPeerJoined(true);
       }
     };
@@ -141,15 +222,17 @@ export const useSocketListeners = () => {
       const currentConvId = useCallStore.getState().conversationId;
       if (!data?.convId || data.convId === currentConvId) {
         useCallStore.getState().setIncomingUpgradeRequest(true);
-        useCallStore.getState().setUpgradeRequesterEmail(data.fromProfile?.email ?? null);
+        useCallStore
+          .getState()
+          .setUpgradeRequesterEmail(data.fromProfile?.email ?? null);
       }
     };
 
     const handleUpgradeAccepted = async (data: any) => {
       const currentConvId = useCallStore.getState().conversationId;
       if (!data?.convId || data.convId === currentConvId) {
-        const { toggleCamera } = await import('./useChime');
-        useCallStore.getState().setCallType('video');
+        const { toggleCamera } = await import("./useChime");
+        useCallStore.getState().setCallType("video");
         useCallStore.getState().setCameraOn(true);
         useCallStore.getState().setUpgradeRequestPending(false);
         await toggleCamera(true);
@@ -164,37 +247,47 @@ export const useSocketListeners = () => {
     };
 
     // Socket listeners — Chat
-    socket.on('receiveMessage', handleReceiveMessage);
-    socket.on('history_cleared', handleHistoryCleared);
-    socket.on('conversation_marked_read', handleConversationRead);
-    socket.on('presence_update', handlePresenceUpdate);
-    socket.on('message_reaction', handleMessageReaction);
-    socket.on('message_recalled', handleMessageRecalled);
-    socket.on('message_pinned', handleMessagePinned);
-    socket.on('PIN_UPDATE', handlePinUpdate);
+    socket.on("receiveMessage", handleReceiveMessage);
+    socket.on("history_cleared", handleHistoryCleared);
+    socket.on("conversation_marked_read", handleConversationRead);
+    socket.on("presence_update", handlePresenceUpdate);
+    socket.on("message_reaction", handleMessageReaction);
+    socket.on("message_recalled", handleMessageRecalled);
+    socket.on("message_pinned", handleMessagePinned);
+    socket.on("PIN_UPDATE", handlePinUpdate);
     // Socket listeners — Call
-    socket.on('call:incoming', handleCallIncoming);
-    socket.on('call:hangup', handleCallHangup);
-    socket.on('call:peer_joined', handleCallPeerJoined);
-    socket.on('call:upgrade_request', handleUpgradeRequest);
-    socket.on('call:upgrade_accepted', handleUpgradeAccepted);
-    socket.on('call:upgrade_declined', handleUpgradeDeclined);
+    socket.on("call:incoming", handleCallIncoming);
+    socket.on("call:hangup", handleCallHangup);
+    socket.on("call:peer_joined", handleCallPeerJoined);
+    socket.on("call:upgrade_request", handleUpgradeRequest);
+    socket.on("call:upgrade_accepted", handleUpgradeAccepted);
+    socket.on("call:upgrade_declined", handleUpgradeDeclined);
 
     return () => {
-      socket.off('receiveMessage', handleReceiveMessage);
-      socket.off('history_cleared', handleHistoryCleared);
-      socket.off('conversation_marked_read', handleConversationRead);
-      socket.off('presence_update', handlePresenceUpdate);
-      socket.off('message_reaction', handleMessageReaction);
-      socket.off('message_recalled', handleMessageRecalled);
-      socket.off('message_pinned', handleMessagePinned);
-      socket.off('PIN_UPDATE', handlePinUpdate);
-      socket.off('call:incoming', handleCallIncoming);
-      socket.off('call:hangup', handleCallHangup);
-      socket.off('call:peer_joined', handleCallPeerJoined);
-      socket.off('call:upgrade_request', handleUpgradeRequest);
-      socket.off('call:upgrade_accepted', handleUpgradeAccepted);
-      socket.off('call:upgrade_declined', handleUpgradeDeclined);
+      socket.off("receiveMessage", handleReceiveMessage);
+      socket.off("history_cleared", handleHistoryCleared);
+      socket.off("conversation_marked_read", handleConversationRead);
+      socket.off("presence_update", handlePresenceUpdate);
+      socket.off("message_reaction", handleMessageReaction);
+      socket.off("message_recalled", handleMessageRecalled);
+      socket.off("message_pinned", handleMessagePinned);
+      socket.off("PIN_UPDATE", handlePinUpdate);
+      socket.off("call:incoming", handleCallIncoming);
+      socket.off("call:hangup", handleCallHangup);
+      socket.off("call:peer_joined", handleCallPeerJoined);
+      socket.off("call:upgrade_request", handleUpgradeRequest);
+      socket.off("call:upgrade_accepted", handleUpgradeAccepted);
+      socket.off("call:upgrade_declined", handleUpgradeDeclined);
     };
-  }, [socket, user, activeConvId, addMessage, markAsRead, setLocalRead, localClearHistory, setUserProfiles, updateMessage]);
+  }, [
+    socket,
+    user,
+    activeConvId,
+    addMessage,
+    markAsRead,
+    setLocalRead,
+    localClearHistory,
+    setUserProfiles,
+    updateMessage,
+  ]);
 };

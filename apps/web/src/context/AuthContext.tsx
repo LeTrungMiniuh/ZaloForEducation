@@ -9,6 +9,7 @@ import api from "../services/api";
 import { io } from "socket.io-client";
 import { getDeviceId, getDeviceInfo } from "../utils/device";
 import Swal from "sweetalert2";
+import { pushSecurityAlert } from "../utils/securityAlerts";
 
 interface AuthContextType {
   user: any;
@@ -226,6 +227,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         window.dispatchEvent(
           new CustomEvent("friendship-updated", { detail: data }),
         );
+      }
+    });
+
+    newSocket.on("security_alert", (data) => {
+      const title = data?.title || "Canh bao bao mat";
+      const message = data?.message || "Co thay doi lien quan den bao mat tai khoan.";
+      const at = data?.at || new Date().toISOString();
+
+      pushSecurityAlert({
+        type: data?.type || 'PASSWORD_CHANGED',
+        title,
+        message,
+        at,
+        metadata: data?.metadata,
+      });
+
+      Swal.fire({
+        toast: true,
+        position: "top-end",
+        icon: "warning",
+        title,
+        text: message,
+        showConfirmButton: false,
+        timer: 6000,
+        timerProgressBar: true,
+      });
+
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+        new Notification(title, {
+          body: message,
+          icon: "/logo_blue.png",
+          badge: "/logo_blue.png",
+          tag: `security-${data?.type || 'alert'}`,
+          renotify: true,
+        });
       }
     });
 

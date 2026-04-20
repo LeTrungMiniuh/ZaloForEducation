@@ -1,8 +1,8 @@
-import type { Message, Conversation } from '@zalo-edu/shared';
-import api from '../services/api';
-import { create } from 'zustand';
-import type { Attachment } from '../utils/chatUtils';
-import Swal from 'sweetalert2';
+import type { Message, Conversation } from "@zalo-edu/shared";
+import api from "../services/api";
+import { create } from "zustand";
+import type { Attachment } from "../utils/chatUtils";
+import Swal from "sweetalert2";
 
 interface ChatState {
   conversations: Conversation[];
@@ -14,10 +14,16 @@ interface ChatState {
   profileLoading: Set<string>;
   highlightedMessageId: string | null;
   previewImage: { url: string; name: string } | null;
-  
+
   // Actions
-  setConversations: (convs: Conversation[] | ((prev: Conversation[]) => Conversation[])) => void;
-  setUserProfiles: (profiles: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void;
+  setConversations: (
+    convs: Conversation[] | ((prev: Conversation[]) => Conversation[]),
+  ) => void;
+  setUserProfiles: (
+    profiles:
+      | Record<string, any>
+      | ((prev: Record<string, any>) => Record<string, any>),
+  ) => void;
   loadUserProfile: (email: string) => Promise<void>;
   setActiveConversation: (convId: string | null) => void;
   setMessages: (messages: Message[], nextCursor: string | null) => void;
@@ -26,19 +32,30 @@ interface ChatState {
   setHighlightedMessageId: (id: string | null) => void;
   jumpToMessage: (messageId: string) => void;
   setPreviewImage: (url: string | null, name?: string) => void;
-  
+
   // Async Thunks (Logic)
   fetchConversations: () => Promise<void>;
   fetchMessages: (convId: string, limit?: number) => Promise<void>;
   loadMoreMessages: (convId: string, limit?: number) => Promise<void>;
-  sendMessageOptimistic: (convId: string, senderEmail: string, content: string, msgType?: string, attachments?: Attachment[], replyTo?: any) => Promise<void>;
+  sendMessageOptimistic: (
+    convId: string,
+    senderEmail: string,
+    content: string,
+    msgType?: string,
+    attachments?: Attachment[],
+    replyTo?: any,
+  ) => Promise<void>;
   startDirectChat: (targetEmail: string) => Promise<void>;
   clearHistory: (convId: string) => Promise<void>;
   localClearHistory: (convId: string) => void;
   markAsRead: (convId: string) => Promise<void>;
   setLocalRead: (convId: string) => void;
   deleteMessageOptimistic: (convId: string, messageId: string) => Promise<void>;
-  patchMessageOptimistic: (convId: string, messageId: string, payload: any) => Promise<void>;
+  patchMessageOptimistic: (
+    convId: string,
+    messageId: string,
+    payload: any,
+  ) => Promise<void>;
 
   // Search
   isSearching: boolean;
@@ -69,22 +86,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Search Initial State
   isSearching: false,
-  searchQuery: '',
+  searchQuery: "",
   searchResults: { contacts: [], messages: [], files: [] },
-  searchHistory: JSON.parse(localStorage.getItem('search_history') || '[]'),
-  
+  searchHistory: JSON.parse(localStorage.getItem("search_history") || "[]"),
+
   // Add Friend Modal State
   isAddFriendModalOpen: false,
   setIsAddFriendModalOpen: (val) => set({ isAddFriendModalOpen: val }),
-  
+
   // ... existing actions ...
 
   clearHistory: async (convId) => {
     try {
-      await api.delete(`/chat/conversations/${encodeURIComponent(convId)}/history`);
+      await api.delete(
+        `/chat/conversations/${encodeURIComponent(convId)}/history`,
+      );
       get().localClearHistory(convId);
     } catch (err) {
-      console.error('Failed to clear history', err);
+      console.error("Failed to clear history", err);
       throw err;
     }
   },
@@ -97,22 +116,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // 2. Xóa hẳn hội thoại khỏi danh sách bên trái
     set((state) => ({
-      conversations: state.conversations.filter((c) => c.id !== convId)
+      conversations: state.conversations.filter((c) => c.id !== convId),
     }));
   },
 
-  setConversations: (updater) => set((state) => ({ 
-    conversations: typeof updater === 'function' ? updater(state.conversations) : updater 
-  })),
+  setConversations: (updater) =>
+    set((state) => ({
+      conversations:
+        typeof updater === "function" ? updater(state.conversations) : updater,
+    })),
 
-  setUserProfiles: (updater) => set((state) => ({
-    userProfiles: typeof updater === 'function' ? updater(state.userProfiles) : updater
-  })),
+  setUserProfiles: (updater) =>
+    set((state) => ({
+      userProfiles:
+        typeof updater === "function" ? updater(state.userProfiles) : updater,
+    })),
 
   loadUserProfile: async (email) => {
-    if (!email || get().userProfiles[email] || get().profileLoading.has(email)) return;
+    if (!email || get().userProfiles[email] || get().profileLoading.has(email))
+      return;
 
-    set((state) => ({ profileLoading: new Set(state.profileLoading).add(email) }));
+    set((state) => ({
+      profileLoading: new Set(state.profileLoading).add(email),
+    }));
     try {
       const res = await api.get(`/chat/friends/search`, { params: { email } });
       if (res.data?.found && res.data?.user) {
@@ -122,7 +148,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }));
       }
     } catch (err) {
-      console.error('Error loading profile:', err);
+      console.error("Error loading profile:", err);
     } finally {
       set((state) => {
         const next = new Set(state.profileLoading);
@@ -131,7 +157,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
     }
   },
-  
+
   setActiveConversation: (convId) => {
     set({ activeConvId: convId, messages: [], nextCursor: null });
     if (convId) {
@@ -141,58 +167,63 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setMessages: (messages, nextCursor) => set({ messages, nextCursor }),
 
-  addMessage: (message) => set((state) => {
-    // 1. Tránh trùng lặp tin nhắn dựa trên ID
-    if (state.messages.find(m => m.id === message.id)) return state;
-    
-    // 2. Kiểm tra nếu tin nhắn này "trùng khớp" với một tin nhắn đang ở trạng thái 'sending' (Optimistic)
-    // Điều này xảy ra khi Socket báo về nhanh hơn API response
-    const optimisticIndex = state.messages.findIndex(m => 
-      m.senderId === message.senderId && 
-      m.content === message.content && 
-      m.status === 'sending' &&
-      Math.abs(new Date(m.createdAt).getTime() - new Date(message.createdAt).getTime()) < 10000 // Trong vòng 10s
-    );
+  addMessage: (message) =>
+    set((state) => {
+      // 1. Tránh trùng lặp tin nhắn dựa trên ID
+      if (state.messages.find((m) => m.id === message.id)) return state;
 
-    let newMessages;
-    if (optimisticIndex !== -1) {
-      // "Hợp nhất" tin nhắn thật vào vị trí tin nhắn tạm
-      newMessages = [...state.messages];
-      newMessages[optimisticIndex] = { ...message, status: 'sent' };
-    } else {
-      newMessages = [...state.messages, message];
-    }
-    
-    // 3. Cập nhật Preview trong danh sách hội thoại và đẩy lên đầu
-    const newConvs = [...state.conversations];
-    const incomingConvId = message.conversationId || (message as any).convId;
-    const convIndex = newConvs.findIndex(c => c.id === incomingConvId);
-    
-    if (convIndex !== -1) {
-      const updatedConv = {
-        ...newConvs[convIndex],
-        lastMessageContent: message.content,
-        lastMessageSenderId: message.senderId,
-        lastMessageTimestamp: new Date(message.createdAt).getTime(),
-        updatedAt: message.createdAt,
+      // 2. Kiểm tra nếu tin nhắn này "trùng khớp" với một tin nhắn đang ở trạng thái 'sending' (Optimistic)
+      // Điều này xảy ra khi Socket báo về nhanh hơn API response
+      const optimisticIndex = state.messages.findIndex(
+        (m) =>
+          m.senderId === message.senderId &&
+          m.content === message.content &&
+          m.status === "sending" &&
+          Math.abs(
+            new Date(m.createdAt).getTime() -
+              new Date(message.createdAt).getTime(),
+          ) < 10000, // Trong vòng 10s
+      );
+
+      let newMessages;
+      if (optimisticIndex !== -1) {
+        // "Hợp nhất" tin nhắn thật vào vị trí tin nhắn tạm
+        newMessages = [...state.messages];
+        newMessages[optimisticIndex] = { ...message, status: "sent" };
+      } else {
+        newMessages = [...state.messages, message];
+      }
+
+      // 3. Cập nhật Preview trong danh sách hội thoại và đẩy lên đầu
+      const newConvs = [...state.conversations];
+      const incomingConvId = message.conversationId || (message as any).convId;
+      const convIndex = newConvs.findIndex((c) => c.id === incomingConvId);
+
+      if (convIndex !== -1) {
+        const updatedConv = {
+          ...newConvs[convIndex],
+          lastMessageContent: message.content,
+          lastMessageSenderId: message.senderId,
+          lastMessageTimestamp: new Date(message.createdAt).getTime(),
+          updatedAt: message.createdAt,
+        };
+
+        newConvs.splice(convIndex, 1);
+        newConvs.unshift(updatedConv);
+      }
+
+      return {
+        messages: newMessages,
+        conversations: newConvs,
       };
-      
-      newConvs.splice(convIndex, 1);
-      newConvs.unshift(updatedConv);
-    }
-    
-    return { 
-      messages: newMessages,
-      conversations: newConvs
-    };
-  }),
+    }),
 
   markAsRead: async (convId) => {
     // 1. Optimistic Update
     set((state) => ({
-      conversations: state.conversations.map((c) => 
-        c.id === convId ? { ...c, lastReadAt: Date.now() } : c
-      )
+      conversations: state.conversations.map((c) =>
+        c.id === convId ? { ...c, lastReadAt: Date.now() } : c,
+      ),
     }));
     get().setLocalRead(convId);
 
@@ -200,27 +231,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/read`);
     } catch (err) {
-      console.error('Failed to mark as read on server', err);
+      console.error("Failed to mark as read on server", err);
       // Optional: Rollback if critical, but for read status we usually don't need it
     }
   },
 
-  setLocalRead: (convId) => set((state) => ({
-    conversations: state.conversations.map((c) => 
-      c.id === convId ? { ...c, lastReadAt: Date.now() } : c
-    )
-  })),
+  setLocalRead: (convId) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === convId ? { ...c, lastReadAt: Date.now() } : c,
+      ),
+    })),
 
-  updateMessage: (msgId, updates) => set((state) => ({
-    messages: state.messages.map(m => m.id === msgId ? { ...m, ...updates } : m)
-  })),
+  updateMessage: (msgId, updates) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === msgId ? { ...m, ...updates } : m,
+      ),
+    })),
 
   setHighlightedMessageId: (id) => set({ highlightedMessageId: id }),
 
   jumpToMessage: (messageId) => {
     const el = document.getElementById(`msg-${messageId}`);
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
       get().setHighlightedMessageId(messageId);
       setTimeout(() => {
         if (get().highlightedMessageId === messageId) {
@@ -228,32 +263,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }, 2000);
     } else {
-      console.warn('Message not found in current view. It might be further up in history.');
+      console.warn(
+        "Message not found in current view. It might be further up in history.",
+      );
       // Optional: Logic to fetch more messages could go here
     }
   },
 
   fetchConversations: async () => {
     try {
-      const res = await api.get('/chat/conversations');
+      const res = await api.get("/chat/conversations");
       set({ conversations: res.data });
     } catch (err) {
-      console.error('Failed to fetch conversations', err);
+      console.error("Failed to fetch conversations", err);
     }
   },
 
   fetchMessages: async (convId, limit = 30) => {
     set({ isLoadingMessages: true });
     try {
-      const res = await api.get(`/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${limit}`);
-      set({ 
-        messages: res.data.messages, 
+      const res = await api.get(
+        `/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${limit}`,
+      );
+      set({
+        messages: res.data.messages,
         nextCursor: res.data.nextCursor,
-        isLoadingMessages: false 
+        isLoadingMessages: false,
       });
     } catch (err) {
       set({ isLoadingMessages: false });
-      console.error('Failed to fetch messages', err);
+      console.error("Failed to fetch messages", err);
     }
   },
 
@@ -262,102 +301,128 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!nextCursor) return;
 
     try {
-      const res = await api.get(`/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${limit}&cursor=${nextCursor}`);
-      set({ 
+      const res = await api.get(
+        `/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${limit}&cursor=${nextCursor}`,
+      );
+      set({
         messages: [...res.data.messages, ...messages], // Prepend older messages
-        nextCursor: res.data.nextCursor 
+        nextCursor: res.data.nextCursor,
       });
     } catch (err) {
-      console.error('Failed to load more messages', err);
+      console.error("Failed to load more messages", err);
     }
   },
 
-  sendMessageOptimistic: async (convId, senderEmail, content, msgType = 'text', attachments = [], replyTo = null) => {
+  sendMessageOptimistic: async (
+    convId,
+    senderEmail,
+    content,
+    msgType = "text",
+    attachments = [],
+    replyTo = null,
+  ) => {
     const tempId = `TEMP#${Date.now()}`;
     const timestamp = new Date().toISOString();
-    
-    // Categorize attachments
-    const media = attachments.filter(a => a.mimeType.startsWith('image/') || a.mimeType.startsWith('video/')).map(a => ({
-      url: a.dataUrl,
-      dataUrl: a.dataUrl,
-      name: a.name,
-      mimeType: a.mimeType,
-      size: a.size
-    }));
 
-    const files = attachments.filter(a => !a.mimeType.startsWith('image/') && !a.mimeType.startsWith('video/')).map(a => ({
-      url: a.dataUrl,
-      dataUrl: a.dataUrl,
-      name: a.name,
-      mimeType: a.mimeType,
-      size: a.size
-    }));
+    // Categorize attachments
+    const media = attachments
+      .filter(
+        (a) =>
+          a.mimeType.startsWith("image/") || a.mimeType.startsWith("video/"),
+      )
+      .map((a) => ({
+        url: a.dataUrl,
+        dataUrl: a.dataUrl,
+        name: a.name,
+        mimeType: a.mimeType,
+        size: a.size,
+      }));
+
+    const files = attachments
+      .filter(
+        (a) =>
+          !a.mimeType.startsWith("image/") && !a.mimeType.startsWith("video/"),
+      )
+      .map((a) => ({
+        url: a.dataUrl,
+        dataUrl: a.dataUrl,
+        name: a.name,
+        mimeType: a.mimeType,
+        size: a.size,
+      }));
 
     const optimisticMsg: any = {
       id: tempId,
       conversationId: convId,
       senderId: senderEmail,
       content,
-      type: (msgType || (attachments.length > 0 ? 'media' : 'text')) as any,
-      status: 'sending',
+      type: (msgType || (attachments.length > 0 ? "media" : "text")) as any,
+      status: "sending",
       createdAt: timestamp,
       media: media.length > 0 ? media : undefined,
       files: files.length > 0 ? files : undefined,
-      replyTo: replyTo || undefined
+      replyTo: replyTo || undefined,
     };
 
     // 1. Add Optimistically
     set((state) => {
       const newConvs = [...state.conversations];
-      const convIndex = newConvs.findIndex(c => c.id === convId);
+      const convIndex = newConvs.findIndex((c) => c.id === convId);
       if (convIndex !== -1) {
         const updatedConv = {
           ...newConvs[convIndex],
           lastMessageContent: (() => {
-            if (!content || content.startsWith('MSG#')) {
-              if (media.length > 0) return '[Hình ảnh]';
-              if (files.length > 0) return '[Tệp tin]';
-              return 'Tin nhắn mới';
+            if (!content || content.startsWith("MSG#")) {
+              if (media.length > 0) return "[Hình ảnh]";
+              if (files.length > 0) return "[Tệp tin]";
+              return "Tin nhắn mới";
             }
             return content;
           })(),
           lastMessageSenderId: senderEmail,
           lastMessageTimestamp: new Date(timestamp).getTime(),
           updatedAt: timestamp,
-          lastReadAt: Date.now()
+          lastReadAt: Date.now(),
         };
         newConvs.splice(convIndex, 1);
         newConvs.unshift(updatedConv);
       }
-      return { 
+      return {
         messages: [...state.messages, optimisticMsg],
-        conversations: newConvs
+        conversations: newConvs,
       };
     });
 
     try {
-      const res = await api.post(`/chat/conversations/${encodeURIComponent(convId)}/messages`, {
-        content,
-        type: msgType,
-        media: media.length > 0 ? media : undefined,
-        files: files.length > 0 ? files : undefined,
-        replyTo: replyTo || undefined
-      });
+      const res = await api.post(
+        `/chat/conversations/${encodeURIComponent(convId)}/messages`,
+        {
+          content,
+          type: msgType,
+          media: media.length > 0 ? media : undefined,
+          files: files.length > 0 ? files : undefined,
+          replyTo: replyTo || undefined,
+        },
+      );
 
       // 2. Replace temp message with server ACK
       set((state) => {
-        const stillExists = state.messages.some(m => m.id === tempId);
+        const stillExists = state.messages.some((m) => m.id === tempId);
         if (!stillExists) return state;
 
         return {
-          messages: state.messages.map(m => m.id === tempId ? { ...res.data, status: 'sent' } : m)
+          messages: state.messages.map((m) =>
+            m.id === tempId ? { ...res.data, status: "sent" } : m,
+          ),
         };
       });
     } catch (err) {
       set((state) => ({
-        messages: state.messages.map(m => m.id === tempId ? { ...m, status: 'error' } : m)
+        messages: state.messages.map((m) =>
+          m.id === tempId ? { ...m, status: "error" } : m,
+        ),
       }));
-      console.error('Failed to send message', err);
+      console.error("Failed to send message", err);
     }
   },
 
@@ -369,11 +434,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // 2. Persist to Backend
     try {
-      await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`, {
-        action: 'deleteForMe',
-      });
+      await api.patch(
+        `/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`,
+        {
+          action: "deleteForMe",
+        },
+      );
     } catch (err) {
-      console.error('Failed to delete message for me', err);
+      console.error("Failed to delete message for me", err);
     }
   },
 
@@ -386,29 +454,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: state.messages.map((m) => {
         if (m.id !== messageId) return m;
 
-        if (action === 'recall') {
-          return { 
-            ...m, 
-            recalled: true, 
-            content: 'Tin nhắn đã được thu hồi', 
-            media: [], 
-            files: [], 
-            reactions: {} 
+        if (action === "recall") {
+          return {
+            ...m,
+            recalled: true,
+            content: "Tin nhắn đã được thu hồi",
+            media: [],
+            files: [],
+            reactions: {},
           };
         }
-        if (action === 'pin' || action === 'unpin') {
-          return { 
-            ...m, 
-            pinned: action === 'pin', 
-            pinnedBy: action === 'pin' ? userEmail : null 
+        if (action === "pin" || action === "unpin") {
+          return {
+            ...m,
+            pinned: action === "pin",
+            pinnedBy: action === "pin" ? userEmail : null,
           };
         }
-        if (action === 'react') {
+        if (action === "react") {
           const { reactAction, emoji } = payload;
           const newReactions = { ...m.reactions };
           const users = newReactions[emoji] || [];
 
-          if (reactAction === 'add') {
+          if (reactAction === "add") {
             if (!users.includes(userEmail)) {
               newReactions[emoji] = [...users, userEmail];
             }
@@ -424,35 +492,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
     // 2. Persist to Backend
     try {
-      const res = await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`, payload);
-      
+      const res = await api.patch(
+        `/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`,
+        payload,
+      );
+
       // Update with final server state
       set((state) => ({
-        messages: state.messages.map(m => m.id === messageId ? res.data : m)
+        messages: state.messages.map((m) =>
+          m.id === messageId ? res.data : m,
+        ),
       }));
     } catch (err: any) {
       console.error(`Failed to patch message (${action})`, err);
-      const errorMsg = err.response?.data?.message || 'Có lỗi xảy ra khi thực hiện thao tác này.';
-      
-      if (action === 'pin') {
+      const errorMsg =
+        err.response?.data?.message ||
+        "Có lỗi xảy ra khi thực hiện thao tác này.";
+
+      if (action === "pin") {
         // Rollback optimistic update
         set((state) => ({
-          messages: state.messages.map(m => m.id === messageId ? { ...m, pinned: false, pinnedBy: null } : m)
+          messages: state.messages.map((m) =>
+            m.id === messageId ? { ...m, pinned: false, pinnedBy: null } : m,
+          ),
         }));
 
         Swal.fire({
-          icon: 'error',
-          title: 'Không thể ghim tin nhắn',
+          icon: "error",
+          title: "Không thể ghim tin nhắn",
           text: errorMsg,
-          confirmButtonColor: '#00418f',
+          confirmButtonColor: "#00418f",
           timer: 3000,
-          timerProgressBar: true
+          timerProgressBar: true,
         });
       }
     }
   },
 
-  setPreviewImage: (url, name = 'image.png') => {
+  setPreviewImage: (url, name = "image.png") => {
     if (!url) {
       set({ previewImage: null });
     } else {
@@ -463,7 +540,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // Search Implementation
   setIsSearching: (val) => set({ isSearching: val }),
   setSearchQuery: (q) => set({ searchQuery: q }),
-  
+
   performGlobalSearch: async (query) => {
     const q = query.trim();
     if (q.length < 2) {
@@ -474,7 +551,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const res = await api.get(`/chat/search?q=${encodeURIComponent(query)}`);
       set({ searchResults: res.data });
     } catch (err) {
-      console.error('Search failed', err);
+      console.error("Search failed", err);
     }
   },
 
@@ -482,25 +559,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const q = query.trim();
     if (!q) return;
     set((state) => {
-      const newHistory = [q, ...state.searchHistory.filter(h => h !== q)].slice(0, 10);
-      localStorage.setItem('search_history', JSON.stringify(newHistory));
+      const newHistory = [
+        q,
+        ...state.searchHistory.filter((h) => h !== q),
+      ].slice(0, 10);
+      localStorage.setItem("search_history", JSON.stringify(newHistory));
       return { searchHistory: newHistory };
     });
   },
 
   clearSearchHistory: () => {
-    localStorage.removeItem('search_history');
+    localStorage.removeItem("search_history");
     set({ searchHistory: [] });
   },
 
   startDirectChat: async (targetEmail) => {
     try {
-      const res = await api.post('/chat/conversations/direct', { targetEmail });
+      const res = await api.post("/chat/conversations/direct", { targetEmail });
       const conv = res.data;
-      
+
       // Update conversations list if not present
       set((state) => {
-        const exists = state.conversations.find(c => c.id === conv.id);
+        const exists = state.conversations.find((c) => c.id === conv.id);
         if (!exists) {
           return { conversations: [conv, ...state.conversations] };
         }
@@ -508,9 +588,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
 
       get().setActiveConversation(conv.id);
-      set({ isSearching: false, searchQuery: '' });
+      set({ isSearching: false, searchQuery: "" });
     } catch (err) {
-      console.error('Failed to start direct chat', err);
+      console.error("Failed to start direct chat", err);
     }
   },
 }));
