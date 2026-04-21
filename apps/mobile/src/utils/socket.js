@@ -20,6 +20,9 @@ class SocketService {
     "call:hangup": [],
     "call:timeout": [],
     "call:peer_joined": [],
+    "call:upgrade_request": [],
+    "call:upgrade_accepted": [],
+    "call:upgrade_declined": [],
   };
 
   async connect(email, deviceId, tokenOverride) {
@@ -109,10 +112,18 @@ class SocketService {
 
   // Đăng ký listener (có kiểm tra trùng lặp)
   on(event, callback) {
-    if (this.listeners[event]) {
-      if (!this.listeners[event].includes(callback)) {
-        this.listeners[event].push(callback);
+    if (!this.listeners[event]) {
+      this.listeners[event] = [];
+      // Nếu socket đã kết nối, đăng ký sự kiện mới với socket server ngay lập tức
+      if (this.socket) {
+        this.socket.on(event, (data) => {
+          this.listeners[event].forEach((cb) => cb(data));
+        });
       }
+    }
+    
+    if (!this.listeners[event].includes(callback)) {
+      this.listeners[event].push(callback);
     }
   }
 

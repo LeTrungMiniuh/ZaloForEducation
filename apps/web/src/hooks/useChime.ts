@@ -63,8 +63,12 @@ export const leaveCurrentSession = async () => {
   if (globalSession) {
     console.log('[Chime] Cleaning up global session...');
     try {
-      if (globalVideoStarted) await globalSession.audioVideo.stopVideoInput();
-      await globalSession.audioVideo.stopAudioInput();
+      const cleanupPromises: Promise<void>[] = [];
+      if (globalVideoStarted) cleanupPromises.push(globalSession.audioVideo.stopVideoInput());
+      cleanupPromises.push(globalSession.audioVideo.stopAudioInput());
+      
+      await Promise.all(cleanupPromises);
+      
       globalSession.audioVideo.stopLocalVideoTile();
       globalSession.audioVideo.stop();
       if (globalLocalVideo?.srcObject) {
@@ -191,8 +195,23 @@ export const useChime = () => {
     globalTiles = {};
     globalVideoStarted = false;
 
+    // [SENIOR] Listen for remote video element mount to bind tiles immediately
+    const remoteVideoObserver = new MutationObserver(() => {
+      const remoteEl = document.getElementById('remote-video') as HTMLVideoElement;
+      if (remoteEl) {
+        const { remoteTiles } = useCallStore.getState();
+        if (remoteTiles.length > 0 && globalSession) {
+          console.log(`[Web-Chime] 🔗 DOM Node Arrived! Binding remote tile ${remoteTiles[0].tileId}`);
+          globalSession.audioVideo.bindVideoElement(remoteTiles[0].tileId, remoteEl);
+        }
+      }
+    });
+    if (document.body) {
+      remoteVideoObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
     try {
-      // 1. Audio Input
+      // 1. Audio Input & Output
       console.log('[Chime] Step 1: Listing audio devices...');
       const audioInputDevices = await session.audioVideo.listAudioInputDevices();
       if (audioInputDevices.length > 0) {
@@ -200,6 +219,15 @@ export const useChime = () => {
         await session.audioVideo.startAudioInput(audioInputDevices[0].deviceId);
       } else {
         throw new Error('Không tìm thấy Micro');
+      }
+
+      const audioOutputDevices = await session.audioVideo.listAudioOutputDevices();
+      if (audioOutputDevices.length > 0) {
+        console.log(`[Chime] Using speaker: ${audioOutputDevices[0].label || 'Default'}`);
+        await session.audioVideo.chooseAudioOutput(audioOutputDevices[0].deviceId);
+      } else {
+        console.warn('[Chime] No audio output devices found, attempting default...');
+        await session.audioVideo.chooseAudioOutput(null as any);
       }
 
       // 2. Video Input
@@ -230,23 +258,24 @@ export const useChime = () => {
           if (isLocal) {
             globalTiles.local = tileId;
           } else {
+            // [SENIOR] Handle Remote Tile
             globalTiles.remote = tileId;
-
-            // 🚀 AGGRESSIVELY FORCE UI MOUNT (DO NOT CHECK tileState.active)
-            console.log(`[Web-Chime] 🚀 Forcing remote video mount for tile ${tileId}`);
             
             const store = useCallStore.getState();
             store.setRemoteCameraOn(true);
             
             const exists = store.remoteTiles.find(t => t.tileId === tileId);
             if (!exists) {
-              store.setRemoteTiles([...store.remoteTiles, { tileId, attendeeId }]);
+              store.setRemoteTiles([{ tileId, attendeeId }]);
             }
 
-            // Attempt to bind immediately if the DOM node somehow already exists
-            if (globalRemoteVideo) {
+            // Bind immediately if DOM is already there
+            const remoteEl = document.getElementById('remote-video') as HTMLVideoElement;
+            if (remoteEl) {
               console.log(`[Web-Chime] 🔗 Direct binding tile ${tileId} to existing remote video`);
-              globalSession?.audioVideo.bindVideoElement(tileId, globalRemoteVideo);
+              session.audioVideo.bindVideoElement(tileId, remoteEl);
+            } else {
+              console.warn(`[Web-Chime] ⏳ Remote tile ${tileId} arrived but DOM not ready. MutationObserver will handle it.`);
             }
           }
           bindTile(tileId, isLocal);
@@ -255,8 +284,6 @@ export const useChime = () => {
           console.log(`[Web-Chime] ❌ Tile Removed: ${tileId}`);
           if (!isValidTileId(tileId)) return;
           
-          const { remoteTiles, setRemoteTiles, setRemoteCameraOn } = useCallStore.getState();
-
           if (globalTiles.local === tileId) {
             globalTiles.local = undefined;
           }
@@ -270,6 +297,7 @@ export const useChime = () => {
             }
             
             // Clear from store
+            const { remoteTiles, setRemoteTiles, setRemoteCameraOn } = useCallStore.getState();
             const nextTiles = remoteTiles.filter(t => t.tileId !== tileId);
             setRemoteTiles(nextTiles);
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PermissionsAndroid, Platform, AppState } from 'react-native';
+import { PermissionsAndroid, Platform, AppState, Alert } from 'react-native';
 import { ChimeModuleBridge } from '../bridge/chime';
 
 import { useCallStore } from '../store/callStore';
@@ -35,13 +35,23 @@ export const useChime = () => {
   }, [meetingData, attendeeData]);
 
   const requestPermissions = async (isVideo = true) => {
+    console.log(`[Chime-Permissions] Checking permissions for ${isVideo ? 'Video' : 'Audio'} call on ${Platform.OS}`);
+    
+    // On iOS, the Chime Native SDK handles permissions when meeting starts, 
+    // but for Android we must request explicitly via PermissionsAndroid.
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
     try {
       const grantedAudio = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      console.log(`[Chime-Permissions] Audio permission result: ${grantedAudio}`);
       if (grantedAudio !== PermissionsAndroid.RESULTS.GRANTED) return false;
 
-      // Only ask for camera if it's explicitly a video call
       if (isVideo) {
+        console.log('[Chime-Permissions] Requesting Camera permission...');
         const grantedVideo = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+        console.log(`[Chime-Permissions] Camera permission result: ${grantedVideo}`);
         if (grantedVideo !== PermissionsAndroid.RESULTS.GRANTED) return false;
       }
       return true;
@@ -124,14 +134,16 @@ export const useChime = () => {
 
       ChimeModuleBridge.addListener('onMeetingStart', () => {
         console.log('[Chime-Bridge] 🌍 SIGNALING CONNECTED');
-        // Force speakerphone for all calls by default
+        // [SENIOR] Ensure Audio and Video are active as soon as signaled
         setTimeout(() => {
-          console.log('[Chime-Bridge] 🔊 Forcing Audio Output to Speaker');
+          console.log('[Chime-Bridge] 🔊 Unmuting and starting media streams');
           if (ChimeModuleBridge.switchAudioOutput) {
-            ChimeModuleBridge.switchAudioOutput(true); // true = Speaker
+            ChimeModuleBridge.switchAudioOutput(callType === 'video'); // Force speaker for video
           }
-          // Explicitly unmute local mic to prevent silent input bugs
           ChimeModuleBridge.toggleMic(true);
+          if (callType === 'video') {
+            ChimeModuleBridge.toggleCamera(true);
+          }
         }, 500);
       });
 
@@ -177,10 +189,38 @@ export const useChime = () => {
     remoteTiles: globalRemoteTiles,
     cleanup,
     toggleMic: useCallback((on) => ChimeModuleBridge.toggleMic(on), []),
-    toggleCamera: useCallback((on) => {
+    
+    // [SENIOR] Dynamic upgrade handler for Camera
+    requestCameraPermissionUpgrade: async () => {
+      if (Platform.OS !== 'android') return true;
+      try {
+        const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      } catch (err) {
+        console.warn("[Chime-Bridge] Camera permission upgrade error:", err);
+        return false;
+      }
+    },
+    
+    toggleCamera: useCallback(async (on) => {
+      if (on) {
+        if (Platform.OS === 'android') {
+          try {
+            const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+            if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+              Alert.alert('Chưa cấp quyền', 'Vui lòng cấp quyền Camera để bật Video.');
+              return;
+            }
+          } catch (err) {
+            console.warn('[Chime-Bridge] Camera Permission upgrade failed', err);
+            return;
+          }
+        }
+      }
       isCameraUserEnabled.current = on;
       return ChimeModuleBridge.toggleCamera(on);
     }, []),
-    switchAudioOutput: useCallback((useSpeaker) => ChimeModuleBridge.switchAudioOutput(!!useSpeaker), [])
+    switchAudioOutput: useCallback((useSpeaker) => ChimeModuleBridge.switchAudioOutput(!!useSpeaker), []),
+    requestPermissions
   };
 };

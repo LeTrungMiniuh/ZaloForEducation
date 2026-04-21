@@ -27,6 +27,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           return delay;
         },
         connectTimeout: 10000,
+        family: 4, // [SENIOR] Force IPv4 to fix DNS resolution issues
       },
     });
 

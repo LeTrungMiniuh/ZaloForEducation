@@ -8,6 +8,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { userPlatformMap } from '../chat/chat.gateway';
+import { CallService } from './call.service';
 
 /**
  * CallGateway — Xử lý signaling cho cuộc gọi AWS Chime.
@@ -24,6 +25,8 @@ export class CallGateway {
   server: Server;
 
   private readonly logger = new Logger(CallGateway.name);
+
+  constructor(private readonly callService: CallService) {}
 
   // ─── Call Signaling ────────────────────────────────────────────────────────
 
@@ -102,7 +105,7 @@ export class CallGateway {
    * Callee → Backend → Caller: Từ chối cuộc gọi
    */
   @SubscribeMessage('call:reject')
-  handleCallReject(
+  async handleCallReject(
     @MessageBody() data: { convId: string; toEmail: string; callId: string; reason?: string },
     @ConnectedSocket() client: Socket,
   ) {
@@ -110,6 +113,10 @@ export class CallGateway {
     const callerRoom = `user#${data.toEmail.toLowerCase()}`;
     this.logger.log(`[Reject] ${data.toEmail} | CallId: ${data.callId}`);
     
+    // [CLEANUP] Trigger Redis/Chime cleanup on reject
+    const fromEmail = client['user']?.email || 'system';
+    await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
+
     // 1. Thông báo cho người gọi
     this.server.to(callerRoom).emit('call:reject', { 
       convId: data.convId, 
@@ -136,12 +143,17 @@ export class CallGateway {
    * Hệ thống/Client → Backend → Đối phương: Kết thúc do quá giờ
    */
   @SubscribeMessage('call:timeout')
-  handleCallTimeout(
+  async handleCallTimeout(
     @MessageBody() data: { convId: string; toEmail: string; callId: string },
     @ConnectedSocket() client: Socket,
   ) {
     if (!data?.convId || !data?.toEmail) return;
     const targetRoom = `user#${data.toEmail.toLowerCase()}`;
+    
+    // [CLEANUP] Trigger Redis/Chime cleanup on timeout
+    const fromEmail = client['user']?.email || 'system';
+    await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
+
     this.server.to(targetRoom).emit('call:timeout', { convId: data.convId, callId: data.callId });
     
     // Đồng thời dismiss các thiết bị khác của target
@@ -168,11 +180,17 @@ export class CallGateway {
    * Payload: { convId, toEmail, callId }
    */
   @SubscribeMessage('call:hangup')
-  handleHangup(
+  async handleHangup(
     @MessageBody() data: { convId: string; toEmail: string; callId: string },
+    @ConnectedSocket() client: Socket,
   ) {
     if (!data?.convId) return;
     this.logger.log(`[Hangup] ${data.convId} | CallId: ${data.callId}`);
+
+    // [CLEANUP] Trigger Redis/Chime cleanup immediately on hangup socket signal
+    const fromEmail = client['user']?.email || 'system';
+    await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
+
     if (data.toEmail) {
       const targetRoom = `user#${data.toEmail.toLowerCase()}`;
       this.logger.log(`[Hangup] emitting to room: ${targetRoom}`);
@@ -195,13 +213,14 @@ export class CallGateway {
   /** A → B: Yêu cầu chuyển sang video */
   @SubscribeMessage('call:upgrade_request')
   handleUpgradeRequest(
-    @MessageBody() data: { convId: string; toEmail: string; fromProfile: any },
+    @MessageBody() data: { convId: string; toEmail: string; fromProfile: any; callId: string },
   ) {
     if (!data?.convId || !data?.toEmail) return;
     const targetRoom = `user#${data.toEmail.toLowerCase()}`;
-    this.logger.log(`[UpgradeRequest] → ${data.toEmail} - Broadcasting to: ${targetRoom}`);
+    this.logger.log(`[UpgradeRequest] → ${data.toEmail} | CallId: ${data.callId}`);
     this.server.to(targetRoom).emit('call:upgrade_request', {
       convId: data.convId,
+      callId: data.callId,
       fromProfile: data.fromProfile,
     });
   }
@@ -209,22 +228,28 @@ export class CallGateway {
   /** B → A: Đồng ý upgrade video */
   @SubscribeMessage('call:upgrade_accepted')
   handleUpgradeAccepted(
-    @MessageBody() data: { convId: string; toEmail: string },
+    @MessageBody() data: { convId: string; toEmail: string; callId: string },
   ) {
     if (!data?.convId || !data?.toEmail) return;
     const targetRoom = `user#${data.toEmail.toLowerCase()}`;
-    this.logger.log(`[UpgradeAccepted] → ${data.toEmail} - Broadcasting to: ${targetRoom}`);
-    this.server.to(targetRoom).emit('call:upgrade_accepted', { convId: data.convId });
+    this.logger.log(`[UpgradeAccepted] → ${data.toEmail} | CallId: ${data.callId}`);
+    this.server.to(targetRoom).emit('call:upgrade_accepted', { 
+      convId: data.convId,
+      callId: data.callId 
+    });
   }
 
   /** B → A: Từ chối upgrade video */
   @SubscribeMessage('call:upgrade_declined')
   handleUpgradeDeclined(
-    @MessageBody() data: { convId: string; toEmail: string },
+    @MessageBody() data: { convId: string; toEmail: string; callId: string },
   ) {
     if (!data?.convId || !data?.toEmail) return;
     const targetRoom = `user#${data.toEmail.toLowerCase()}`;
-    this.logger.log(`[UpgradeDeclined] → ${data.toEmail} - Broadcasting to: ${targetRoom}`);
-    this.server.to(targetRoom).emit('call:upgrade_declined', { convId: data.convId });
+    this.logger.log(`[UpgradeDeclined] → ${data.toEmail} | CallId: ${data.callId}`);
+    this.server.to(targetRoom).emit('call:upgrade_declined', { 
+      convId: data.convId,
+      callId: data.callId 
+    });
   }
 }

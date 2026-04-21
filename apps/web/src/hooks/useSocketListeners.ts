@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCallStore } from '../store/callStore';
 import { useChatStore } from '../store/chatStore';
 import { getMessagePreview } from '../utils/chatUtils';
-import { leaveCurrentSession } from './useChime';
+import { leaveCurrentSession, toggleCamera as toggleCameraChime } from './useChime';
 
 export const useSocketListeners = () => {
   const { socket, user } = useAuth();
@@ -139,10 +139,11 @@ export const useSocketListeners = () => {
     // ── Call Events ──────────────────────────────────────────────────────────
     const handleCallIncoming = (data: any) => {
       console.log('[Socket] call:incoming', data);
-      const { callState } = useCallStore.getState();
+      const { callState, activeCallId } = useCallStore.getState();
       
-      // [SENIOR] Busy check
-      if (callState !== 'IDLE') {
+      // [SENIOR] Busy check: Only reject if we are actively in a non-idle, non-ended call
+      // If we are in 'ENDED' (UI hiding delay), we SHOULD allow a new call to take over.
+      if (callState !== 'IDLE' && callState !== 'ENDED' && activeCallId && activeCallId !== data.callId) {
         console.warn('[Socket] Busy, auto-rejecting callId:', data.callId);
         socket.emit('call:reject', {
           convId: data.convId,
@@ -173,16 +174,26 @@ export const useSocketListeners = () => {
     };
 
     const handleCallDismiss = (data: any) => {
-      const { activeCallId, resetCall } = useCallStore.getState();
+      const { activeCallId, resetCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
+        // [SENIOR] Protect active call from accidental dismiss signals
+        if (callState === 'CONNECTED' || callState === 'JOINING') {
+          console.log('[Socket] call:dismiss ignored — call is already active/joining');
+          return;
+        }
         console.log('[Socket] call:dismiss — handled on another device');
         resetCall();
       }
     };
 
     const handleCallHandledElsewhere = (data: any) => {
-      const { activeCallId, resetCall } = useCallStore.getState();
+      const { activeCallId, resetCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
+        // [SENIOR] Protect active call from syncing state when this device IS the handler
+        if (callState === 'CONNECTED' || callState === 'JOINING') {
+          console.log('[Socket] call:handled_elsewhere ignored — call is already active/joining');
+          return;
+        }
         console.log('[Socket] call:handled_elsewhere — Syncing state across devices');
         resetCall();
       }
@@ -197,35 +208,63 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleCallPeerJoined = (data: any) => {
-      const { activeCallId, setPeerJoined } = useCallStore.getState();
-      if (!data?.callId || data.callId === activeCallId) {
-        console.log('[Socket] call:peer_joined');
-        setPeerJoined(true);
+
+    const handleCallTimeout = (data: any) => {
+      const { activeCallId, rejectCall, callState } = useCallStore.getState();
+      if (data.callId === activeCallId) {
+        // [SENIOR] Protect active call from accidental timeout signals
+        if (callState === 'CONNECTED' || callState === 'JOINING') {
+          console.log('[Socket] call:timeout ignored — call is already active/joining');
+          return;
+        }
+        console.log('[Socket] call:timeout — Closing call screen');
+        rejectCall();
       }
     };
 
     const handleUpgradeRequest = (data: any) => {
-      const { activeCallId, setIncomingUpgradeRequest, setUpgradeRequesterEmail } = useCallStore.getState();
-      if (!data?.callId || data.callId === activeCallId) {
+      const { activeCallId, setIncomingUpgradeRequest, setUpgradeRequesterEmail, conversationId, toEmail } = useCallStore.getState();
+      if (data.callId === activeCallId) {
+        console.log('[Socket] call:upgrade_request — Peer requesting video');
         setIncomingUpgradeRequest(true);
         setUpgradeRequesterEmail(data.fromProfile?.email ?? null);
+
+        // [SENIOR] 20s receiver-side timeout
+        setTimeout(() => {
+          const checkState = useCallStore.getState();
+          if (checkState.incomingUpgradeRequest && checkState.activeCallId === data.callId) {
+            console.log('[Socket] Upgrade request timed out on receiver side');
+            setIncomingUpgradeRequest(false);
+            if (socket && conversationId && toEmail) {
+              socket.emit('call:upgrade_declined', { 
+                convId: conversationId, 
+                callId: data.callId,
+                toEmail 
+              });
+            }
+          }
+        }, 20000);
       }
     };
 
     const handleUpgradeAccepted = async (data: any) => {
       const { activeCallId, setCallType, setCameraOn, setUpgradeRequestPending } = useCallStore.getState();
-      if (!data?.callId || data.callId === activeCallId) {
+      if (data.callId === activeCallId) {
+        console.log('[Socket] call:upgrade_accepted — Peer accepted. Switching to video.');
         setCallType('video');
         setCameraOn(true);
         setUpgradeRequestPending(false);
+        // Trigger actual camera start via AWS Chime hook
+        await toggleCameraChime(true);
       }
     };
 
     const handleUpgradeDeclined = (data: any) => {
       const { activeCallId, setUpgradeRequestPending } = useCallStore.getState();
-      if (!data?.callId || data.callId === activeCallId) {
+      if (data.callId === activeCallId) {
+        console.log('[Socket] call:upgrade_declined — Peer declined.');
         setUpgradeRequestPending(false);
+        alert('Đối phương đã từ chối yêu cầu bật Video hoặc không phản hồi.');
       }
     };
 
@@ -246,7 +285,7 @@ export const useSocketListeners = () => {
     socket.on('call:dismiss', handleCallDismiss);
     socket.on('call:handled_elsewhere', handleCallHandledElsewhere);
     socket.on('call:hangup', handleCallHangup);
-    socket.on('call:peer_joined', handleCallPeerJoined);
+    socket.on('call:timeout', handleCallTimeout);
     socket.on('call:upgrade_request', handleUpgradeRequest);
     socket.on('call:upgrade_accepted', handleUpgradeAccepted);
     socket.on('call:upgrade_declined', handleUpgradeDeclined);
@@ -267,7 +306,7 @@ export const useSocketListeners = () => {
       socket.off('call:dismiss', handleCallDismiss);
       socket.off('call:handled_elsewhere', handleCallHandledElsewhere);
       socket.off('call:hangup', handleCallHangup);
-      socket.off('call:peer_joined', handleCallPeerJoined);
+      socket.off('call:timeout', handleCallTimeout);
       socket.off('call:upgrade_request', handleUpgradeRequest);
       socket.off('call:upgrade_accepted', handleUpgradeAccepted);
       socket.off('call:upgrade_declined', handleUpgradeDeclined);

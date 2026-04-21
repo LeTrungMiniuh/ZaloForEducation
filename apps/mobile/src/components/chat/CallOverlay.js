@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, Image, TouchableOpacity, SafeAreaView, 
-  Vibration, StyleSheet, PanResponder, Animated, Dimensions 
+  Vibration, StyleSheet, PanResponder, Animated, Dimensions, Alert 
 } from 'react-native';
 import { useCallStore } from '../../store/callStore';
 import { useAuth } from '../../context/AuthContext';
@@ -31,15 +31,19 @@ const CallOverlay = () => {
     hangupCall,
     resetCall,
     remoteTiles,       // [SENIOR] Pulled from global store
-    isRemoteCameraOn   // [SENIOR] Pulled from global store
+    isRemoteCameraOn,  // [SENIOR] Pulled from global store
+    upgradeRequestPending,
+    incomingUpgradeRequest,
   } = useCallStore();
   
   const { user } = useAuth();
   const [duration, setDuration] = useState('00:00');
   const [lastDuration, setLastDuration] = useState('00:00');
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
-  const [isMicOn, setIsMicOn] = useState(true);
-  const [isCameraOn, setIsCameraOn] = useState(callType === 'video');
+  
+  // [SENIOR] Moved to Global Store (callStore.js) for one-way flows.
+  const { isMicOn, setMicOn, isCameraOn, setCameraOn } = useCallStore();
+
 
   // [V10.0] Remote Placeholder fade-out animation only
   // Removed remoteVideoOpacity: SurfaceView cannot be wrapped in opacity: 0
@@ -81,7 +85,9 @@ const CallOverlay = () => {
     cleanup, 
     toggleMic: toggleMicChime, 
     toggleCamera: toggleCameraChime,
-    switchAudioOutput
+    switchAudioOutput,
+    requestCameraPermissionUpgrade,
+    requestPermissions
   } = useChime();
   
   const timerRef = useRef(null);
@@ -111,12 +117,13 @@ const CallOverlay = () => {
     };
   }, [callState, startTime]);
 
-  // [PRODUCTION] Handle 30s Timeout for Incoming Call
+  // [PRODUCTION] Auto-timeout is now handled centrally in callStore.js
+  /*
   useEffect(() => {
     if (callState === 'RINGING' && isIncoming) {
       timeoutRef.current = setTimeout(() => {
         handleReject();
-      }, 30000);
+      }, 60000);
     } else {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     }
@@ -124,6 +131,7 @@ const CallOverlay = () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, [callState, isIncoming]);
+  */
 
   // Handle Vibration for Incoming Call
   useEffect(() => {
@@ -136,30 +144,42 @@ const CallOverlay = () => {
     return () => Vibration.cancel();
   }, [callState, isIncoming]);
 
-  // [Web-Chime] Sync UI state with callType
+  // [SENIOR] One-Way Data Flow: Sync Mic Hardware with Store
+  useEffect(() => {
+    if (callState === 'CONNECTED' || callState === 'CALLING' || callState === 'RINGING') {
+      console.log('[CallOverlay] Syncing Mic Hardware ->', isMicOn);
+      toggleMicChime(isMicOn);
+    }
+  }, [isMicOn, callState, toggleMicChime]);
+
+  // [SENIOR] One-Way Data Flow: Sync Camera Hardware with Store
+  useEffect(() => {
+    if (callState === 'CONNECTED') {
+      console.log('[CallOverlay] Syncing Camera Hardware ->', isCameraOn);
+      toggleCameraChime(isCameraOn);
+      
+      // Auto-switch speaker mode when camera is engaged
+      if (isCameraOn) {
+        setIsSpeakerOn(true);
+        switchAudioOutput(true);
+      }
+    }
+  }, [isCameraOn, callState, toggleCameraChime, switchAudioOutput]);
+
+  // [Web-Chime] Initial sync logic
   useEffect(() => {
     if (callState !== 'CONNECTED' || hasSyncedRef.current) return;
-
+    
+    // Initial hardware sync based on invitation type
     const isVideo = callType === 'video';
     setIsSpeakerOn(isVideo);
-    setIsCameraOn(isVideo);
-    
-    // [SENIOR FIX] Kích hoạt lại Microphone một lần nữa ngay khi đối phương (Web) vào phòng.
-    // Nếu Mobile là người gọi, nó phải chờ Web nhấc máy. Trong lúc chờ phòng vắng, Android có thể tự 
-    // Sleep AudioRecord. Việc bật lại Mic ở thời khắc CONNECTED sẽ "đánh thức" đường truyền tiếng.
-    toggleMicChime(true);
-    setIsMicOn(true);
-    
-    // Nếu là audio call, ép ra loa ngoài (Speaker) lại một lần nữa
-    if (!isVideo) {
-        switchAudioOutput(true);
-    }
+    switchAudioOutput(isVideo);
     
     hasSyncedRef.current = true;
-  }, [callState, callType, toggleMicChime, switchAudioOutput]);
+  }, [callState, callType, switchAudioOutput]);
 
   useEffect(() => {
-    if (callState === 'IDLE') {
+    if (callState === 'IDLE' || callState === 'ENDED') {
       hasSyncedRef.current = false;
     }
   }, [callState]);
@@ -176,6 +196,20 @@ const CallOverlay = () => {
 
   const handleAccept = async () => {
     if (!activeCallId) return;
+    
+    console.log(`[CallOverlay] handleAccept clicked. callType: ${callType}`);
+
+    // [FIX] Check permissions before joining (especially for Video)
+    const hasPermission = await requestPermissions(callType === 'video');
+    console.log(`[CallOverlay] requestPermissions result: ${hasPermission}`);
+    if (!hasPermission) {
+      Alert.alert(
+        'Quyền truy cập',
+        'ZaloEdu cần quyền truy cập Camera và Micro để thực hiện cuộc gọi. Vui lòng cấp quyền trong Cài đặt.'
+      );
+      return;
+    }
+
     try {
       const res = await apiRequest('/call/join', { 
         method: 'POST',
@@ -186,16 +220,26 @@ const CallOverlay = () => {
       });
       
       if (!res.ok) throw new Error(res.message || 'Không thể tham gia cuộc gọi');
+      // [FIX] Support both nested data (Axios style) and flat responses (Fetch style)
+      const meetingData = res.data || res;
+      const { meeting, attendee } = meetingData;
       
-      const { meeting, attendee } = res;
+      if (!meeting || !attendee) {
+        console.error('[CallOverlay] Missing meeting data in response:', res);
+        throw new Error('Dữ liệu cuộc họp không hợp lệ');
+      }
+
       acceptCall({ meeting, attendee });
       
-      SocketService.socket.emit('call:accept', {
-        convId: conversationId,
-        callId: activeCallId,
-        fromEmail: user.email,
-        toEmail: caller.email
-      });
+      if (SocketService.socket) {
+        SocketService.socket.emit('call:accept', {
+          convId: conversationId,
+          callId: activeCallId,
+          fromEmail: user.email,
+          toEmail: caller?.email,
+          meetingInfo: meetingData // [FIX] Gửi thông tin meeting cho bên gọi
+        });
+      }
 
       if (callType === 'video') {
         setIsSpeakerOn(true);
@@ -216,7 +260,7 @@ const CallOverlay = () => {
       reason: 'NO_ANSWER'
     });
     cleanup();
-    resetCall();
+    rejectCall();
   };
 
   const handleHangup = async () => {
@@ -260,6 +304,70 @@ const CallOverlay = () => {
   
   const remoteTile = remoteTiles.length > 0 ? remoteTiles[0] : null;
   const isLocalCameraOn = isCameraOn && localTileId !== null && localTileId !== undefined;
+
+  const handleToggleCamera = async () => {
+    if (callType === 'audio') {
+      // [SENIOR] CHECK PERMISSION BEFORE SIGNALING SENDER REQUEST
+      const hasPermission = await requestCameraPermissionUpgrade();
+      if (!hasPermission) return;
+
+      useCallStore.getState().setUpgradeRequestPending(true);
+      if (SocketService.socket && conversationId && activeCallId) {
+        SocketService.socket.emit('call:upgrade_request', {
+          convId: conversationId,
+          callId: activeCallId,
+          toEmail: isIncoming ? caller.email : receiver.email,
+          fromProfile: user,
+        });
+
+        // [SENIOR] 25s sender-side timeout (fallback)
+        setTimeout(() => {
+          const checkState = useCallStore.getState();
+          if (checkState.upgradeRequestPending && checkState.activeCallId === activeCallId) {
+            console.log('[Mobile-Chime] Upgrade request timed out on sender side');
+            useCallStore.getState().setUpgradeRequestPending(false);
+          }
+        }, 25000);
+      }
+      return;
+    }
+    
+    // Normal Toggle: JUST UPDATE THE STORE (Effect handles hardware)
+    setCameraOn(!isCameraOn);
+  };
+
+  const handleAcceptUpgrade = async () => {
+    useCallStore.getState().setIncomingUpgradeRequest(false);
+    
+    // [SENIOR] CHECK PERMISSION BEFORE ACCEPTING
+    const hasPermission = await requestCameraPermissionUpgrade();
+    if (!hasPermission) {
+      SocketService.socket.emit('call:upgrade_declined', {
+        convId: conversationId,
+        callId: activeCallId,
+        toEmail: isIncoming ? caller.email : receiver.email,
+      });
+      return; 
+    }
+
+    useCallStore.getState().setCallType('video');
+    setCameraOn(true);
+
+    SocketService.socket.emit('call:upgrade_accepted', {
+      convId: conversationId,
+      callId: activeCallId,
+      toEmail: isIncoming ? caller.email : receiver.email,
+    });
+  };
+
+  const handleRejectUpgrade = () => {
+    useCallStore.getState().setIncomingUpgradeRequest(false);
+    SocketService.socket.emit('call:upgrade_declined', {
+      convId: conversationId,
+      callId: activeCallId,
+      toEmail: isIncoming ? caller.email : receiver.email,
+    });
+  };
 
   const renderIncoming = () => (
     <View style={[styles.content, { backgroundColor: 'transparent' }]}>
@@ -344,13 +452,13 @@ const CallOverlay = () => {
       {/* LAYER 5 (top): Controls overlay */}
       <View style={[styles.ongoingActions, styles.videoControlOverlay, { zIndex: 998 }]}>
         <View style={styles.mediaControls}>
-          <TouchableOpacity style={[styles.mediaButton, !isMicOn && styles.mediaButtonActive]} onPress={() => { const next = !isMicOn; setIsMicOn(next); toggleMicChime(next); }}>
+          <TouchableOpacity style={[styles.mediaButton, !isMicOn && styles.mediaButtonActive]} onPress={() => setMicOn(!isMicOn)}>
             <Text style={[styles.mediaIcon, !isMicOn && styles.mediaIconActive]}>{isMicOn ? 'mic' : 'mic_off'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.mediaButton, isSpeakerOn && styles.mediaButtonActive]} onPress={() => { const next = !isSpeakerOn; setIsSpeakerOn(next); switchAudioOutput(next); }}>
             <Text style={[styles.mediaIcon, isSpeakerOn && styles.mediaIconActive]}>{isSpeakerOn ? 'volume_up' : 'volume_down'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.mediaButton, !isCameraOn && styles.mediaButtonActive]} onPress={() => { const next = !isCameraOn; setIsCameraOn(next); toggleCameraChime(next); }}>
+          <TouchableOpacity style={[styles.mediaButton, !isCameraOn && styles.mediaButtonActive]} onPress={handleToggleCamera}>
             <Text style={[styles.mediaIcon, !isCameraOn && styles.mediaIconActive]}>{isCameraOn ? 'videocam' : 'videocam_off'}</Text>
           </TouchableOpacity>
         </View>
@@ -371,11 +479,18 @@ const CallOverlay = () => {
 
       <View style={styles.ongoingActions}>
         <View style={styles.mediaControls}>
-          <TouchableOpacity style={[styles.mediaButton, !isMicOn && styles.mediaButtonActive]} onPress={() => { const next = !isMicOn; setIsMicOn(next); toggleMicChime(next); }}>
+          <TouchableOpacity style={[styles.mediaButton, !isMicOn && styles.mediaButtonActive]} onPress={() => setMicOn(!isMicOn)}>
             <Text style={[styles.mediaIcon, !isMicOn && styles.mediaIconActive]}>{isMicOn ? 'mic' : 'mic_off'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.mediaButton, isSpeakerOn && styles.mediaButtonActive]} onPress={() => { const next = !isSpeakerOn; setIsSpeakerOn(next); switchAudioOutput(next); }}>
             <Text style={[styles.mediaIcon, isSpeakerOn && styles.mediaIconActive]}>{isSpeakerOn ? 'volume_up' : 'volume_down'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.mediaButton, upgradeRequestPending && { backgroundColor: 'rgba(59,130,246,0.3)', opacity: 0.8 }]} 
+            onPress={handleToggleCamera}
+            disabled={upgradeRequestPending}
+          >
+            <Text style={[styles.mediaIcon]}>{upgradeRequestPending ? 'hourglass_empty' : 'videocam'}</Text>
           </TouchableOpacity>
         </View>
         <TouchableOpacity style={styles.hangupButton} onPress={handleHangup} activeOpacity={0.7}>
@@ -420,6 +535,20 @@ const CallOverlay = () => {
         {callState === 'CALLING' && renderCalling()}
         {callState === 'CONNECTED' && (callType === 'video' ? renderVideoCall() : renderAudioCall())}
         {callState === 'ENDED' && renderEnded()}
+        
+        {incomingUpgradeRequest && callState === 'CONNECTED' && (
+          <View style={{position: 'absolute', top: 60, left: 20, right: 20, backgroundColor: 'rgba(28,28,46,0.95)', padding: 16, borderRadius: 16, borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, zIndex: 9999}}>
+            <Text style={{color: '#fff', fontSize: 14, fontWeight: 'bold', marginBottom: 16, textAlign: 'center'}}>{displayName} muốn chuyển sang cuộc gọi Video</Text>
+            <View style={{flexDirection: 'row', gap: 10}}>
+              <TouchableOpacity onPress={handleAcceptUpgrade} style={{flex: 1, backgroundColor: '#16a34a', paddingVertical: 10, borderRadius: 10, alignItems: 'center'}}>
+                <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 13}}>Đồng ý</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleRejectUpgrade} style={{flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', paddingVertical: 10, borderRadius: 10, alignItems: 'center'}}>
+                <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 13}}>Từ chối</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </SafeAreaView>
     </View>
   );

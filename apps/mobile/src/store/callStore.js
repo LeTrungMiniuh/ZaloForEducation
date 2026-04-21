@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 
+let callTimeout = null;
+const clearInternalTimeout = () => {
+  if (callTimeout) {
+    clearTimeout(callTimeout);
+    callTimeout = null;
+  }
+};
+
 export const useCallStore = create((set, get) => ({
   callState: 'IDLE', // 'IDLE' | 'RINGING' | 'CALLING' | 'CONNECTED' | 'ENDED'
   callType: null,    // 'audio' | 'video'
@@ -13,39 +21,78 @@ export const useCallStore = create((set, get) => ({
   startTime: null,   // timestamp for duration calculation
   remoteTiles: [],   // [SENIOR] Track remote video tiles globally
   isRemoteCameraOn: false, // [SENIOR] Explicit flag for remote camera state
+  isCameraOn: false,   // [SENIOR] Global state for local camera
+  isMicOn: true,       // [SENIOR] Global state for local mic
+  isConnecting: false,
+  toEmail: null,       // [SENIOR] Target peer email for signaling
 
+  // Upgrade states
+  upgradeRequestPending: false,
+  incomingUpgradeRequest: false,
+  upgradeRequesterEmail: null,
+  
   // Actions
   startOutgoingCall: (receiver, callType, convId, activeCallId) => {
+    clearInternalTimeout();
     set({
       callState: 'CALLING',
       callType,
       conversationId: convId,
       activeCallId,
       receiver,
+      toEmail: receiver.email,
       isIncoming: false,
       caller: null,
       startTime: null,
       meetingData: null,
       attendeeData: null,
+      isCameraOn: callType === 'video',
+      isMicOn: true,
     });
+
+    // [SENIOR] Auto-timeout after 60s if not connected
+    callTimeout = setTimeout(() => {
+      console.log('[Store] Call timed out after 60s (Caller Side)');
+      // Need Socket access. AuthContext usually handles it but we can use SocketService directly
+      const SocketService = require('../utils/socket').default;
+      if (SocketService.socket && activeCallId && receiver?.email) {
+        SocketService.socket.emit('call:timeout', { 
+          convId: convId, 
+          callId: activeCallId, 
+          toEmail: receiver.email 
+        });
+      }
+      get().hangupCall();
+    }, 60000);
   },
 
   receiveIncomingCall: (caller, callType, convId, activeCallId) => {
+    clearInternalTimeout();
     set({
       callState: 'RINGING',
       callType,
       conversationId: convId,
       activeCallId,
       caller,
+      toEmail: caller.email,
       isIncoming: true,
       receiver: null,
       startTime: null,
       meetingData: null,
       attendeeData: null,
+      isCameraOn: callType === 'video',
+      isMicOn: true,
     });
+
+    // [SENIOR] Auto-timeout after 60s if not answered
+    callTimeout = setTimeout(() => {
+      console.log('[Store] Call timed out after 60s (Receiver Side)');
+      get().rejectCall();
+    }, 60000);
   },
 
   acceptCall: (meetingInfo = {}) => {
+    clearInternalTimeout();
     const current = get();
     set({
       callState: 'CONNECTED',
@@ -57,22 +104,32 @@ export const useCallStore = create((set, get) => ({
   },
 
   rejectCall: () => {
-    set({
+    clearInternalTimeout();
+    // [SYSTEM] Nullify session IDs immediately to free up backend/signaling
+    set({ 
       callState: 'ENDED',
+      activeCallId: null,
+      meetingData: null,
+      attendeeData: null,
     });
-    // Trì hoãn reset về IDLE để UI kịp thông báo
+    // [UI] Keep the ENDED screen for 1 second before total reset
     setTimeout(() => {
       get().resetCall();
-    }, 2000);
+    }, 1000);
   },
 
   hangupCall: () => {
+    clearInternalTimeout();
+    // [SYSTEM] Immediate cleanup
     set({
       callState: 'ENDED',
+      activeCallId: null,
+      meetingData: null,
+      attendeeData: null,
     });
     setTimeout(() => {
       get().resetCall();
-    }, 1500);
+    }, 1000);
   },
 
   setMeetingInfo: (meeting, attendee) => {
@@ -89,7 +146,15 @@ export const useCallStore = create((set, get) => ({
 
   setRemoteCameraOn: (isRemoteCameraOn) => set({ isRemoteCameraOn }),
 
+  setCallType: (callType) => set({ callType }),
+  setUpgradeRequestPending: (upgradeRequestPending) => set({ upgradeRequestPending }),
+  setIncomingUpgradeRequest: (incomingUpgradeRequest) => set({ incomingUpgradeRequest }),
+  setUpgradeRequesterEmail: (upgradeRequesterEmail) => set({ upgradeRequesterEmail }),
+  setCameraOn: (isCameraOn) => set({ isCameraOn }),
+  setMicOn: (isMicOn) => set({ isMicOn }),
+
   resetCall: () => {
+    clearInternalTimeout();
     set({
       callState: 'IDLE',
       callType: null,
@@ -103,6 +168,11 @@ export const useCallStore = create((set, get) => ({
       startTime: null,
       remoteTiles: [],
       isRemoteCameraOn: false,
+      isCameraOn: false,
+      isMicOn: true,
+      upgradeRequestPending: false,
+      incomingUpgradeRequest: false,
+      upgradeRequesterEmail: null,
     });
   },
 }));

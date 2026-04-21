@@ -922,24 +922,30 @@ export default function HomeScreen({
       return;
     }
 
+    // [SENIOR] Permission Check - Request immediately on click
     if (Platform.OS === 'android') {
+      console.log(`[Call] Checking permissions for ${type} call...`);
       try {
         const audioGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
         if (audioGranted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert('Chưa cấp quyền', 'Vui lòng cấp quyền Microphone để thực hiện cuộc gọi.');
+          Alert.alert('Quyền truy cập', 'Vui lòng cấp quyền Microphone để thực hiện cuộc gọi.');
           return;
         }
         if (type === 'video') {
           const cameraGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
           if (cameraGranted !== PermissionsAndroid.RESULTS.GRANTED) {
-            Alert.alert('Chưa cấp quyền', 'Vui lòng cấp quyền Camera để thực hiện cuộc gọi Video.');
+            Alert.alert('Quyền truy cập', 'Vui lòng cấp quyền Camera để thực hiện cuộc gọi Video.');
             return;
           }
         }
       } catch (err) {
-        console.warn('Lỗi xin quyền:', err);
+        console.warn('[Call] Permission error:', err);
         return;
       }
+    } else {
+       // iOS handles permissions internally in Chime Native SDK, 
+       // but we allow the flow to continue.
+       console.log(`[Call] Initiating ${type} call on ${Platform.OS}...`);
     }
 
     const partnerEmail = selectedChat.partner;

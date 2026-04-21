@@ -18,25 +18,24 @@ const IncomingCallModal: React.FC = () => {
   } = useCallStore();
 
   const { socket, user } = useAuth();
-  const [timeLeft, setTimeLeft] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(60);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
 
   // Reset countdown khi modal mở lại
   useEffect(() => {
     if (callState === 'RINGING' && activeCallId) {
-      setTimeLeft(30);
+      setTimeLeft(60);
     }
   }, [callState, activeCallId]);
 
-  // Countdown timer — tự động từ chối sau 30s
+  // Countdown timer — tự động từ chối sau 60s
   useEffect(() => {
     if (callState === 'RINGING' && activeCallId) {
       const timer = setInterval(() => {
         setTimeLeft((prev) => {
           if (prev <= 1) {
             clearInterval(timer);
-            resetCall();
             return 0;
           }
           return prev - 1;

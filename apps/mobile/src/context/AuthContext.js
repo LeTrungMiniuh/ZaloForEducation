@@ -254,11 +254,86 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
       SocketService.on('call:timeout', (data) => {
         const state = useCallStore.getState();
         if (state.activeCallId === data.callId) {
+          // [SENIOR] Protect active call from accidental timeout signals
+          if (state.callState === 'CONNECTED' || state.callState === 'JOINING') {
+            console.log('[AUTH] call:timeout ignored — call is already active/joining');
+            return;
+          }
           console.log('[AUTH] Call timed out on peer side');
           if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
           callTimeoutRef.current = null;
           chimeRef.current?.cleanup();
+          useCallStore.getState().rejectCall();
+        }
+      });
+
+      // [SENIOR] Sync dismiss signal from other devices
+      SocketService.on('call:handled_elsewhere', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Call handled on another device, silencing this one');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+          // [CRITICAL] Just reset the UI state, DO NOT emit hangup/reject signals back!
           useCallStore.getState().resetCall();
+        }
+      });
+
+      SocketService.on('call:dismiss', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Call dismissed elsewhere');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+          useCallStore.getState().resetCall();
+        }
+      });
+
+      // ===== UPGRADE FLOW =====
+      SocketService.on('call:upgrade_request', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Peer requested video upgrade');
+          state.setIncomingUpgradeRequest(true);
+          state.setUpgradeRequesterEmail(data.fromProfile?.email ?? null);
+          
+          // [SENIOR] 20s receiver-side timeout
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = setTimeout(() => {
+             const currentState = useCallStore.getState();
+             if (currentState.incomingUpgradeRequest && currentState.activeCallId === data.callId) {
+               console.log('[AUTH] Upgrade request timed out on receiver side');
+               currentState.setIncomingUpgradeRequest(false);
+               SocketService.socket?.emit('call:upgrade_declined', {
+                 convId: data.convId,
+                 callId: data.callId,
+                 toEmail: data.fromProfile?.email || currentState.caller?.email || currentState.receiver?.email
+               });
+             }
+          }, 20000);
+        }
+      });
+
+      SocketService.on('call:upgrade_accepted', async (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Peer accepted video upgrade');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          
+          state.setCallType('video');
+          state.setRemoteCameraOn(true);
+          state.setCameraOn(true); // [SENIOR] Triggers UI Hardware Effect
+          state.setUpgradeRequestPending(false);
+        }
+      });
+
+      SocketService.on('call:upgrade_declined', (data) => {
+        const state = useCallStore.getState();
+        if (state.activeCallId === data.callId) {
+          console.log('[AUTH] Peer declined video upgrade');
+          if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+          state.setUpgradeRequestPending(false);
+          Alert.alert('Từ chối', 'Đối phương đã từ chối yêu cầu bật Video hoặc không phản hồi.');
         }
       });
     };

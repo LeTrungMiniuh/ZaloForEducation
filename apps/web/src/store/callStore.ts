@@ -2,6 +2,19 @@ import { create } from 'zustand';
 
 export type CallState = 'IDLE' | 'RINGING' | 'JOINING' | 'CONNECTED' | 'ENDED';
 
+let callTimeout: any = null;
+let resetTimeout: any = null;
+const clearInternalTimeout = () => {
+  if (callTimeout) {
+    clearTimeout(callTimeout);
+    callTimeout = null;
+  }
+  if (resetTimeout) {
+    clearTimeout(resetTimeout);
+    resetTimeout = null;
+  }
+};
+
 interface CallStore {
   callState: CallState;
   conversationId: string | null;
@@ -11,7 +24,6 @@ interface CallStore {
   peerProfile: any | null;
   isIncoming: boolean;
   callType: 'audio' | 'video';
-  peerJoined: boolean;
   toEmail: string | null;
   startTime: number | null;
 
@@ -44,7 +56,6 @@ interface CallStore {
   rejectCall: () => void;
   resetCall: () => void;
   setCallType: (type: 'audio' | 'video') => void;
-  setPeerJoined: (joined: boolean) => void;
   setCameraOn: (on: boolean) => void;
   setRemoteCameraOn: (on: boolean) => void;
   setMicOn: (on: boolean) => void;
@@ -63,7 +74,6 @@ export const useCallStore = create<CallStore>((set, get) => ({
   peerProfile: null,
   isIncoming: false,
   callType: 'audio',
-  peerJoined: false,
   toEmail: null,
   startTime: null,
   isCameraOn: true,
@@ -94,6 +104,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
   setCallType: (callType) => set({ callType }),
 
   initiateCall: (conversationId, activeCallId, callType, toEmail, profile, engine) => {
+    clearInternalTimeout();
     set({
       conversationId,
       activeCallId,
@@ -112,9 +123,20 @@ export const useCallStore = create<CallStore>((set, get) => ({
       callOffer: null,
       startTime: null,
     });
+
+    // [SENIOR] Auto-timeout after 60s if not connected
+    callTimeout = setTimeout(() => {
+      console.log('[Store] Call timed out after 60s (Caller Side)');
+      const socket = (window as any).socket;
+      if (socket && toEmail && activeCallId) {
+        socket.emit('call:timeout', { convId: conversationId, callId: activeCallId, toEmail });
+      }
+      get().hangupCall();
+    }, 60000);
   },
 
   setIncomingCall: (conversationId, activeCallId, peerProfile, callType, fromEmail, engine, offer) => {
+    clearInternalTimeout();
     set({
       conversationId,
       activeCallId,
@@ -131,39 +153,61 @@ export const useCallStore = create<CallStore>((set, get) => ({
       callOffer: offer || null,
       startTime: null,
     });
+
+    // [SENIOR] Auto-timeout after 60s if not answered
+    callTimeout = setTimeout(() => {
+      console.log('[Store] Call timed out after 60s (Receiver Side)');
+      get().rejectCall();
+    }, 60000);
   },
 
   setCallOffer: (offer) => set({ callOffer: offer }),
 
-  acceptCall: (meetingInfo = {}) => {
-    const current = get();
+  acceptCall: (meetingInfo) => {
+    clearInternalTimeout();
     set({ 
       callState: 'CONNECTED', 
       isConnecting: false, 
       connectionError: null,
-      meetingData: current.meetingData || meetingInfo.meeting,
-      attendeeData: current.attendeeData || meetingInfo.attendee,
+      meetingData: meetingInfo?.Meeting || get().meetingData,
+      attendeeData: meetingInfo?.Attendee || get().attendeeData,
       startTime: Date.now(),
     });
   },
 
   hangupCall: () => {
-    set({ callState: 'ENDED' });
-    // [STANDARD] 4000ms delay to show summary screen
-    setTimeout(() => {
+    clearInternalTimeout();
+    // [SYSTEM] Nullify session IDs immediately to free up backend/signaling
+    set({ 
+      callState: 'ENDED', 
+      activeCallId: null, 
+      meetingData: null, 
+      attendeeData: null,
+      isConnecting: false
+    });
+
+    // [UI] Keep the ENDED screen for 1 second before total reset
+    resetTimeout = setTimeout(() => {
       get().resetCall();
-    }, 4000);
+      resetTimeout = null;
+    }, 1000);
   },
 
   rejectCall: () => {
-    set({ callState: 'ENDED' });
-    // [STANDARD] 4000ms delay as requested in walkthrough
-    setTimeout(() => {
+    clearInternalTimeout();
+    set({ 
+      callState: 'ENDED',
+      activeCallId: null,
+      meetingData: null,
+      attendeeData: null,
+      isConnecting: false
+    });
+    resetTimeout = setTimeout(() => {
       get().resetCall();
-    }, 4000);
+      resetTimeout = null;
+    }, 1000);
   },
 
-  setPeerJoined: (peerJoined: boolean) => set({ peerJoined }),
   setCameraOn: (isCameraOn: boolean) => set({ isCameraOn }),
   setRemoteCameraOn: (isRemoteCameraOn: boolean) => set({ isRemoteCameraOn }),
   setMicOn: (isMicOn: boolean) => set({ isMicOn }),
@@ -173,6 +217,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
   setRemoteTiles: (remoteTiles: any[]) => set({ remoteTiles }),
 
   resetCall: () => {
+    clearInternalTimeout();
     set({
       callState: 'IDLE',
       conversationId: null,
@@ -182,8 +227,6 @@ export const useCallStore = create<CallStore>((set, get) => ({
       peerProfile: null,
       isIncoming: false,
       callType: 'audio',
-      peerJoined: false,
-      toEmail: null,
       startTime: null,
       isCameraOn: true,
       isRemoteCameraOn: false,
