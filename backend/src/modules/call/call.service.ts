@@ -7,6 +7,9 @@ import {
 } from '@aws-sdk/client-chime-sdk-meetings';
 import { v4 as uuidv4 } from 'uuid';
 import { RedisService } from '../../infrastructure/redis.service';
+import { DynamoDBService } from '../../infrastructure/dynamodb.service';
+import { MessageService } from '../chat/message.service';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 
 @Injectable()
 export class CallService {
@@ -15,6 +18,8 @@ export class CallService {
   constructor(
     @Inject('CHIME_CLIENT') private readonly chime: ChimeSDKMeetingsClient,
     private readonly redis: RedisService,
+    private readonly db: DynamoDBService,
+    private readonly messageService: MessageService,
   ) {}
 
   async createMeeting(conversationId: string, callId: string, userEmail: string, type: 'audio' | 'video' = 'video') {
@@ -110,12 +115,110 @@ export class CallService {
         }
         await this.redis.del(sessionKey);
         await this.redis.del(`call:active:${conversationId}`);
+        // [SENIOR] Clear start time after hangup
+        await this.redis.del(`call:start:${callId}`);
       }
       return { success: true };
     } catch (error) {
       // Dù Chime lỗi vẫn xóa Redis để cleanup
       await this.redis.del(`call:active:${conversationId}`).catch(() => {});
+      await this.redis.del(`call:start:${callId}`).catch(() => {});
       return { success: true };
+    }
+  }
+
+  /**
+   * [SENIOR] Lưu mốc thời gian bắt đầu cuộc gọi để tính duration
+   */
+  async markCallStarted(callId: string) {
+    const startTime = Date.now();
+    await this.redis.set(`call:start:${callId}`, startTime.toString(), 3600);
+    this.logger.log(`[Call-History] Call ${callId} started at ${startTime}`);
+  }
+
+  async getCallStartTime(callId: string): Promise<string | null> {
+    return await this.redis.get(`call:start:${callId}`);
+  }
+
+  /**
+   * [SENIOR] Chốt sổ cuộc gọi: Lưu DynamoDB + Gửi tin nhắn Chat
+   */
+  async finalizeCallHistory(data: {
+    convId: string;
+    callId: string;
+    caller: string;
+    receiver: string;
+    status: 'MISSED' | 'REJECTED' | 'COMPLETED';
+    callType: 'audio' | 'video';
+  }) {
+    const { convId, callId, caller, receiver, status, callType } = data;
+    const now = Date.now();
+    const timestamp = new Date().toISOString();
+
+    // 1. Tính toán duration
+    let durationSec = 0;
+    if (status === 'COMPLETED') {
+      const startStr = await this.redis.get(`call:start:${callId}`);
+      if (startStr) {
+        durationSec = Math.floor((now - parseInt(startStr)) / 1000);
+      }
+    }
+
+    // 2. Format nội dung tin nhắn hệ thống theo chuẩn "Zalo/Messenger"
+    let displayContent = '';
+    const typeStr = callType === 'audio' ? 'thoại' : 'video';
+    
+    if (status === 'MISSED') {
+      displayContent = `Cuộc gọi ${typeStr} lỡ`;
+    } else if (status === 'REJECTED') {
+      displayContent = `Cuộc gọi ${typeStr} bị từ chối`;
+    } else {
+      const mins = Math.floor(durationSec / 60);
+      const secs = durationSec % 60;
+      const durationStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      displayContent = `Cuộc gọi ${typeStr} (${durationStr})`;
+    }
+
+    this.logger.log(`[Call-History] Finalizing: ${displayContent} | CallId: ${callId}`);
+
+    try {
+      // 3. Lưu vào DynamoDB (Partition Key: CONV#id, Sort Key: CALL#timestamp#id)
+      await this.db.docClient.send(new PutCommand({
+        TableName: this.db.tableName,
+        Item: {
+          PK: `CONV#${convId}`,
+          SK: `CALL#${timestamp}#${callId}`,
+          type: 'CALL_HISTORY',
+          callId,
+          caller,
+          receiver,
+          status,
+          callType,
+          durationSec,
+          content: displayContent,
+          createdAt: timestamp
+        }
+      }));
+
+      // 4. Gửi tin nhắn vào đoạn chat (System Message)
+      // Dùng senderEmail = 'system' để client hiển thị đúng format system message
+      const callMsg = await this.messageService.sendMessage(
+        convId,
+        'system',
+        displayContent,
+        'system',
+        [],
+        [],
+        null,
+        { callId, callStatus: status }
+      );
+
+      // Cleanup start time
+      await this.redis.del(`call:start:${callId}`);
+
+      return callMsg;
+    } catch (err) {
+      this.logger.error(`[Call-History] FAILED to save history for ${callId}`, err);
     }
   }
 }

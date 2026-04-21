@@ -69,7 +69,7 @@ export class CallGateway {
    * [SENIOR] Phát tín hiệu dismiss tới các thiết bị khác của callee
    */
   @SubscribeMessage('call:accept')
-  handleCallAccept(
+  async handleCallAccept(
     @MessageBody() data: { convId: string; toEmail: string; callId: string; meetingInfo?: any },
     @ConnectedSocket() client: Socket,
   ) {
@@ -78,14 +78,17 @@ export class CallGateway {
     const callerRoom = `user#${data.toEmail.toLowerCase()}`;
     this.logger.log(`[Accept] notifying caller ${data.toEmail} | CallId: ${data.callId}`);
     
-    // 1. Thông báo cho người gọi
+    // 1. [UTMOST PRIORITY] Thông báo cho người gọi ngay lập tức
     this.server.to(callerRoom).emit('call:accept', { 
       convId: data.convId, 
       callId: data.callId,
       meetingInfo: data.meetingInfo 
     });
 
-    // 2. [SENIOR] Thông báo cho các thiết bị khác của người nghe để tắt chuông (EXCLUDE SENDER)
+    // 2. [BACKGROUND] Mark start time for duration calculation
+    this.callService.markCallStarted(data.callId).catch(e => this.logger.error('Failed to mark call start', e));
+
+    // 3. [SENIOR] Thông báo cho các thiết bị khác của người nghe để tắt chuông (EXCLUDE SENDER)
     const userEmail = client['user']?.email?.toLowerCase();
     if (userEmail) {
       const myRoom = `user#${userEmail}`;
@@ -113,11 +116,9 @@ export class CallGateway {
     const callerRoom = `user#${data.toEmail.toLowerCase()}`;
     this.logger.log(`[Reject] ${data.toEmail} | CallId: ${data.callId}`);
     
-    // [CLEANUP] Trigger Redis/Chime cleanup on reject
     const fromEmail = client['user']?.email || 'system';
-    await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
 
-    // 1. Thông báo cho người gọi
+    // 1. [UTMOST PRIORITY] Thông báo cho người gọi ngay lập tức
     this.server.to(callerRoom).emit('call:reject', { 
       convId: data.convId, 
       callId: data.callId,
@@ -128,15 +129,33 @@ export class CallGateway {
     const userEmail = client['user']?.email?.toLowerCase();
     if (userEmail) {
       const myRoom = `user#${userEmail}`;
-      this.logger.log(`[Dismiss] notifying other devices of ${userEmail} via room: ${myRoom}`);
       client.broadcast.to(myRoom).emit('call:handled_elsewhere', { 
         convId: data.convId, 
         callId: data.callId, 
         reason: 'rejected' 
       });
-      // Fallback
       client.broadcast.to(myRoom).emit('call:dismiss', { convId: data.convId, callId: data.callId, reason: 'rejected' });
     }
+
+    // 3. [BACKGROUND] Cleanup meeting & Save history
+    (async () => {
+      try {
+        await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
+        const callMsg = await this.callService.finalizeCallHistory({
+          convId: data.convId,
+          callId: data.callId,
+          caller: data.toEmail, 
+          receiver: fromEmail,
+          status: 'REJECTED',
+          callType: 'audio'
+        });
+        if (callMsg) {
+          this.server.to(data.convId).emit('receiveMessage', callMsg);
+        }
+      } catch (e) {
+        this.logger.error('Background cleanup for reject failed', e);
+      }
+    })();
   }
 
   /**
@@ -149,16 +168,32 @@ export class CallGateway {
   ) {
     if (!data?.convId || !data?.toEmail) return;
     const targetRoom = `user#${data.toEmail.toLowerCase()}`;
-    
-    // [CLEANUP] Trigger Redis/Chime cleanup on timeout
     const fromEmail = client['user']?.email || 'system';
-    await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
 
+    // 1. [UTMOST PRIORITY] Thông báo cho đối phương ngay lập tức
     this.server.to(targetRoom).emit('call:timeout', { convId: data.convId, callId: data.callId });
-    
-    // Đồng thời dismiss các thiết bị khác của target
     this.server.to(targetRoom).emit('call:dismiss', { convId: data.convId, callId: data.callId, reason: 'timeout' });
     this.server.to(targetRoom).emit('call:handled_elsewhere', { convId: data.convId, callId: data.callId, reason: 'timeout' });
+
+    // 2. [BACKGROUND] Cleanup & Save history
+    (async () => {
+      try {
+        await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
+        const callMsg = await this.callService.finalizeCallHistory({
+          convId: data.convId,
+          callId: data.callId,
+          caller: fromEmail,
+          receiver: data.toEmail,
+          status: 'MISSED',
+          callType: 'audio'
+        });
+        if (callMsg) {
+          this.server.to(data.convId).emit('receiveMessage', callMsg);
+        }
+      } catch (e) {
+        this.logger.error('Background cleanup for timeout failed', e);
+      }
+    })();
   }
 
   /**
@@ -186,26 +221,39 @@ export class CallGateway {
   ) {
     if (!data?.convId) return;
     this.logger.log(`[Hangup] ${data.convId} | CallId: ${data.callId}`);
-
-    // [CLEANUP] Trigger Redis/Chime cleanup immediately on hangup socket signal
     const fromEmail = client['user']?.email || 'system';
-    await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
 
+    // 1. [UTMOST PRIORITY] Thông báo cho đối phương gác máy ngay lập tức
     if (data.toEmail) {
       const targetRoom = `user#${data.toEmail.toLowerCase()}`;
-      this.logger.log(`[Hangup] emitting to room: ${targetRoom}`);
       this.server.to(targetRoom).emit('call:hangup', { 
         convId: data.convId,
         callId: data.callId 
       });
     } else {
-      // Fallback broadcast
-      this.logger.warn(`[Hangup] No toEmail provided for hangup. Broadcasting to all (fallback).`);
-      this.server.emit('call:hangup', { 
-        convId: data.convId,
-        callId: data.callId 
-      });
+      this.server.emit('call:hangup', { convId: data.convId, callId: data.callId });
     }
+
+    // 2. [BACKGROUND] Cleanup & Save history
+    (async () => {
+      try {
+        const started = await this.callService.getCallStartTime(data.callId);
+        const callMsg = await this.callService.finalizeCallHistory({
+          convId: data.convId,
+          callId: data.callId,
+          caller: fromEmail, 
+          receiver: data.toEmail || 'unknown',
+          status: started ? 'COMPLETED' : 'MISSED',
+          callType: 'audio'
+        });
+        if (callMsg) {
+          this.server.to(data.convId).emit('receiveMessage', callMsg);
+        }
+        await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
+      } catch (e) {
+        this.logger.error('Background cleanup for hangup failed', e);
+      }
+    })();
   }
 
   // ─── Video Upgrade Flow ────────────────────────────────────────────────────

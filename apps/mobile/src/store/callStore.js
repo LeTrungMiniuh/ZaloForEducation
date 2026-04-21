@@ -25,6 +25,9 @@ export const useCallStore = create((set, get) => ({
   isMicOn: true,       // [SENIOR] Global state for local mic
   isConnecting: false,
   toEmail: null,       // [SENIOR] Target peer email for signaling
+  isMinimized: false,  // [SENIOR] Track PiP state
+  
+  setMinimized: (isMinimized) => set({ isMinimized }),
 
   // Upgrade states
   upgradeRequestPending: false,
@@ -173,6 +176,7 @@ export const useCallStore = create((set, get) => ({
       upgradeRequestPending: false,
       incomingUpgradeRequest: false,
       upgradeRequesterEmail: null,
+      isMinimized: false, // [SENIOR] Auto-restore full screen on reset
     });
   },
 }));

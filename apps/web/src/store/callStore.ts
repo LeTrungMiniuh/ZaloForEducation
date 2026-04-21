@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type CallState = 'IDLE' | 'RINGING' | 'JOINING' | 'CONNECTED' | 'ENDED';
+export type CallState = 'IDLE' | 'RINGING' | 'CALLING' | 'JOINING' | 'CONNECTED' | 'ENDED';
 
 let callTimeout: any = null;
 let resetTimeout: any = null;
@@ -63,6 +63,8 @@ interface CallStore {
   setIncomingUpgradeRequest: (incoming: boolean) => void;
   setUpgradeRequesterEmail: (email: string | null) => void;
   setRemoteTiles: (tiles: any[]) => void;
+  isMinimized: boolean;
+  setMinimized: (minimized: boolean) => void;
 }
 
 export const useCallStore = create<CallStore>((set, get) => ({
@@ -87,6 +89,9 @@ export const useCallStore = create<CallStore>((set, get) => ({
   upgradeRequesterEmail: null,
   engine: null,
   callOffer: null,
+  isMinimized: false,
+  
+  setMinimized: (isMinimized) => set({ isMinimized }),
 
   setCallState: (callState) => set({ callState }),
   setConnecting: (isConnecting) => set({ isConnecting }),
@@ -109,7 +114,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
       conversationId,
       activeCallId,
       callType,
-      callState: 'JOINING',
+      callState: 'CALLING',
       isIncoming: false,
       toEmail,
       peerProfile: profile,
@@ -239,6 +244,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
       engine: null,
       callOffer: null,
       remoteTiles: [],
+      isMinimized: false,
     });
   },
 }));

@@ -208,6 +208,15 @@ export const useSocketListeners = () => {
       }
     };
 
+    const handleCallReject = async (data: any) => {
+      const { activeCallId, rejectCall } = useCallStore.getState();
+      if (!data?.callId || data.callId === activeCallId) {
+        console.log('[Socket] call:reject — cleaning up Chime');
+        await leaveCurrentSession();
+        rejectCall();
+      }
+    };
+
 
     const handleCallTimeout = (data: any) => {
       const { activeCallId, rejectCall, callState } = useCallStore.getState();
@@ -285,6 +294,7 @@ export const useSocketListeners = () => {
     socket.on('call:dismiss', handleCallDismiss);
     socket.on('call:handled_elsewhere', handleCallHandledElsewhere);
     socket.on('call:hangup', handleCallHangup);
+    socket.on('call:reject', handleCallReject);
     socket.on('call:timeout', handleCallTimeout);
     socket.on('call:upgrade_request', handleUpgradeRequest);
     socket.on('call:upgrade_accepted', handleUpgradeAccepted);
@@ -306,6 +316,7 @@ export const useSocketListeners = () => {
       socket.off('call:dismiss', handleCallDismiss);
       socket.off('call:handled_elsewhere', handleCallHandledElsewhere);
       socket.off('call:hangup', handleCallHangup);
+      socket.off('call:reject', handleCallReject);
       socket.off('call:timeout', handleCallTimeout);
       socket.off('call:upgrade_request', handleUpgradeRequest);
       socket.off('call:upgrade_accepted', handleUpgradeAccepted);

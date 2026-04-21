@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   PhoneOff, Mic, MicOff, Camera, CameraOff,
   Loader2, User,
-  Clock, Calendar
+  Clock, Calendar,
+  Minimize2, Maximize2
 } from 'lucide-react';
 import { useCallStore } from '../../store/callStore';
 import { useAuth } from '../../context/AuthContext';
@@ -21,6 +22,7 @@ const CallOverlay: React.FC = () => {
     activeCallId, startTime, isRemoteCameraOn, remoteTiles,
     upgradeRequestPending, setUpgradeRequestPending,
     incomingUpgradeRequest, setIncomingUpgradeRequest,
+    isMinimized, setMinimized,
   } = useCallStore();
 
   const { socket, user } = useAuth();
@@ -63,6 +65,76 @@ const CallOverlay: React.FC = () => {
     return () => clearInterval(interval);
   }, [callState, startTime, duration]);
 
+  // [SENIOR] Incoming Call Ringtone Logic (Web)
+  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Initialize audio instance once
+    if (!ringtoneRef.current) {
+      const audio = new Audio('/audio_sound/ringtone.mp3');
+      audio.loop = true;
+      ringtoneRef.current = audio;
+    }
+
+    const audio = ringtoneRef.current;
+
+    if (callState === 'RINGING' && isIncoming) {
+      console.log('[Web-Call] 🔔 Starting ringtone...');
+      // Browsers block autoplay unless interacted with. 
+      // Wrap in catch to prevent console errors if blocked.
+      audio.play().catch(err => {
+        console.warn('[Web-Call] ⚠️ Autoplay blocked or failed. User interaction might be required.', err);
+      });
+    } else {
+      // Stop ringtone for any other state (CONNECTED, ENDED, idle)
+      if (audio) {
+        console.log('[Web-Call] 🔇 Stopping ringtone.');
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    }
+
+    return () => {
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    };
+  }, [callState, isIncoming]);
+
+  // [SENIOR] Ringback Tone Logic (Web) - For Caller
+  const ringbackRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (!ringbackRef.current) {
+      const audio = new Audio('/audio_sound/ringback.mp3');
+      audio.loop = true;
+      ringbackRef.current = audio;
+    }
+
+    const audio = ringbackRef.current;
+
+    // Trigger ringback ONLY if user is the CALLER and state is RINGING or CALLING
+    if ((callState === 'RINGING' || callState === 'CALLING') && !isIncoming) {
+      console.log('[Web-Call] 🛰️ Starting ringback tone...');
+      audio.play().catch(err => {
+        console.warn('[Web-Call] ⚠️ Ringback blocked by browser policy.', err);
+      });
+    } else {
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    }
+
+    return () => {
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    };
+  }, [callState, isIncoming]);
+
   const formatTime = (s: number) => {
     const mins = Math.floor(s / 60);
     const secs = s % 60;
@@ -84,7 +156,7 @@ const CallOverlay: React.FC = () => {
 
   // 1. Logic Status thông minh hơn (Không phụ thuộc vào peerJoined nữa)
   const statusText = (() => {
-    if (callState === 'JOINING') return 'Đang kết nối...';
+    if (callState === 'JOINING' || callState === 'CALLING') return 'Đang gọi...';
     if (callState === 'RINGING') return 'Đang đổ chuông...';
     if (callState === 'ENDED') return 'Cuộc gọi đã kết thúc';
     if (callState === 'CONNECTED') return formatTime(duration);
@@ -157,7 +229,7 @@ const CallOverlay: React.FC = () => {
   );
 
   if (callState === 'ENDED') return renderEnded();
-  if (callState !== 'CONNECTED' && callState !== 'JOINING') return null;
+  if (callState === 'IDLE' || (callState === 'RINGING' && isIncoming)) return null;
 
   const handleToggleCamera = async () => {
     if (callType === 'audio') {
@@ -247,7 +319,7 @@ const CallOverlay: React.FC = () => {
         {isRemoteCameraOn ? (
           <video ref={remoteVideoRef} className="w-full h-full object-cover animate-in fade-in duration-700" autoPlay playsInline />
         ) : (
-          <div className="flex flex-col items-center gap-6 animate-in zoom-in duration-500">
+          <div className={`flex flex-col items-center gap-6 animate-in zoom-in duration-500 ${isMinimized ? 'scale-50' : ''}`}>
             <div className="w-28 h-28 rounded-full bg-white/5 animate-pulse flex items-center justify-center border border-white/10 shadow-inner relative">
               <div className="absolute inset-0 bg-blue-500/10 rounded-full blur-xl" />
               {peer.avatar ? (
@@ -256,69 +328,108 @@ const CallOverlay: React.FC = () => {
                 <User size={48} className="text-white/10 relative z-10" />
               )}
             </div>
-            <div className="text-center">
-              <p className="text-white/20 font-black uppercase tracking-[0.2em] text-[10px] mb-2 flex items-center justify-center gap-2">
-                <CameraOff size={12} /> Camera Đang Tắt
-              </p>
-              <p className="text-white/40 font-bold text-xs">Đang chờ tín hiệu video từ {peer.fullName}...</p>
-            </div>
+            {!isMinimized && (
+              <div className="text-center">
+                <p className="text-white/20 font-black uppercase tracking-[0.2em] text-[10px] mb-2 flex items-center justify-center gap-2">
+                  <CameraOff size={12} /> Camera Đang Tắt
+                </p>
+                <p className="text-white/40 font-bold text-xs">Đang chờ tín hiệu video từ {peer.fullName}...</p>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Local Mini Pip */}
-      <div className="absolute top-8 right-8 w-64 aspect-video rounded-3xl bg-[#1c1c2e]/60 backdrop-blur-2xl overflow-hidden border border-white/10 shadow-2xl z-20 group transition-all hover:scale-105 hover:shadow-blue-500/10">
-        {isCameraOn ? (
-          <video ref={localVideoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted />
-        ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-[#1c1c2e]/80">
-            <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
-              <User size={24} className="text-white/20" />
+      {/* Local Mini Pip - Hidden in Global Minimized Mode */}
+      {!isMinimized && (
+        <div className="absolute top-8 right-8 w-64 aspect-video rounded-3xl bg-[#1c1c2e]/60 backdrop-blur-2xl overflow-hidden border border-white/10 shadow-2xl z-20 group transition-all hover:scale-105 hover:shadow-blue-500/10">
+          {isCameraOn ? (
+            <video ref={localVideoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted />
+          ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center bg-[#1c1c2e]/80">
+              <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
+                <User size={24} className="text-white/20" />
+              </div>
+              <p className="text-[9px] font-black text-white/30 uppercase tracking-[0.2em]">Camera Của Bạn Đang Tắt</p>
             </div>
-            <p className="text-[9px] font-black text-white/30 uppercase tracking-[0.2em]">Camera Của Bạn Đang Tắt</p>
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-5">
+            <p className="text-[10px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Bạn
+            </p>
           </div>
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-5">
-          <p className="text-[10px] font-black text-white uppercase tracking-widest flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Bạn
-          </p>
         </div>
-      </div>
+      )}
 
-      <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/90 to-transparent pointer-events-none" />
+      {!isMinimized && <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/90 to-transparent pointer-events-none" />}
 
-      <div className="absolute left-10 bottom-10 z-10">
-        <p className="text-white font-black text-3xl mb-2 tracking-tight">{peer.fullName}</p>
-        <div className="flex items-center gap-3">
-          <div className={`w-2 h-2 rounded-full ${callState === 'CONNECTED' ? "bg-green-500" : "bg-yellow-500"} shadow-[0_0_8px_rgba(34,197,94,0.5)]`} />
-          <p className="text-white/50 text-[11px] font-black uppercase tracking-[0.2em]">{statusText}</p>
+      {!isMinimized && (
+        <div className="absolute left-10 bottom-10 z-10">
+          <p className="text-white font-black text-3xl mb-2 tracking-tight">{peer.fullName}</p>
+          <div className="flex items-center gap-3">
+            <div className={`w-2 h-2 rounded-full ${callState === 'CONNECTED' ? "bg-green-500" : "bg-yellow-500"} shadow-[0_0_8px_rgba(34,197,94,0.5)]`} />
+            <p className="text-white/50 text-[11px] font-black uppercase tracking-[0.2em]">{statusText}</p>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
   return (
-    <div className="fixed inset-0 z-[110] bg-[#0a0a0a] text-white flex flex-col font-sans">
-      {/* Top Header Overlay */}
-      <div className="h-24 flex items-center justify-between px-10 border-b border-white/5 shrink-0 bg-black/20 backdrop-blur-md z-20">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10 shadow-lg">
-            <Loader2 size={24} className="text-blue-400 animate-spin-slow" />
+    <div className={`fixed z-[110] bg-[#0a0a0a] text-white flex flex-col font-sans transition-all duration-500 ease-in-out shadow-2xl ${
+      isMinimized 
+        ? 'bottom-6 right-6 w-80 h-48 rounded-2xl border border-white/20 overflow-hidden cursor-pointer group/pip' 
+        : 'inset-0'
+    }`}>
+      {/* Top Header Overlay - Hidden in Minimized */}
+      {!isMinimized && (
+        <div className="h-20 flex items-center justify-between px-10 border-b border-white/5 shrink-0 bg-black/20 backdrop-blur-md z-20">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center border border-white/10 shadow-lg">
+              <Loader2 size={20} className="text-blue-400 animate-spin-slow" />
+            </div>
+            <div>
+              <p className="font-black text-white text-md leading-tight tracking-tight">ZaloEdu Live <span className="text-blue-500 ml-1">Pro</span></p>
+              <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-white/20">{callType === 'video' ? 'Kênh Video Bảo Mật' : 'Kênh Thoại Bảo Mật'}</p>
+            </div>
           </div>
-          <div>
-            <p className="font-black text-white text-lg leading-tight tracking-tight">ZaloEdu Live <span className="text-blue-500 ml-1">Pro</span></p>
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/20">{callType === 'video' ? 'Kênh Video Bảo Mật' : 'Kênh Thoại Bảo Mật'}</p>
-          </div>
-        </div>
-        <div className="bg-white/5 rounded-full px-5 py-2 border border-white/10">
-          <div className="flex items-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] text-white/50">
-            <div className={`w-2 h-2 rounded-full ${callState === 'CONNECTED' ? 'bg-green-500' : 'bg-yellow-400'}`} />
-            {statusText}
-          </div>
-        </div>
-      </div>
 
-      <div className="relative flex-grow overflow-hidden flex flex-col">
+          <div className="flex items-center gap-4">
+            <div className="bg-white/5 rounded-full px-5 py-1.5 border border-white/10">
+              <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/50">
+                <div className={`w-1.5 h-1.5 rounded-full ${callState === 'CONNECTED' ? 'bg-green-500' : 'bg-yellow-400'}`} />
+                {statusText}
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => setMinimized(true)}
+              className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center border border-white/10 hover:bg-white/10 transition-colors text-white/40 hover:text-white"
+              title="Thu nhỏ"
+            >
+              <Minimize2 size={20} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Maximize Overlay for Minimized State */}
+      {isMinimized && (
+        <div 
+          onClick={() => setMinimized(false)}
+          className="absolute inset-0 z-50 bg-black/0 group-hover/pip:bg-black/60 transition-all flex items-center justify-center opacity-0 group-hover/pip:opacity-100"
+        >
+          <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center shadow-xl transform scale-75 group-hover/pip:scale-100 transition-transform">
+            <Maximize2 size={24} className="text-white" />
+          </div>
+          <div className="absolute top-3 left-4 flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-white/70">{statusText}</span>
+          </div>
+        </div>
+      )}
+
+      <div className={`relative flex-grow overflow-hidden flex flex-col ${isMinimized ? 'pointer-events-none' : ''}`}>
         {callType === 'video' ? renderVideoLayout() : renderAudioLayout()}
 
         {/* Incoming Video Upgrade Request Modal */}
@@ -359,27 +470,29 @@ const CallOverlay: React.FC = () => {
         )}
       </div>
 
-      {/* Control Bar Overlay */}
-      <div className="h-32 flex items-center justify-center pb-10 shrink-0 z-20">
-        <div className="bg-white/5 backdrop-blur-3xl border border-white/10 px-8 py-4 rounded-[40px] flex items-center gap-5 shadow-2xl">
-          <button onClick={handleToggleMic} className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${isMicOn ? 'bg-white/5 text-white' : 'bg-red-500/20 text-red-500 border border-red-500/20'}`}>
-            {isMicOn ? <Mic size={24} /> : <MicOff size={24} />}
-          </button>
+      {/* Control Bar Overlay - Hidden in Minimized */}
+      {!isMinimized && (
+        <div className="h-32 flex items-center justify-center pb-10 shrink-0 z-20">
+          <div className="bg-white/5 backdrop-blur-3xl border border-white/10 px-8 py-4 rounded-[40px] flex items-center gap-5 shadow-2xl">
+            <button onClick={handleToggleMic} className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${isMicOn ? 'bg-white/5 text-white' : 'bg-red-500/20 text-red-500 border border-red-500/20'}`}>
+              {isMicOn ? <Mic size={24} /> : <MicOff size={24} />}
+            </button>
 
-          <button
-            onClick={handleToggleCamera}
-            disabled={upgradeRequestPending}
-            className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${upgradeRequestPending ? 'bg-blue-900/50 text-white/50 animate-pulse cursor-not-allowed' : isCameraOn ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]' : 'bg-white/5 text-white/30 border border-white/5'}`}>
-            {upgradeRequestPending ? <Loader2 size={24} className="animate-spin" /> : <Camera size={24} />}
-          </button>
+            <button
+              onClick={handleToggleCamera}
+              disabled={upgradeRequestPending}
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${upgradeRequestPending ? 'bg-blue-900/50 text-white/50 animate-pulse cursor-not-allowed' : isCameraOn ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]' : 'bg-white/5 text-white/30 border border-white/5'}`}>
+              {upgradeRequestPending ? <Loader2 size={24} className="animate-spin" /> : <Camera size={24} />}
+            </button>
 
-          <div className="w-px h-8 bg-white/10 mx-2" />
+            <div className="w-px h-8 bg-white/10 mx-2" />
 
-          <button onClick={handleHangup} className="w-16 h-16 rounded-2xl bg-red-500 hover:bg-red-600 flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 shadow-[0_0_30px_rgba(239,68,68,0.3)]">
-            <PhoneOff size={28} className="text-white" />
-          </button>
+            <button onClick={handleHangup} className="w-16 h-16 rounded-2xl bg-red-500 hover:bg-red-600 flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 shadow-[0_0_30px_rgba(239,68,68,0.3)]">
+              <PhoneOff size={28} className="text-white" />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
       {/* Note: Audio tag is now globally managed in App.tsx */}
     </div>
   );

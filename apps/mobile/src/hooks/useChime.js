@@ -34,26 +34,35 @@ export const useChime = () => {
     metadataRef.current = { meetingData, attendeeData };
   }, [meetingData, attendeeData]);
 
-  const requestPermissions = async (isVideo = true) => {
-    console.log(`[Chime-Permissions] Checking permissions for ${isVideo ? 'Video' : 'Audio'} call on ${Platform.OS}`);
+  const requestPermissions = async () => {
+    console.log(`[Chime-Permissions] Requesting ALL permissions (Audio & Video) on ${Platform.OS}`);
     
-    // On iOS, the Chime Native SDK handles permissions when meeting starts, 
-    // but for Android we must request explicitly via PermissionsAndroid.
     if (Platform.OS !== 'android') {
       return true;
     }
 
     try {
-      const grantedAudio = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-      console.log(`[Chime-Permissions] Audio permission result: ${grantedAudio}`);
-      if (grantedAudio !== PermissionsAndroid.RESULTS.GRANTED) return false;
-
-      if (isVideo) {
-        console.log('[Chime-Permissions] Requesting Camera permission...');
-        const grantedVideo = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-        console.log(`[Chime-Permissions] Camera permission result: ${grantedVideo}`);
-        if (grantedVideo !== PermissionsAndroid.RESULTS.GRANTED) return false;
+      // 1. Kiểm tra & Yêu cầu quyền Audio
+      const hasAudio = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      if (!hasAudio) {
+        const grantedAudio = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (grantedAudio !== PermissionsAndroid.RESULTS.GRANTED) {
+          console.warn('[Chime-Permissions] Audio permission DENIED');
+          return false;
+        }
       }
+
+      // 2. Kiểm tra & Yêu cầu quyền Video (Luôn yêu cầu cả 2 một lúc)
+      const hasVideo = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
+      if (!hasVideo) {
+        const grantedVideo = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+        if (grantedVideo !== PermissionsAndroid.RESULTS.GRANTED) {
+          console.warn('[Chime-Permissions] Camera permission DENIED');
+          return false;
+        }
+      }
+      
+      console.log('[Chime-Permissions] ALL permissions GRANTED');
       return true;
     } catch (err) {
       console.warn("[Chime-Bridge] Permission error:", err);
@@ -84,8 +93,14 @@ export const useChime = () => {
     if (isStarted.current || !meetingData || !attendeeData) return;
 
     console.log('[Chime-Bridge] V10.0 Setup Starting...');
-    const hasPermission = await requestPermissions(callType === 'video');
-    if (!hasPermission) return;
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) {
+      Alert.alert(
+        'Thiếu quyền truy cập',
+        'ZaloEdu cần quyền truy cập Camera và Micros để thực hiện cuộc gọi. Vui lòng cấp quyền trong Cài đặt.'
+      );
+      return;
+    }
 
     try {
       ChimeModuleBridge.addListener('onVideoTileAdded', (tile) => {
@@ -221,6 +236,14 @@ export const useChime = () => {
       return ChimeModuleBridge.toggleCamera(on);
     }, []),
     switchAudioOutput: useCallback((useSpeaker) => ChimeModuleBridge.switchAudioOutput(!!useSpeaker), []),
+    switchCamera: useCallback(async () => {
+      try {
+        await ChimeModuleBridge.switchCamera();
+        console.log('[Chime-Hook] 🔄 Camera switched successfully');
+      } catch (error) {
+        console.warn('[Chime-Hook] ❌ Failed to switch camera:', error);
+      }
+    }, []),
     requestPermissions
   };
 };

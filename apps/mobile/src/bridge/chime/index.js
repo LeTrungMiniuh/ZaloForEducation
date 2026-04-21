@@ -45,6 +45,11 @@ export const ChimeModuleBridge = {
   switchAudioOutput: (useSpeaker) => {
     return ChimeModule.switchAudioOutput(useSpeaker);
   },
+
+  // Đảo Camera trước / sau
+  switchCamera: () => {
+    return ChimeModule.switchCamera();
+  },
   
   // Đăng ký lắng nghe sự kiện (onVideoTileAdded, onVideoTileRemoved)
   addListener: (eventName, callback) => {

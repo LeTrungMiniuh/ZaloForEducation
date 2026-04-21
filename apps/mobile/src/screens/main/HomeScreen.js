@@ -922,21 +922,19 @@ export default function HomeScreen({
       return;
     }
 
-    // [SENIOR] Permission Check - Request immediately on click
+    // [SENIOR] Permission Check - Request BOTH Audio & Video immediately on click
     if (Platform.OS === 'android') {
-      console.log(`[Call] Checking permissions for ${type} call...`);
+      console.log(`[Call] Requesting ALL permissions (Audio & Video) for ${type} call...`);
       try {
         const audioGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-        if (audioGranted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert('Quyền truy cập', 'Vui lòng cấp quyền Microphone để thực hiện cuộc gọi.');
+        const cameraGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+        
+        if (audioGranted !== PermissionsAndroid.RESULTS.GRANTED || cameraGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert(
+            'Thiếu quyền truy cập', 
+            'ZaloEdu cần cả quyền Microphone và Camera để thực hiện cuộc gọi. Vui lòng cấp quyền trong Cài đặt.'
+          );
           return;
-        }
-        if (type === 'video') {
-          const cameraGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-          if (cameraGranted !== PermissionsAndroid.RESULTS.GRANTED) {
-            Alert.alert('Quyền truy cập', 'Vui lòng cấp quyền Camera để thực hiện cuộc gọi Video.');
-            return;
-          }
         }
       } catch (err) {
         console.warn('[Call] Permission error:', err);

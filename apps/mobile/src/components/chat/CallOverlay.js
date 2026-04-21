@@ -10,6 +10,7 @@ import { RNChimeVideoView } from '../../bridge/chime';
 import { apiRequest } from '../../utils/api';
 import styles from './style/CallOverlay.styles';
 import SocketService from '../../utils/socket';
+import { Audio } from 'expo-av';
 
 const { width, height } = Dimensions.get('window');
 
@@ -28,12 +29,15 @@ const CallOverlay = () => {
     startTime, 
     isIncoming, 
     acceptCall, 
+    rejectCall,
     hangupCall,
     resetCall,
     remoteTiles,       // [SENIOR] Pulled from global store
     isRemoteCameraOn,  // [SENIOR] Pulled from global store
     upgradeRequestPending,
     incomingUpgradeRequest,
+    isMinimized,
+    setMinimized,
   } = useCallStore();
   
   const { user } = useAuth();
@@ -58,24 +62,49 @@ const CallOverlay = () => {
     }
   }, [isRemoteCameraOn]);
 
-  // [SENIOR] Draggable PIP State
-  const pan = useRef(new Animated.ValueXY({ 
-    x: width - 118 - 16, 
-    y: height - 168 - 250 
+  // [SENIOR] LOCAL PIP State (For local camera box in video calls)
+  const localPan = useRef(new Animated.ValueXY({ 
+    x: width - 118 - 20, 
+    y: 150 // Dời xuống một chút để né header
   })).current;
-
-  const panResponder = useRef(
+  // [SENIOR FIX] Chọc thẳng vào getState() để tránh Stale Closure
+  const localPanResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => !useCallStore.getState().isMinimized,
+      onMoveShouldSetPanResponder: () => !useCallStore.getState().isMinimized,
       onPanResponderGrant: () => {
-        pan.extractOffset();
+        localPan.extractOffset();
       },
       onPanResponderMove: Animated.event(
-        [null, { dx: pan.x, dy: pan.y }],
+        [null, { dx: localPan.x, dy: localPan.y }],
         { useNativeDriver: false }
       ),
       onPanResponderRelease: () => {
-        pan.flattenOffset();
+        localPan.flattenOffset();
+      }
+    })
+  ).current;
+
+  // [SENIOR FIX] Xử lý kéo thả và Tap cho màn hình Mini PiP
+  const globalPipPan = useRef(new Animated.ValueXY({ x: 20, y: 60 })).current;
+  const globalPipPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => useCallStore.getState().isMinimized,
+      onMoveShouldSetPanResponder: () => useCallStore.getState().isMinimized,
+      onPanResponderGrant: () => {
+        globalPipPan.extractOffset();
+      },
+      onPanResponderMove: Animated.event(
+        [null, { dx: globalPipPan.x, dy: globalPipPan.y }],
+        { useNativeDriver: false }
+      ),
+      onPanResponderRelease: (evt, gestureState) => {
+        globalPipPan.flattenOffset();
+        // Kiểm tra xem là TAP hay DRAG (Nếu di chuyển < 10px thì coi là TAP)
+        const isTap = Math.abs(gestureState.dx) < 10 && Math.abs(gestureState.dy) < 10;
+        if (isTap) {
+          useCallStore.getState().setMinimized(false);
+        }
       }
     })
   ).current;
@@ -86,6 +115,7 @@ const CallOverlay = () => {
     toggleMic: toggleMicChime, 
     toggleCamera: toggleCameraChime,
     switchAudioOutput,
+    switchCamera,
     requestCameraPermissionUpgrade,
     requestPermissions
   } = useChime();
@@ -93,6 +123,8 @@ const CallOverlay = () => {
   const timerRef = useRef(null);
   const timeoutRef = useRef(null);
   const hasSyncedRef = useRef(false);
+  const ringtoneSound = useRef(null);
+  const ringbackSound = useRef(null);
 
   // Handle Duration Timer
   useEffect(() => {
@@ -142,6 +174,99 @@ const CallOverlay = () => {
       Vibration.cancel();
     }
     return () => Vibration.cancel();
+  }, [callState, isIncoming]);
+
+  // [SENIOR] Incoming Call Ringtone Logic (Mobile - expo-av)
+  useEffect(() => {
+    async function manageRingtone() {
+      if (callState === 'RINGING' && isIncoming) {
+        try {
+          console.log('[Mobile-Call] 🔔 Starting ringtone...');
+          
+          // [SENIOR] Cấu hình Audio Mode để nhạc chuông kêu kể cả khi để im lặng
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            playsInSilentModeIOS: true,
+            shouldDuckAndroid: true,
+            stayActiveInBackground: true,
+            playThroughEarpieceAndroid: false,
+          });
+
+          // Ensure any previous instance is cleared
+          if (ringtoneSound.current) {
+            await ringtoneSound.current.unloadAsync();
+          }
+          
+          const { sound } = await Audio.Sound.createAsync(
+            require('../../../assets/audio_sound/ringtone.mp3'),
+            { shouldPlay: true, isLooping: true }
+          );
+          ringtoneSound.current = sound;
+        } catch (error) {
+          console.log('[Mobile-Call] ❌ Error playing ringtone:', error);
+        }
+      } else {
+        if (ringtoneSound.current) {
+          console.log('[Mobile-Call] 🔇 Stopping and unloading ringtone...');
+          try {
+            await ringtoneSound.current.stopAsync();
+            await ringtoneSound.current.unloadAsync();
+          } catch (e) {
+            console.warn('[Mobile-Call] Ringtone cleanup error:', e);
+          }
+          ringtoneSound.current = null;
+        }
+      }
+    }
+
+    manageRingtone();
+
+    return () => {
+      if (ringtoneSound.current) {
+        ringtoneSound.current.unloadAsync().catch(() => {});
+      }
+    };
+  }, [callState, isIncoming]);
+
+  // [SENIOR] Ringback Tone Logic (Mobile - expo-av) - For Caller
+  useEffect(() => {
+    async function manageRingback() {
+      if ((callState === 'RINGING' || callState === 'CALLING') && !isIncoming) {
+        try {
+          console.log('[Mobile-Call] 🛰️ Starting ringback tone...');
+          if (ringbackSound.current) {
+            await ringbackSound.current.unloadAsync();
+          }
+
+          const { sound } = await Audio.Sound.createAsync(
+            require('../../../assets/audio_sound/ringback.mp3'),
+            { shouldPlay: true, isLooping: true }
+          );
+          ringbackSound.current = sound;
+        } catch (error) {
+          console.log('[Mobile-Call] ❌ Error playing ringback:', error);
+        }
+      } else {
+        if (ringbackSound.current) {
+          console.log('[Mobile-Call] 🔇 Stopping and unloading ringback...');
+          try {
+            await ringbackSound.current.stopAsync();
+            await ringbackSound.current.unloadAsync();
+          } catch (e) {
+            console.warn('[Mobile-Call] Ringback cleanup error:', e);
+          }
+          ringbackSound.current = null;
+        }
+      }
+    }
+
+    manageRingback();
+
+    return () => {
+      if (ringbackSound.current) {
+        ringbackSound.current.unloadAsync().catch(() => {});
+      }
+    };
   }, [callState, isIncoming]);
 
   // [SENIOR] One-Way Data Flow: Sync Mic Hardware with Store
@@ -199,16 +324,9 @@ const CallOverlay = () => {
     
     console.log(`[CallOverlay] handleAccept clicked. callType: ${callType}`);
 
-    // [FIX] Check permissions before joining (especially for Video)
-    const hasPermission = await requestPermissions(callType === 'video');
-    console.log(`[CallOverlay] requestPermissions result: ${hasPermission}`);
-    if (!hasPermission) {
-      Alert.alert(
-        'Quyền truy cập',
-        'ZaloEdu cần quyền truy cập Camera và Micro để thực hiện cuộc gọi. Vui lòng cấp quyền trong Cài đặt.'
-      );
-      return;
-    }
+    // [SENIOR] Luôn xin đủ cả 2 quyền (Audio & Video) khi nghe máy sếp nhé!
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
 
     try {
       const res = await apiRequest('/call/join', { 
@@ -425,16 +543,60 @@ const CallOverlay = () => {
         </View>
       )}
 
-      {/* LAYER 3: Name + Timer overlay */}
+      {/* LAYER 3: Top Left - Minimize Button (Sếp yêu cầu để ở đây cho hợp lý) */}
+      <TouchableOpacity 
+        onPress={() => setMinimized(true)}
+        style={{ 
+          position: 'absolute', 
+          top: 60, 
+          left: 20, 
+          zIndex: 10,
+          backgroundColor: 'rgba(0,0,0,0.4)',
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1,
+          borderColor: 'rgba(255,255,255,0.1)'
+        }}
+      >
+        <Text style={[styles.actionIcon, { fontSize: 22 }]}>close_fullscreen</Text>
+      </TouchableOpacity>
+
+      {/* LAYER 3.1: Top Right - Flip Camera Button (Chỉ hiện khi bật cam) */}
+      {isCameraOn && (
+        <TouchableOpacity 
+          onPress={switchCamera}
+          style={{ 
+            position: 'absolute', 
+            top: 60, 
+            right: 20, 
+            zIndex: 10,
+            backgroundColor: 'rgba(0,0,0,0.4)',
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.1)'
+          }}
+        >
+          <Text style={[styles.actionIcon, { fontSize: 22 }]}>flip_camera_android</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* LAYER 3.5: Name + Timer overlay */}
       <View style={[styles.remoteHeader, { zIndex: 3 }]}>
         <Text style={styles.remoteHeaderName}>{displayName}</Text>
         <Text style={styles.remoteHeaderTimer}>{duration}</Text>
       </View>
 
-      {/* LAYER 4 (top): Local PIP - draggable */}
+      {/* LAYER 4 (top): Local PIP - draggable inside full-screen */}
       <Animated.View
-        style={[styles.localPipContainer, pan.getLayout(), { zIndex: 999 }]}
-        {...panResponder.panHandlers}
+        style={[styles.localPipContainer, localPan.getLayout(), { zIndex: 999 }]}
+        {...localPanResponder.panHandlers}
       >
         {isLocalCameraOn ? (
           <RNChimeVideoView tileId={localTileId} onTop={true} style={StyleSheet.absoluteFillObject} />
@@ -471,6 +633,26 @@ const CallOverlay = () => {
 
   const renderAudioCall = () => (
     <View style={styles.content}>
+      <TouchableOpacity 
+        onPress={() => setMinimized(true)}
+        style={{ 
+          position: 'absolute', 
+          top: 60, 
+          left: 20, 
+          zIndex: 10,
+          backgroundColor: 'rgba(255,255,255,0.1)',
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1,
+          borderColor: 'rgba(255,255,255,0.1)'
+        }}
+      >
+        <Text style={[styles.actionIcon, { fontSize: 22, color: '#fff' }]}>close_fullscreen</Text>
+      </TouchableOpacity>
+
       <View style={styles.userInfo}>
         <Image source={avatarSource} style={styles.avatar} />
         <Text style={styles.name}>{displayName}</Text>
@@ -529,28 +711,79 @@ const CallOverlay = () => {
   );
 
   return (
-    <View style={styles.overlay}>
-      <SafeAreaView style={{ flex: 1 }}>
-        {callState === 'RINGING' && renderIncoming()}
-        {callState === 'CALLING' && renderCalling()}
-        {callState === 'CONNECTED' && (callType === 'video' ? renderVideoCall() : renderAudioCall())}
-        {callState === 'ENDED' && renderEnded()}
-        
-        {incomingUpgradeRequest && callState === 'CONNECTED' && (
-          <View style={{position: 'absolute', top: 60, left: 20, right: 20, backgroundColor: 'rgba(28,28,46,0.95)', padding: 16, borderRadius: 16, borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, zIndex: 9999}}>
-            <Text style={{color: '#fff', fontSize: 14, fontWeight: 'bold', marginBottom: 16, textAlign: 'center'}}>{displayName} muốn chuyển sang cuộc gọi Video</Text>
-            <View style={{flexDirection: 'row', gap: 10}}>
-              <TouchableOpacity onPress={handleAcceptUpgrade} style={{flex: 1, backgroundColor: '#16a34a', paddingVertical: 10, borderRadius: 10, alignItems: 'center'}}>
-                <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 13}}>Đồng ý</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleRejectUpgrade} style={{flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', paddingVertical: 10, borderRadius: 10, alignItems: 'center'}}>
-                <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 13}}>Từ chối</Text>
-              </TouchableOpacity>
+    <Animated.View 
+      style={[
+        styles.overlay,
+        isMinimized && {
+          width: 160,
+          height: 220,
+          borderRadius: 24,
+          overflow: 'hidden',
+          top: 0,
+          left: 0,
+          bottom: undefined,
+          right: undefined,
+          ...globalPipPan.getLayout(), // getLayout() provides {left, top}
+          borderWidth: 3, // Làm viền dầy lên cho sếp thấy rõ
+          borderColor: 'rgba(255,255,255,0.5)',
+          elevation: 50, // Nổi cao nhất có thể
+          backgroundColor: '#000',
+        }
+      ]}
+      {...(isMinimized ? globalPipPanResponder.panHandlers : {})}
+    >
+      {isMinimized && (
+        <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+          {callType === 'video' ? (
+            <View style={{ flex: 1, backgroundColor: '#000' }}>
+               {remoteTile && isRemoteCameraOn ? (
+                  <RNChimeVideoView
+                    tileId={remoteTile.tileId}
+                    style={StyleSheet.absoluteFillObject}
+                  />
+               ) : (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                    <Image source={avatarSource} style={{ width: 60, height: 60, borderRadius: 30 }} />
+                    <Text style={{ color: '#fff', fontSize: 10, marginTop: 8 }}>Camera ẩn</Text>
+                  </View>
+               )}
+               <View style={{ position: 'absolute', bottom: 10, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>{duration}</Text>
+               </View>
             </View>
-          </View>
-        )}
-      </SafeAreaView>
-    </View>
+          ) : (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1c1c2e' }}>
+              <Image source={avatarSource} style={{ width: 70, height: 70, borderRadius: 35, marginBottom: 12 }} />
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold' }}>{duration}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, marginTop: 4 }}>Đang thoại...</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {!isMinimized && (
+        <SafeAreaView style={{ flex: 1 }}>
+          {callState === 'RINGING' && renderIncoming()}
+          {callState === 'CALLING' && renderCalling()}
+          {callState === 'CONNECTED' && (callType === 'video' ? renderVideoCall() : renderAudioCall())}
+          {callState === 'ENDED' && renderEnded()}
+          
+          {incomingUpgradeRequest && callState === 'CONNECTED' && (
+            <View style={{position: 'absolute', top: 60, left: 20, right: 20, backgroundColor: 'rgba(28,28,46,0.95)', padding: 16, borderRadius: 16, borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, zIndex: 9999}}>
+              <Text style={{color: '#fff', fontSize: 14, fontWeight: 'bold', marginBottom: 16, textAlign: 'center'}}>{displayName} muốn chuyển sang cuộc gọi Video</Text>
+              <View style={{flexDirection: 'row', gap: 10}}>
+                <TouchableOpacity onPress={handleAcceptUpgrade} style={{flex: 1, backgroundColor: '#16a34a', paddingVertical: 10, borderRadius: 10, alignItems: 'center'}}>
+                  <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 13}}>Đồng ý</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleRejectUpgrade} style={{flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', paddingVertical: 10, borderRadius: 10, alignItems: 'center'}}>
+                  <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 13}}>Từ chối</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </SafeAreaView>
+      )}
+    </Animated.View>
   );
 };
 
