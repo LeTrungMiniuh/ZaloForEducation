@@ -26,6 +26,7 @@ import ChangePasswordScreen from './src/screens/profile/ChangePasswordScreen';
 import LoginOtpScreen from './src/screens/auth/LoginOtpScreen';
 import SplashScreen from './src/components/SplashScreen';
 import CallOverlay from './src/components/chat/CallOverlay';
+import SearchScreen from './src/screens/main/SearchScreen';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Alert from './src/utils/Alert';
@@ -102,7 +103,7 @@ function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, pa
     }
   };
 
-  const navigate = (target, tab = 'messages', data = {}) => {
+  const navigate = (target, data = {}, tab = 'messages') => {
     const nonStackScreens = ['login', 'register', 'forgot', 'reset-password', 'login-otp'];
     if (!nonStackScreens.includes(screen)) {
       setHistory(prev => [...prev, { screen, tab: homeTab, params }]);
@@ -120,7 +121,7 @@ function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, pa
 
   const goBack = () => {
     if (history.length === 0) {
-      navigate('home', 'messages');
+      navigate('home', {}, 'messages');
       return;
     }
 
@@ -147,7 +148,7 @@ function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, pa
     case 'forgot': return <ForgotPasswordScreen onNavigate={navigate} />;
     case 'reset-password': return <ResetPasswordScreen onNavigate={navigate} />;
     case 'sessions': return <SessionsScreen onNavigate={navigate} goBack={goBack} />;
-    case 'profile': return <ProfileScreen onNavigate={navigate} onLogout={handleLogout} goBack={goBack} />;
+    case 'profile': return <ProfileScreen onNavigate={navigate} onLogout={handleLogout} goBack={goBack} params={params} />;
     case 'chat': return <ChatScreen onNavigate={navigate} goBack={goBack} params={params} />;
     case 'home': return <HomeScreen onNavigate={navigate} onLogout={handleLogout} initialTab={homeTab} goBack={goBack} onTabChange={handleTabChange} />;
     case 'qr-scanner': return <QRScannerScreen onNavigate={navigate} goBack={goBack} />;
@@ -156,6 +157,7 @@ function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, pa
     case 'settings': return <SettingsScreen onNavigate={navigate} onLogout={handleLogout} goBack={goBack} />;
     case 'change-password': return <ChangePasswordScreen onNavigate={navigate} goBack={goBack} />;
     case 'login-otp': return <LoginOtpScreen onNavigate={navigate} goBack={goBack} params={params} />;
+    case 'search': return <SearchScreen onNavigate={navigate} goBack={goBack} params={params} />;
     case 'login':
     default: return <LoginScreen onNavigate={navigate} />;
   }

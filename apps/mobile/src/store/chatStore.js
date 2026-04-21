@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { apiRequest } from "../utils/api";
+import { apiRequest, chatGet, chatPost, normalizeApiResponse } from "../utils/api";
 
 const memoryCache = new Map();
 let storage = null;
@@ -30,28 +30,6 @@ const setCachedMessages = (convId, messages) => {
   }
 };
 
-const normalizeApiPayload = (res) => {
-  if (!res || typeof res !== "object") return res;
-  if (Object.prototype.hasOwnProperty.call(res, "data")) return res.data;
-
-  const numericKeys = Object.keys(res).filter((key) => /^\d+$/.test(key));
-  if (numericKeys.length > 0) {
-    return numericKeys
-      .sort((a, b) => Number(a) - Number(b))
-      .map((key) => res[key]);
-  }
-
-  const payload = { ...res };
-  delete payload.ok;
-  delete payload.status;
-  return payload;
-};
-
-const normalizeApiResponse = (res) => ({
-  ...res,
-  data: normalizeApiPayload(res),
-});
-
 const normalizeMessage = (message) => {
   if (!message || typeof message !== "object") return null;
 
@@ -73,40 +51,7 @@ const normalizeMessage = (message) => {
   return normalized;
 };
 
-const chatGet = async (path, query) => {
-  const queryString = query
-    ? `?${Object.entries(query)
-        .filter(
-          ([, value]) =>
-            value !== undefined && value !== null && String(value) !== "",
-        )
-        .map(
-          ([key, value]) =>
-            `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`,
-        )
-        .join("&")}`
-    : "";
 
-  let res = await apiRequest(`/chat${path}${queryString}`);
-  if (!res?.ok && res?.status === 404) {
-    res = await apiRequest(`/api/chat${path}${queryString}`);
-  }
-  return normalizeApiResponse(res);
-};
-
-const chatPost = async (path, body) => {
-  let res = await apiRequest(`/chat${path}`, {
-    method: "POST",
-    body: JSON.stringify(body || {}),
-  });
-  if (!res?.ok && res?.status === 404) {
-    res = await apiRequest(`/api/chat${path}`, {
-      method: "POST",
-      body: JSON.stringify(body || {}),
-    });
-  }
-  return normalizeApiResponse(res);
-};
 
 export const useChatStore = create((set, get) => ({
   conversations: [],
@@ -167,16 +112,45 @@ export const useChatStore = create((set, get) => ({
       const incomingConvId = get().getMessageConvId(safeMessage);
       if (!incomingConvId) return state;
 
+      // 1. Update Cache
       const cached = getCachedMessages(incomingConvId);
       if (!cached.some((m) => m.id === safeMessage.id)) {
         setCachedMessages(incomingConvId, [...cached, safeMessage]);
       }
 
-      if (incomingConvId !== state.activeConvId) {
-        return state;
+      // 2. [SENIOR] Update conversations list (Jump to Top, Preview, Unread)
+      const convIndex = state.conversations.findIndex((c) => c.id === incomingConvId);
+      let nextConversations = [...state.conversations];
+      if (convIndex !== -1) {
+        const target = { ...nextConversations[convIndex] };
+        
+        // Only update if it's actually newer or if current lastMessage is older
+        const timestamp = safeMessage.createdAt || new Date().toISOString();
+        target.lastMessage = safeMessage.content;
+        target.lastMessageContent = safeMessage.content;
+        target.lastMessageSenderId = safeMessage.senderId;
+        target.updatedAt = timestamp;
+
+        // Unread logic
+        const isNotActive = state.activeConvId !== incomingConvId;
+        const isFromOthers = safeMessage.senderId !== "me" && safeMessage.senderId !== ""; // Simple shim, real check is usually email
+        if (isNotActive && isFromOthers) {
+          target.unreadCount = (target.unreadCount || 0) + 1;
+        }
+
+        nextConversations.splice(convIndex, 1);
+        nextConversations.unshift(target);
       }
 
-      if (state.messages.find((m) => m.id === safeMessage.id)) return state;
+      // 3. Update active messages list if applicable
+      if (incomingConvId !== state.activeConvId) {
+        return { conversations: nextConversations };
+      }
+
+      if (state.messages.find((m) => m.id === safeMessage.id)) {
+        return { conversations: nextConversations };
+      }
+
       // Optimistically remove any temporary message that matches this real one
       const filteredMessages = state.messages.filter(
         (m) =>
@@ -187,8 +161,31 @@ export const useChatStore = create((set, get) => ({
           ),
       );
 
-      const newMessages = [...filteredMessages, safeMessage];
-      return { messages: newMessages };
+      return { 
+        messages: [...filteredMessages, safeMessage],
+        conversations: nextConversations 
+      };
+    }),
+  
+  upsertConversationLastMessage: (convId, content, senderId) =>
+    set((state) => {
+      const convIndex = state.conversations.findIndex((c) => c.id === convId);
+      if (convIndex === -1) return state;
+
+      const nextConversations = [...state.conversations];
+      const target = { ...nextConversations[convIndex] };
+      
+      target.lastMessage = content;
+      target.lastMessageContent = content;
+      if (senderId) {
+        target.lastMessageSenderId = senderId;
+      }
+      target.updatedAt = new Date().toISOString();
+
+      nextConversations.splice(convIndex, 1);
+      nextConversations.unshift(target);
+      
+      return { conversations: nextConversations };
     }),
 
   updateMessage: (msgId, updates) =>
@@ -277,8 +274,30 @@ export const useChatStore = create((set, get) => ({
     setCachedMessages(convId, [...cached, optimisticMsg]);
 
     set((state) => {
-      if (state.activeConvId !== convId) return state;
-      return { messages: [...state.messages, optimisticMsg] };
+      // 1. Update internal messages list if active
+      let nextMessages = state.messages;
+      if (state.activeConvId === convId) {
+        nextMessages = [...state.messages, optimisticMsg];
+      }
+
+      // 2. [SENIOR] Optimistic Jump to Top & Last Message Update
+      const convIndex = state.conversations.findIndex((c) => c.id === convId);
+      let nextConversations = [...state.conversations];
+      if (convIndex !== -1) {
+        const target = { ...nextConversations[convIndex] };
+        target.lastMessage = content;
+        target.lastMessageContent = content;
+        target.lastMessageSenderId = senderEmail;
+        target.updatedAt = timestamp;
+        
+        nextConversations.splice(convIndex, 1);
+        nextConversations.unshift(target);
+      }
+
+      return { 
+        messages: nextMessages,
+        conversations: nextConversations
+      };
     });
 
     try {

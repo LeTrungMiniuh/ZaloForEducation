@@ -28,6 +28,7 @@ import { Colors, Shadows, Typography } from '../../constants/Theme';
 import Alert from '../../utils/Alert';
 import { useAuth } from '../../context/AuthContext';
 import { toDateParts, formatDisplayDate } from '../../utils/date';
+import { apiGet, apiPost, apiPut, apiUpload, chatGet } from '../../utils/api';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 const COVER_URL =
@@ -49,9 +50,13 @@ const EMPTY_PROFILE = {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function ProfileScreen({ onNavigate, onLogout, goBack }) {
+export default function ProfileScreen({ onNavigate, onLogout, goBack, params }) {
   const { user: authUser, updateUser, profileVersion } = useAuth();
   
+  // [SEARCH_FIX] Detect if viewing self or another user
+  const targetUserId = params?.userId;
+  const isMe = !targetUserId || targetUserId === authUser?.email;
+
   const [profile, setProfile]   = useState(() => ({
     ...EMPTY_PROFILE,
     ...(authUser || {}),
@@ -61,7 +66,7 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack }) {
     ...(authUser || {}),
   }));
   
-  const [loading, setLoading]   = useState(!authUser);
+  const [loading, setLoading]   = useState(true);
   const [saving,  setSaving]    = useState(false);
   const [editing, setEditing]   = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -104,18 +109,21 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack }) {
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        // Since we initialize from authUser prop, we can skip storage read here
-        // and just fetch the latest from API
-        const response = await fetch(`${API_URL}/users/profile`, {
-          headers: await authHeaders(),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Không thể tải hồ sơ.');
+        setLoading(true);
+        // Use standard profile endpoint for me, search endpoint for others
+        const res = isMe 
+          ? await chatGet("/profile")
+          : await chatGet("/friends/search", { email: targetUserId });
 
-        const apiProfile = normalizeProfile(data.profile || data);
+        if (!res.ok) throw new Error(res.message || 'Không thể tải hồ sơ.');
+
+        const apiProfile = normalizeProfile(isMe ? (res.profile || res.data) : res.user || res.data);
         setProfile(apiProfile);
         setDraft(apiProfile);
-        await persistUser(apiProfile);
+        
+        if (isMe) {
+          await persistUser(apiProfile);
+        }
       } catch (error) {
         console.error('[ProfileScreen] Load profile error', error);
       } finally {
@@ -124,7 +132,7 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack }) {
     };
 
     fetchProfile();
-  }, []);
+  }, [targetUserId, isMe]);
 
   // Sync local profile when context user (e.g. from socket) updates
   useEffect(() => {
@@ -181,52 +189,16 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack }) {
 
       console.log('[ProfileScreen] Asset for upload:', asset);
 
-      // Tạo FormData để upload
-      const formData = new FormData();
-      
-      if (Platform.OS === 'web') {
-        // Trên WEB: Cần chuyển URI thành Blob/File thật
-        console.log('[ProfileScreen] Web detected, fetching blob...');
-        const fetchRes = await fetch(asset.uri);
-        const blob = await fetchRes.blob();
-        formData.append('file', blob, asset.fileName || `avatar_${Date.now()}.jpg`);
-      } else {
-        // Trên NATIVE (Android/iOS): Dùng object { uri, name, type }
-        const fileToUpload = {
-          uri: Platform.OS === 'android' ? asset.uri : asset.uri.replace('file://', ''),
-          name: asset.fileName || `avatar_${Date.now()}.jpg`,
-          type: asset.mimeType || 'image/jpeg',
-        };
-        console.log('[ProfileScreen] Native detected, appending file object:', fileToUpload);
-        formData.append('file', fileToUpload);
-      }
+      const res = await apiUpload('/users/avatar/upload', asset);
+      if (!res.ok) throw new Error(res.message || 'Không thể upload ảnh đại diện.');
 
-      const token = await AsyncStorage.getItem('token');
-      const uploadResponse = await fetch(`${API_URL}/users/avatar/upload`, {
-        method:  'POST',
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          'Accept': 'application/json',
-        },
-        body:    formData,
-      });
-
-      console.log('[ProfileScreen] Server Response Status:', uploadResponse.status);
-
-      const uploadData = await uploadResponse.json();
-      if (!uploadResponse.ok) {
-        console.error('[ProfileScreen] Upload failed data:', uploadData);
-        throw new Error(uploadData.message || 'Không thể upload ảnh đại diện.');
-      }
-
-      const newAvatarUrl = uploadData.profile?.avatarUrl || '';
+      const newAvatarUrl = res.profile?.avatarUrl || '';
       const updated = normalizeProfile({ ...profile, avatarUrl: newAvatarUrl });
       setProfile(updated);
       setDraft(updated);
       
       // Update global context
       if (updateUser) await updateUser(updated);
-      
       await persistUser(updated);
 
       Alert.alert('Thành công', 'Ảnh đại diện đã được cập nhật.');
@@ -254,26 +226,19 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack }) {
         ? `${dd}-${mm}-${yyyy}` 
         : profile.dataOfBirth;
 
-      const profileResponse = await fetch(`${API_URL}/users/profile`, {
-        method:  'PUT',
-        headers,
-        body: JSON.stringify({
-          fullName:    draft.fullName,
-          phone:       draft.phone,
-          address:     draft.address,
-          bio:         draft.bio,
-          dataOfBirth: nextBirthDate,
-          gender:      draft.gender,
-        }),
+      const res = await apiPut('/users/profile', {
+        fullName:    draft.fullName,
+        phone:       draft.phone,
+        address:     draft.address,
+        bio:         draft.bio,
+        dataOfBirth: nextBirthDate,
+        gender:      draft.gender,
       });
 
-      const profileData = await profileResponse.json();
-      if (!profileResponse.ok) {
-        throw new Error(profileData.message || 'Không thể lưu hồ sơ.');
-      }
+      if (!res.ok) throw new Error(res.message || 'Không thể lưu hồ sơ.');
 
       const normalizedNext = normalizeProfile({
-        ...(profileData.profile || profileData),
+        ...(res.profile || res.data),
         dataOfBirth: nextBirthDate, // Đảm bảo UI cập nhật đúng ngày vừa lưu
       });
       const finalProfile = { ...draft, ...normalizedNext };
@@ -515,9 +480,11 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack }) {
 
                 <View style={styles.nameRow}>
                   <Text style={styles.nameTitle}>{displayName}</Text>
-                  <TouchableOpacity onPress={startEditing}>
-                    <Text style={styles.editIcon}>edit</Text>
-                  </TouchableOpacity>
+                  {isMe && (
+                    <TouchableOpacity onPress={startEditing}>
+                      <Text style={styles.editIcon}>edit</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
 
@@ -554,40 +521,44 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack }) {
                   Chỉ bạn bè có lưu số của bạn trong danh bạ máy xem được số này
                 </Text>
 
-                <TouchableOpacity style={styles.updateInlineButton} onPress={startEditing}>
-                  <Text style={styles.updateInlineIcon}>edit</Text>
-                  <Text style={styles.updateInlineText}>Cập nhật thông tin</Text>
-                </TouchableOpacity>
+                {isMe && (
+                  <TouchableOpacity style={styles.updateInlineButton} onPress={startEditing}>
+                    <Text style={styles.updateInlineIcon}>edit</Text>
+                    <Text style={styles.updateInlineText}>Cập nhật thông tin</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
-              {/* Quick actions */}
-              <View style={styles.quickActions}>
-                <TouchableOpacity
-                  style={styles.quickActionButton}
-                  onPress={() => onNavigate && onNavigate('profile-more')}
-                >
-                  <Text style={styles.quickActionIcon}>more_horiz</Text>
-                  <Text style={styles.quickActionText}>Thêm</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.quickActionButton}
-                  onPress={() => onNavigate && onNavigate('settings')}
-                >
-                  <Text style={styles.quickActionIcon}>settings</Text>
-                  <Text style={styles.quickActionText}>Cài đặt</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.quickActionButton}
-                  onPress={() => onNavigate && onNavigate('sessions')}
-                >
-                  <Text style={styles.quickActionIcon}>devices</Text>
-                  <Text style={styles.quickActionText}>Thiết bị</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.quickActionButton} onPress={onLogout}>
-                  <Text style={styles.quickActionIcon}>logout</Text>
-                  <Text style={styles.quickActionText}>Đăng xuất</Text>
-                </TouchableOpacity>
-              </View>
+              {/* Quick actions - only show for Me */}
+              {isMe && (
+                <View style={styles.quickActions}>
+                  <TouchableOpacity
+                    style={styles.quickActionButton}
+                    onPress={() => onNavigate && onNavigate('profile-more')}
+                  >
+                    <Text style={styles.quickActionIcon}>more_horiz</Text>
+                    <Text style={styles.quickActionText}>Thêm</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.quickActionButton}
+                    onPress={() => onNavigate && onNavigate('settings')}
+                  >
+                    <Text style={styles.quickActionIcon}>settings</Text>
+                    <Text style={styles.quickActionText}>Cài đặt</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.quickActionButton}
+                    onPress={() => onNavigate && onNavigate('sessions')}
+                  >
+                    <Text style={styles.quickActionIcon}>devices</Text>
+                    <Text style={styles.quickActionText}>Thiết bị</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.quickActionButton} onPress={onLogout}>
+                    <Text style={styles.quickActionIcon}>logout</Text>
+                    <Text style={styles.quickActionText}>Đăng xuất</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           )}
         </ScrollView>

@@ -33,6 +33,7 @@ import { useCallStore } from "../../store/callStore";
 
 import MessageBubble from '../../components/chat/MessageBubble';
 import ChatInput from '../../components/chat/ChatInput';
+import SystemCallMessageItem from '../../components/chat/SystemCallMessageItem';
 
 const REACTION_OPTIONS = ["❤️", "👍", "😂", "😮", "😢", "😡"];
 const MAX_ATTACHMENTS_PER_MESSAGE = 8;
@@ -41,6 +42,8 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const conversationId = params?.conversationId;
+  const targetMessageId = params?.targetMessageId;
+  const highlightKeyword = params?.highlightKeyword;
 
   // ZUSTAND STORE
   const {
@@ -51,7 +54,8 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
     addMessage,
     updateMessage,
     setMessages,
-    setConversations
+    setConversations,
+    upsertConversationLastMessage
   } = useChatStore();
 
   const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
@@ -72,20 +76,20 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
   const profileLoadingRef = useRef(new Set());
 
   // Derived Values
-  const selectedChat = useMemo(() => 
+  const selectedChat = useMemo(() =>
     conversations.find(c => c.id === conversationId),
-  [conversations, conversationId]);
+    [conversations, conversationId]);
 
-  const reversedMessages = useMemo(() => 
+  const reversedMessages = useMemo(() =>
     Array.isArray(messages) ? [...messages].reverse() : [],
-  [messages]);
+    [messages]);
 
   const activePinnedMessages = useMemo(() =>
     messages
       .filter((message) => message.pinned)
       .sort((a, b) => String(b.pinnedAt || "").localeCompare(String(a.pinnedAt || "")))
       .slice(0, 3),
-  [messages]);
+    [messages]);
 
   // Profile Helpers
   const getDisplayName = useCallback((email) => {
@@ -128,24 +132,7 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
     return String(message.content || "Tin nhắn");
   };
 
-  const upsertConversationLastMessage = (convId, content, senderId, isNewMessage = false, msgId = null) => {
-    setConversations((prev) => {
-      const index = prev.findIndex((conv) => conv.id === convId);
-      if (index === -1) return prev;
-      const next = [...prev];
-      const target = next[index];
-      const updated = {
-        ...target,
-        lastMessage: content,
-        lastMessageContent: content,
-        lastMessageSenderId: senderId || target.lastMessageSenderId,
-        updatedAt: new Date().toISOString(),
-      };
-      next.splice(index, 1);
-      next.unshift(updated);
-      return next;
-    });
-  };
+
 
   // Logic Initializing
   useEffect(() => {
@@ -173,6 +160,22 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
       }
     };
   }, [conversationId]);
+
+  // Deep link scroll to target message
+  useEffect(() => {
+    if (!targetMessageId || !messagesScrollRef.current) return;
+
+    // Since inverted + reversed, find index from end
+    const index = reversedMessages.findIndex(msg => msg.id === targetMessageId);
+    if (index !== -1) {
+      messagesScrollRef.current.scrollToIndex({
+        index,
+        animated: true,
+        viewPosition: 0.5 // Center vertically
+      });
+    }
+    // Note: If not found, user can scroll up; future: load more pages
+  }, [targetMessageId, reversedMessages]);
 
   // Message Handling
   const handleChatSend = async (textToSend, attachmentsToSend) => {
@@ -373,14 +376,14 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
-      
+
       {/* HEADER */}
       <LinearGradient colors={["#0058bc", "#00418f"]} style={[styles.header, { paddingTop: insets.top }]}>
         <View style={styles.headerContent}>
           <TouchableOpacity onPress={goBack} style={styles.backButton}>
             <Text style={styles.backIcon}>arrow_back</Text>
           </TouchableOpacity>
-          
+
           <View style={styles.headerInfo}>
             <View style={styles.avatarContainer}>
               <Image source={{ uri: selectedChat.type === 'direct' ? getDisplayAvatar(selectedChat.partner) : selectedChat.avatar }} style={styles.avatar} />
@@ -426,16 +429,29 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
         data={reversedMessages}
         inverted
         keyExtractor={item => item.id}
-        renderItem={({ item }) => (
-          <MessageBubble
-            message={item}
-            isMe={item.senderId === user?.email}
-            userProfile={{ avatarUrl: getDisplayAvatar(item.senderId) }}
-            onLongPress={setActionMessage}
-            onReaction={toggleReaction}
-            onReply={id => setReplyTarget(id)}
-          />
-        )}
+        renderItem={({ item }) => {
+          if (item.type === 'call') {
+            return (
+              <SystemCallMessageItem
+                message={item}
+                currentUserEmail={user?.email}
+                onCallBack={() => handleStartCall(item.callType || 'audio')}
+              />
+            );
+          }
+          return (
+            <MessageBubble
+              message={item}
+              isMe={item.senderId === user?.email}
+              userProfile={{ avatarUrl: getDisplayAvatar(item.senderId) }}
+              onLongPress={setActionMessage}
+              onReaction={toggleReaction}
+              onReply={id => setReplyTarget(id)}
+              isHighlighted={item.id === targetMessageId}
+              highlightKeyword={highlightKeyword}
+            />
+          );
+        }}
         contentContainerStyle={styles.listContent}
       />
 

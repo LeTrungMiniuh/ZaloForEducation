@@ -39,7 +39,7 @@ export class UserController {
   @Post('avatar/upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('file'))
-  async uploadAvatar(@Req() req, @UploadedFile() file: Express.Multer.File) {
+  async uploadAvatar(@Req() req, @UploadedFile() file: any) {
     this.logger.log(`[UserController.uploadAvatar] Incoming request from ${req.user?.email}`);
     this.logger.log(`[UserController.uploadAvatar] Headers: ${JSON.stringify(req.headers)}`);
     this.logger.log(`[UserController.uploadAvatar] File: ${file ? file.originalname : 'UNDEFINED'}`);
@@ -52,7 +52,7 @@ export class UserController {
   @Post('background/upload')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('file'))
-  async uploadBackground(@Req() req, @UploadedFile() file: Express.Multer.File) {
+  async uploadBackground(@Req() req, @UploadedFile() file: any) {
     return this.userService.uploadBackground(req.user.email, file);
   }
 }

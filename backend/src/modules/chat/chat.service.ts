@@ -14,7 +14,7 @@ export class ChatService {
     private readonly chatGateway: ChatGateway,
     @Inject(forwardRef(() => FriendshipService))
     private readonly friendshipService: FriendshipService,
-  ) {}
+  ) { }
 
   /**
    * CREATE DIRECT CONVERSATION (1-1)
@@ -188,7 +188,7 @@ export class ChatService {
 
     // Chunk arrays if > 100 max per Dynamo BatchGet
     const results: Conversation[] = [];
-    
+
     // For simplicity, assuming < 100 conversations for MVP
     const batchResult = await this.db.docClient.send(new BatchGetCommand({
       RequestItems: {
@@ -199,7 +199,7 @@ export class ChatService {
     }));
 
     const convs = batchResult.Responses?.[this.db.tableName] as Conversation[] || [];
-    
+
     // Create lookups for mapping data
     const clearMap = new Map(mappings.map(m => [m.SK as string, m.lastClearedAt || ""]));
     const readMap = new Map(mappings.map(m => [m.SK as string, m.lastReadAt || 0]));
@@ -209,7 +209,7 @@ export class ChatService {
       .map((c) => {
         const lastClearedAt = clearMap.get(c.id);
         const lastReadAt = readMap.get(c.id) || 0;
-        
+
         const sanitizedConv = { ...c, lastReadAt };
 
         if (sanitizedConv.autoDeleteDays && sanitizedConv.lastMessageTimestamp) {
@@ -370,10 +370,10 @@ export class ChatService {
           status: u.status || 'offline'
         }));
     }
-    
+
     // 3. Search Messages & Files (REFACTORED: Parallel Query + Depth Limit)
     // We Query the latest 100 messages from each of the user's conversations
-    const messageQueries = myConvIds.map(convId => 
+    const messageQueries = myConvIds.map(convId =>
       this.db.docClient.send(new QueryCommand({
         TableName: this.db.tableName,
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
@@ -393,10 +393,10 @@ export class ChatService {
     const matchedMessages = allMessages.filter(m => {
       const content = (m.content || '').toLowerCase();
       const hasTextMatch = content.includes(q);
-      
+
       const media = Array.isArray(m.media) ? m.media : [];
       const files = Array.isArray(m.files) ? m.files : [];
-      const hasFileMatch = [...media, ...files].some(f => 
+      const hasFileMatch = [...media, ...files].some(f =>
         (f.name || f.fileName || '').toLowerCase().includes(q)
       );
 
@@ -404,7 +404,7 @@ export class ChatService {
     });
 
     // Sort globally by newest
-    matchedMessages.sort((a, b) => 
+    matchedMessages.sort((a, b) =>
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
 
@@ -423,7 +423,7 @@ export class ChatService {
       const media = Array.isArray(m.media) ? m.media : [];
       const files = Array.isArray(m.files) ? m.files : [];
       const allItems = [...media, ...files];
-      
+
       return allItems
         .filter(f => (f.name || f.fileName || '').toLowerCase().includes(q))
         .map(f => ({
@@ -436,10 +436,37 @@ export class ChatService {
         }));
     });
 
-    return {
-      contacts: contactResults,
-      messages: searchMessages,
-      files: searchFiles
+    // Standardize for Search V2: type/id/conversationId/sender
+    const standardized = {
+      contacts: contactResults.slice(0, 50).map(c => ({
+        type: 'CONTACT',
+        id: c.email,
+        userId: c.email,
+        email: c.email,
+        fullName: c.fullName,
+        avatarUrl: c.avatar,
+        content: c.fullName || c.email,
+        sender: {
+          name: c.fullName || c.email,
+          avatar: c.avatar
+        }
+      })),
+      messages: searchMessages.slice(0, 50).map(m => ({
+        type: 'MESSAGE',
+        id: m.id,
+        conversationId: m.convId,
+        content: m.content,
+        sender: { name: m.senderId }
+      })),
+      files: searchFiles.slice(0, 50).map(f => ({
+        type: 'FILE',
+        id: f.messageId,
+        messageId: f.messageId,
+        conversationId: f.convId,
+        content: f.name,
+        sender: { name: f.senderId }
+      }))
     };
+    return standardized;
   }
 }

@@ -65,7 +65,35 @@ const isStickerMedia = (item) => {
   return mime.includes('sticker') || item?.isSticker === true;
 };
 
-export default function MessageBubble({ message, isMe, userProfile, onLongPress, onReaction, onReply }) {
+const HighlightText = ({ text, keyword }) => {
+  if (!text || !keyword?.trim()) return <Text>{text}</Text>;
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = String(text).split(new RegExp(`(${escaped})`, 'gi'));
+  return (
+    <Text>
+      {parts.map((part, i) =>
+        part.toLowerCase() === keyword.toLowerCase() ? (
+          <Text key={i} style={{ backgroundColor: '#fff59d', fontWeight: 'bold' }}>
+            {part}
+          </Text>
+        ) : (
+          part
+        ),
+      )}
+    </Text>
+  );
+};
+
+export default function MessageBubble({ 
+  message, 
+  isMe, 
+  userProfile, 
+  onLongPress, 
+  onReaction, 
+  onReply,
+  isHighlighted,
+  highlightKeyword 
+}) {
   const isRecalled = !!message.recalled;
   const isPinned = !!message.pinned;
 
@@ -112,7 +140,11 @@ export default function MessageBubble({ message, isMe, userProfile, onLongPress,
         </View>
 
         <Pressable 
-          style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]} 
+          style={[
+            styles.bubble, 
+            isMe ? styles.bubbleMe : styles.bubbleOther,
+            isHighlighted && styles.bubbleHighlighted
+          ]} 
           onLongPress={() => onLongPress(message)}
         >
           {message.replyTo && (
@@ -123,7 +155,13 @@ export default function MessageBubble({ message, isMe, userProfile, onLongPress,
           )}
 
           <Text style={[styles.messageText, isRecalled && styles.recalledText, !isMe && styles.messageTextOther]}>
-            {isRecalled ? "Tin nhắn đã được thu hồi" : message.content}
+            {isRecalled ? (
+              "Tin nhắn đã được thu hồi"
+            ) : highlightKeyword ? (
+              <HighlightText text={message.content} keyword={highlightKeyword} />
+            ) : (
+              message.content
+            )}
           </Text>
 
           {/* Media & Files */}
@@ -285,6 +323,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 1,
+  },
+  bubbleHighlighted: {
+    borderColor: '#FFD700',
+    borderWidth: 2,
   },
   bubbleMe: {
     backgroundColor: '#e6f0fa', // Primary/10

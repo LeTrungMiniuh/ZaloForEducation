@@ -140,12 +140,16 @@ export class CallGateway {
     // 3. [BACKGROUND] Cleanup meeting & Save history
     (async () => {
       try {
+        const session = await this.callService.getCallSession(data.callId);
+        const initiator = session?.initiatorEmail || data.toEmail;
+        const receiver = session ? (initiator === session.initiatorEmail ? fromEmail : session.initiatorEmail) : fromEmail;
+
         await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
         const callMsg = await this.callService.finalizeCallHistory({
           convId: data.convId,
           callId: data.callId,
-          caller: data.toEmail, 
-          receiver: fromEmail,
+          caller: initiator,
+          receiver: receiver,
           status: 'REJECTED',
           callType: 'audio'
         });
@@ -178,12 +182,16 @@ export class CallGateway {
     // 2. [BACKGROUND] Cleanup & Save history
     (async () => {
       try {
+        const session = await this.callService.getCallSession(data.callId);
+        const initiator = session?.initiatorEmail || fromEmail;
+        const receiver = session ? (initiator === session.initiatorEmail ? data.toEmail : session.initiatorEmail) : data.toEmail;
+
         await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
         const callMsg = await this.callService.finalizeCallHistory({
           convId: data.convId,
           callId: data.callId,
-          caller: fromEmail,
-          receiver: data.toEmail,
+          caller: initiator,
+          receiver: receiver,
           status: 'MISSED',
           callType: 'audio'
         });
@@ -238,18 +246,26 @@ export class CallGateway {
     (async () => {
       try {
         const started = await this.callService.getCallStartTime(data.callId);
+        const { session } = await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
+        
+        const initiator = session?.initiatorEmail || fromEmail;
+        let receiver = data.toEmail || 'unknown';
+        if (session && session.initiatorEmail === fromEmail) {
+           // I am the initiator gác máy
+           receiver = data.toEmail || 'unknown';
+        } else if (session) {
+           // I am the callee gác máy
+           receiver = fromEmail;
+        }
+
         const callMsg = await this.callService.finalizeCallHistory({
           convId: data.convId,
           callId: data.callId,
-          caller: fromEmail, 
-          receiver: data.toEmail || 'unknown',
+          caller: initiator, 
+          receiver: receiver,
           status: started ? 'COMPLETED' : 'MISSED',
           callType: 'audio'
         });
-        if (callMsg) {
-          this.server.to(data.convId).emit('receiveMessage', callMsg);
-        }
-        await this.callService.hangupMeeting(data.convId, data.callId, fromEmail);
       } catch (e) {
         this.logger.error('Background cleanup for hangup failed', e);
       }

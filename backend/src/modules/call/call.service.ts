@@ -52,6 +52,7 @@ export class CallService {
         meeting: meetingResponse.Meeting,
         attendee: attendeeResponse.Attendee,
         callType: type,
+        initiatorEmail: userEmail, // [SENIOR] Fix reversed logic: lock the initiator
       };
 
       await this.redis.set(`call:session:${callId}`, JSON.stringify(result), 1800);
@@ -105,12 +106,13 @@ export class CallService {
     try {
       const sessionKey = `call:session:${callId}`;
       const meetingData = await this.redis.get(sessionKey);
+      let session = null;
       if (meetingData) {
-        const parsed = JSON.parse(meetingData);
-        if (parsed.meeting?.MeetingId) {
-          this.logger.log(`[AWS] Deleting Chime Meeting: ${parsed.meeting.MeetingId}`);
+        session = JSON.parse(meetingData);
+        if (session.meeting?.MeetingId) {
+          this.logger.log(`[AWS] Deleting Chime Meeting: ${session.meeting.MeetingId}`);
           await this.chime.send(
-            new DeleteMeetingCommand({ MeetingId: parsed.meeting.MeetingId }),
+            new DeleteMeetingCommand({ MeetingId: session.meeting.MeetingId }),
           );
         }
         await this.redis.del(sessionKey);
@@ -118,13 +120,18 @@ export class CallService {
         // [SENIOR] Clear start time after hangup
         await this.redis.del(`call:start:${callId}`);
       }
-      return { success: true };
+      return { success: true, session };
     } catch (error) {
       // Dù Chime lỗi vẫn xóa Redis để cleanup
       await this.redis.del(`call:active:${conversationId}`).catch(() => {});
       await this.redis.del(`call:start:${callId}`).catch(() => {});
-      return { success: true };
+      return { success: true, session: null };
     }
+  }
+
+  async getCallSession(callId: string) {
+    const data = await this.redis.get(`call:session:${callId}`);
+    return data ? JSON.parse(data) : null;
   }
 
   /**
@@ -200,17 +207,23 @@ export class CallService {
         }
       }));
 
-      // 4. Gửi tin nhắn vào đoạn chat (System Message)
-      // Dùng senderEmail = 'system' để client hiển thị đúng format system message
+      // 4. Gửi tin nhắn vào đoạn chat (SYSTEM_CALL Message)
       const callMsg = await this.messageService.sendMessage(
         convId,
         'system',
         displayContent,
-        'system',
+        'SYSTEM_CALL',
         [],
         [],
         null,
-        { callId, callStatus: status }
+        { 
+          callId, 
+          callType,
+          callStatus: status.toLowerCase(),
+          callerId: caller,
+          receiverId: receiver,
+          duration: durationSec
+        }
       );
 
       // Cleanup start time

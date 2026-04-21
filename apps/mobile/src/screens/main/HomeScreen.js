@@ -36,6 +36,7 @@ import MessageBubble from '../../components/chat/MessageBubble';
 import ChatInput from '../../components/chat/ChatInput';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from 'react-native';
+import SystemCallMessageItem from '../../components/chat/SystemCallMessageItem';
 const REACTION_OPTIONS = ["❤️", "👍", "😂", "😮", "😢", "😡"];
 const MAX_ATTACHMENTS_PER_MESSAGE = 8;
 const TAB_ALIAS = {
@@ -212,12 +213,24 @@ export default function HomeScreen({
   // ZUSTAND STORE
   const {
     conversations,
+    activeConvId,
+    messages,
+    isLoadingMessages,
+    setActiveConversation,
+    setMessages,
+    sendMessageOptimistic,
+    addMessage,
+    updateMessage,
     setConversations,
+    upsertConversationLastMessage
   } = useChatStore();
 
   const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
 
   const [activeTab, setActiveTab] = useState(initialTab || "messages");
+  const [inputText, setInputText] = useState("");
+  const [attachments, setAttachments] = useState([]);
+  const [sending, setSending] = useState(false);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [readConversations, setReadConversations] = useState(new Set());
   const [friendships, setFriendships] = useState([]);
@@ -227,11 +240,21 @@ export default function HomeScreen({
   const [friendSearchResult, setFriendSearchResult] = useState(null);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
 
+  const [messageReactions, setMessageReactions] = useState({});
+  const [replyTarget, setReplyTarget] = useState(null);
+  const [actionMessage, setActionMessage] = useState(null);
   const [userProfiles, setUserProfiles] = useState({});
+  const [typingUsers, setTypingUsers] = useState({});
+  const [isFriendRequestsModalOpen, setIsFriendRequestsModalOpen] = useState(false);
+  const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [messageToForward, setMessageToForward] = useState(null);
 
+  const typingTimeoutRef = useRef(null);
+
+  const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
-  
+
   const normalizeConversation = useCallback((conv) => {
     if (conv?.type !== "direct") return conv;
     const partner =
@@ -251,9 +274,17 @@ export default function HomeScreen({
     return raw.map(normalizeConversation);
   }, [conversations, normalizeConversation]);
 
-  const safeMessages = Array.isArray(messages)
-    ? messages.filter((m) => m && typeof m === "object")
-    : [];
+  const safeMessages = useMemo(() => {
+    const raw = Array.isArray(messages) ? messages : [];
+    const seen = new Set();
+    return raw.filter((m) => {
+      if (!m || typeof m !== "object") return false;
+      const mid = m.id || m._id;
+      if (!mid || seen.has(mid)) return false;
+      seen.add(mid);
+      return true;
+    });
+  }, [messages]);
 
   const reversedMessages = useMemo(() => [...safeMessages].reverse(), [safeMessages]);
 
@@ -314,6 +345,15 @@ export default function HomeScreen({
   const getMessagePreview = (message) => {
     if (!message) return "Tin nhắn";
     if (message.recalled) return "Tin nhắn đã được thu hồi";
+
+    // [SENIOR] Rich Preview for Calls
+    if (message.type === 'call' || message.type === 'system_call') {
+      const isVideo = message.callType === 'video';
+      const label = isVideo ? 'Video' : 'Thoại';
+      if (message.callStatus === 'missed') return `[Cuộc gọi ${label} nhỡ]`;
+      return `[Cuộc gọi ${label}]`;
+    }
+
     if (Array.isArray(message.media) && message.media.length > 0)
       return "[Ảnh/Video]";
     if (Array.isArray(message.files) && message.files.length > 0)
@@ -322,39 +362,24 @@ export default function HomeScreen({
   };
 
   const getConversationPreview = (conv) => {
-    const raw = String(conv?.lastMessageContent || conv?.lastMessage || "");
-    if (!raw) return "Chưa có tin nhắn";
-    if (raw.startsWith("MSG#")) return "Đang tải nội dung...";
-    return raw;
-  };
+    const content = String(conv?.lastMessageContent || conv?.lastMessage || "");
+    if (!content) return "Chưa có tin nhắn";
+    if (content.startsWith("MSG#")) return "Đang tải nội dung...";
 
-  const upsertConversationLastMessage = (convId, content, senderId, isNewMessage = false, msgId = null) => {
-    setConversations((prev) => {
-      const index = prev.findIndex((conv) => conv.id === convId);
-      if (index === -1) return prev;
- 
-      const next = [...prev];
-      const target = next[index];
-      
-      const isCurrentlyActive = activeConvId === convId;
-      // Deduplication: Don't increment if we already processed this message ID
-      const isAlreadyProcessed = msgId && target.lastProcessedMsgId === msgId;
-      const shouldIncrement = isNewMessage && !isAlreadyProcessed && senderId && senderId !== user?.email && !isCurrentlyActive;
-      
-      const updated = {
-        ...target,
-        lastMessage: content,
-        lastMessageContent: content,
-        lastMessageSenderId: senderId || target.lastMessageSenderId,
-        lastProcessedMsgId: msgId || target.lastProcessedMsgId,
-        unreadCount: shouldIncrement ? (target.unreadCount || 0) + 1 : (isCurrentlyActive ? 0 : target.unreadCount || 0),
-        updatedAt: new Date().toISOString(),
-      };
-      
-      next.splice(index, 1);
-      next.unshift(updated);
-      return next;
-    });
+    const senderEmail = conv?.lastMessageSenderId;
+    const isMe = senderEmail === user?.email;
+    const prefix = isMe ? "Bạn: " : "";
+
+    // [SENIOR] Handle Multimedia & Call Previews
+    // The backend might send specific types or we detect from content
+    if (content === "[Ảnh/Video]" || content === "[Hình ảnh]") return `${prefix}[Hình ảnh]`;
+    if (content === "[Video]") return `${prefix}[Video]`;
+    if (content === "[Tệp đính kèm]" || content === "[Tệp tin]") return `${prefix}[Tệp tin]`;
+
+    // Call pre-check: if it's already a formatted string from addMessage/socket
+    if (content.includes("Cuộc gọi")) return content;
+
+    return `${prefix}${content}`;
   };
 
   const loadUserProfile = async (email) => {
@@ -440,7 +465,7 @@ export default function HomeScreen({
     setLoadingFriends(true);
     try {
       const res = await chatGet("/friends");
-      
+
       let rawData = [];
       if (Array.isArray(res?.data)) {
         rawData = res.data;
@@ -548,11 +573,11 @@ export default function HomeScreen({
     const normalizedChat = normalizeConversation(chat);
     if (!normalizedChat) return;
 
-    // Separate Navigation to ChatScreen
-    onNavigate('chat', 'messages', { conversationId: normalizedChat.id });
-    
-    // Clear unread count locally for instant UI feedback
-    setConversations(prev => prev.map(c => 
+    setActiveConversation(normalizedChat.id);
+    setActiveTab("chat");
+
+    // Reset unread count locally
+    setConversations(prev => prev.map(c =>
       c.id === normalizedChat.id ? { ...c, unreadCount: 0 } : c
     ));
 
@@ -561,6 +586,17 @@ export default function HomeScreen({
       next.add(normalizedChat.id);
       return next;
     });
+
+    setReplyTarget(null);
+    closeMessageAction();
+
+    if (normalizedChat.type === "direct" && normalizedChat.partner) {
+      loadUserProfile(normalizedChat.partner);
+    }
+
+    if (SocketService.socket) {
+      SocketService.socket.emit("join_room", { convId: normalizedChat.id });
+    }
   };
 
   const handleOpenDirectChat = async (friendEmail) => {
@@ -570,23 +606,198 @@ export default function HomeScreen({
     const convId = directRes?.id || directRes?.data?.id;
     if (!convId) return;
 
+    setActiveTab("chat");
     handleSelectChat({ id: convId, type: "direct", partner: friendEmail });
   };
 
   const handleOpenGroupConversation = async (conversation) => {
     if (!conversation?.id) return;
+    setActiveTab("chat");
     handleSelectChat(conversation);
   };
 
-  const acceptedFriends = useMemo(
-    () =>
-      friendships
-        .filter((item) => item.status === "accepted")
-        .map((item) =>
-          item.sender_id === user?.email ? item.receiver_id : item.sender_id,
-        ),
-    [friendships, user?.email],
-  );
+  const getReactionData = (message) => messageReactions[message.id] || {};
+
+  const getCurrentUserReaction = (message) => {
+    if (!user?.email) return undefined;
+    const reactions = getReactionData(message);
+    const found = Object.entries(reactions).find(([, users]) =>
+      users.includes(user.email),
+    );
+    return found?.[0];
+  };
+
+  const getReactionSummary = (message) => {
+    const reactions = getReactionData(message);
+    return Object.entries(reactions)
+      .filter(([, users]) => users.length > 0)
+      .slice(0, 3);
+  };
+
+  const toggleReaction = async (message, emoji) => {
+    if (!user?.email || !selectedChat?.id) return;
+    const messageId = message.id;
+    const reactions = getReactionData(message);
+    const hasReactedWithThisEmoji = reactions[emoji]?.includes(user.email);
+    const action = hasReactedWithThisEmoji ? 'remove' : 'add';
+
+    const res = await chatPatch(
+      `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
+      {
+        action: "react",
+        reactAction: action,
+        emoji,
+      },
+    );
+
+    const updatedMessage = res?.data || res;
+    updateMessage(messageId, updatedMessage);
+    setMessageReactions((prev) => ({
+      ...prev,
+      [messageId]: updatedMessage.reactions || {},
+    }));
+
+    if (SocketService.socket && updatedMessage) {
+      SocketService.socket.emit("sendMessage", {
+        convId: selectedChat.id,
+        message: updatedMessage,
+      });
+    }
+    closeMessageAction();
+  };
+
+  const pinMessage = async (message) => {
+    if (!selectedChat?.id) return;
+    const res = await chatPatch(
+      `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(message.id)}`,
+      { action: "pin" },
+    );
+    const updatedMessage = res?.data || res;
+    setMessages((prev) =>
+      prev.map((item) => (item.id === message.id ? updatedMessage : item)),
+    );
+    if (SocketService.socket && updatedMessage) {
+      SocketService.socket.emit("sendMessage", {
+        convId: selectedChat.id,
+        message: updatedMessage,
+      });
+    }
+    closeMessageAction();
+  };
+
+  const unpinMessage = async (messageId) => {
+    if (!selectedChat?.id) return;
+    const res = await chatPatch(
+      `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
+      { action: "unpin" },
+    );
+    const updatedMessage = res?.data || res;
+    setMessages((prev) =>
+      prev.map((item) => (item.id === messageId ? updatedMessage : item)),
+    );
+    if (SocketService.socket && updatedMessage) {
+      SocketService.socket.emit("sendMessage", {
+        convId: selectedChat.id,
+        message: updatedMessage,
+      });
+    }
+    closeMessageAction();
+  };
+
+  const deleteMessageForMe = async (messageId) => {
+    if (!selectedChat?.id) return;
+    try {
+      const res = await chatPatch(
+        `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
+        { action: "deleteForMe" },
+      );
+      if (res.ok) {
+        setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      }
+    } catch (err) {
+      console.error("Delete for me failed", err);
+    }
+    closeMessageAction();
+  };
+
+  const copyToClipboard = async (text) => {
+    if (!text) return;
+    await Clipboard.setStringAsync(text);
+    // Optional: show a small toast or overlay
+    closeMessageAction();
+  };
+
+  const handleForwardSelect = async (targetConvId) => {
+    if (!messageToForward || !targetConvId) return;
+
+    setIsForwardModalOpen(false);
+    const msg = messageToForward;
+
+    try {
+      // Logic similar to Web: Send a new message to the target conversation
+      const res = await chatPost(
+        `/conversations/${encodeURIComponent(targetConvId)}/messages`,
+        {
+          content: msg.content || (msg.media?.length > 0 ? "[Hình ảnh]" : "[Tệp đính kèm]"),
+          media: msg.media || [],
+          files: msg.files || [],
+          type: msg.type || 'text',
+        },
+      );
+
+      if (res.ok) {
+        Alert.alert("Thành công", "Đã chuyển tiếp tin nhắn.");
+      }
+    } catch (err) {
+      console.error("Forward failed", err);
+      Alert.alert("Lỗi", "Không thể chuyển tiếp tin nhắn.");
+    } finally {
+      setMessageToForward(null);
+    }
+  };
+
+  const startForward = (message) => {
+    setMessageToForward(message);
+    setIsForwardModalOpen(true);
+    closeMessageAction();
+  };
+
+  const recallMessage = async (messageId) => {
+    if (!selectedChat?.id) return;
+    const res = await chatPatch(
+      `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
+      { action: "recall" },
+    );
+
+    const updatedMessage = res?.data || res;
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === messageId ? updatedMessage : msg)),
+    );
+    upsertConversationLastMessage(selectedChat.id, "Tin nhắn đã được thu hồi");
+
+    setMessageReactions((prev) => {
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+
+    if (SocketService.socket && updatedMessage) {
+      SocketService.socket.emit("sendMessage", {
+        convId: selectedChat.id,
+        message: updatedMessage,
+      });
+    }
+    closeMessageAction();
+  };
+
+  const startReply = (message) => {
+    setReplyTarget({
+      id: message.id,
+      senderId: message.senderId,
+      content: getMessagePreview(message),
+    });
+    closeMessageAction();
+  };
 
   const pickImages = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -721,10 +932,10 @@ export default function HomeScreen({
       try {
         const audioGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
         const cameraGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-        
+
         if (audioGranted !== PermissionsAndroid.RESULTS.GRANTED || cameraGranted !== PermissionsAndroid.RESULTS.GRANTED) {
           Alert.alert(
-            'Thiếu quyền truy cập', 
+            'Thiếu quyền truy cập',
             'ZaloEdu cần cả quyền Microphone và Camera để thực hiện cuộc gọi. Vui lòng cấp quyền trong Cài đặt.'
           );
           return;
@@ -734,13 +945,13 @@ export default function HomeScreen({
         return;
       }
     } else {
-       // iOS handles permissions internally in Chime Native SDK, 
-       // but we allow the flow to continue.
-       console.log(`[Call] Initiating ${type} call on ${Platform.OS}...`);
+      // iOS handles permissions internally in Chime Native SDK, 
+      // but we allow the flow to continue.
+      console.log(`[Call] Initiating ${type} call on ${Platform.OS}...`);
     }
 
     const partnerEmail = selectedChat.partner;
-    const partnerProfile = userProfiles[partnerEmail] || { 
+    const partnerProfile = userProfiles[partnerEmail] || {
       email: partnerEmail,
       fullName: getDisplayName(partnerEmail)
     };
@@ -754,17 +965,17 @@ export default function HomeScreen({
       // 2. Tạo meeting qua API (Keep it for backward compatibility or Chime fallback)
       const res = await apiRequest('/call/create', {
         method: 'POST',
-        body: JSON.stringify({ 
-          conversationId: selectedChat.id, 
+        body: JSON.stringify({
+          conversationId: selectedChat.id,
           callId: activeCallId,
-          type 
+          type
         })
       });
 
       if (res.ok) {
         // 3. Lưu thông tin meeting
         setMeetingInfo(res.meeting, res.attendee);
-        
+
         // 4. Gửi tín hiệu mời gọi qua Socket
         SocketService.socket.emit('call:invite', {
           convId: selectedChat.id,
@@ -834,7 +1045,7 @@ export default function HomeScreen({
         .reverse(),
     [messages],
   );
-  
+
   useEffect(() => {
     loadConversations();
   }, [user?.email]);
@@ -873,30 +1084,16 @@ export default function HomeScreen({
     const handleReceiveMessage = (msg) => {
       if (!msg?.id) return;
 
-      // Zustand handles duplication, sorting, and caching
+      // [SENIOR] Centralized Logic in Store
+      // addMessage now handle Duplication, Jump to Top, and Unread Count
       addMessage(msg);
 
       const incomingConvId = msg.conversationId || msg.convId;
-      if (incomingConvId) {
-        // Match backend behavior: lastMessage is the ID, lastMessageContent is the text
-        const preview = getMessagePreview(msg);
-        upsertConversationLastMessage(incomingConvId, preview, msg.senderId, true, msg.id);
-
-        // Mark as unread locally if receiving message from someone else
-        if (msg.senderId !== user?.email) {
-          setReadConversations(prev => {
-            const next = new Set(prev);
-            next.delete(incomingConvId);
-            return next;
-          });
-        }
-
-        // Auto-scroll snap if receiving message in active chat
-        if (incomingConvId === selectedChat?.id) {
-          setTimeout(() => {
-            messagesScrollRef.current?.scrollToOffset({ offset: 0, animated: true });
-          }, 100);
-        }
+      // Auto-scroll snap if receiving message in active chat
+      if (incomingConvId === selectedChat?.id) {
+        setTimeout(() => {
+          messagesScrollRef.current?.scrollToOffset({ offset: 0, animated: true });
+        }, 100);
       }
     };
 
@@ -953,19 +1150,16 @@ export default function HomeScreen({
       style={[styles.header, { paddingTop: insets.top }]}
     >
       <View style={styles.headerContent}>
-        <View style={styles.searchContainer}>
+        <TouchableOpacity
+          style={styles.searchContainer}
+          onPress={() => onNavigate('search')} // Use new SearchScreen
+          activeOpacity={0.7}
+        >
           <Text style={styles.searchIcon}>search</Text>
-          <TextInput
-            placeholder="Tìm kiếm"
-            style={styles.searchInput}
-            placeholderTextColor="rgba(255,255,255,0.7)"
-            value={friendSearchEmail}
-            onChangeText={setFriendSearchEmail}
-            onSubmitEditing={handleSearchFriend}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-        </View>
+          <Text style={styles.searchInput} numberOfLines={1}>
+            {friendSearchEmail || 'Tìm kiếm tin nhắn, bạn bè, tệp tin...'}
+          </Text>
+        </TouchableOpacity>
         <View style={styles.headerIcons}>
           <TouchableOpacity
             style={styles.iconButton}
@@ -973,7 +1167,7 @@ export default function HomeScreen({
           >
             <Text style={styles.headerIconText}>qr_code_scanner</Text>
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.iconButton}
             onPress={() => setIsAddMenuOpen(true)}
           >
@@ -989,8 +1183,8 @@ export default function HomeScreen({
       const currentTypingSet = typingUsers[selectedChat.id];
       const partnerProfile = selectedChat.type === "direct" ? userProfiles[selectedChat.partner] : null;
       const isOnline = partnerProfile?.status === "online";
-      
-      let displayStatus = selectedChat.type === "direct" 
+
+      let displayStatus = selectedChat.type === "direct"
         ? (isOnline ? "Đang hoạt động" : "Đang ngoại tuyến")
         : "Đang trò chuyện";
 
@@ -1000,7 +1194,7 @@ export default function HomeScreen({
       }
 
       return (
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           style={styles.chatPane}
           behavior={Platform.OS === "ios" ? "padding" : "padding"}
           keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
@@ -1038,13 +1232,13 @@ export default function HomeScreen({
             </View>
 
             <View style={styles.chatHeaderIcons}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.chatHeaderIconButton}
                 onPress={() => handleStartCall('audio')}
               >
                 <Text style={styles.chatHeaderIcon}>call</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.chatHeaderIconButton}
                 onPress={() => handleStartCall('video')}
               >
@@ -1080,6 +1274,22 @@ export default function HomeScreen({
             keyExtractor={(item, index) => item.id || `msg-${index}`}
             renderItem={({ item: message }) => {
               const isMe = message.senderId === user?.email;
+
+              if (
+                message.type === 'call' ||
+                message.type === 'system_call' ||
+                message.type === 'SYSTEM_CALL' ||
+                (message.type === 'system' && message.content?.includes('Cuộc gọi'))
+              ) {
+                return (
+                  <SystemCallMessageItem
+                    message={message}
+                    currentUserEmail={user?.email}
+                    onCallBack={(type) => handleStartCall(type || 'audio')}
+                  />
+                );
+              }
+
               return (
                 <MessageBubble
                   message={message}
@@ -1091,10 +1301,10 @@ export default function HomeScreen({
                 />
               );
             }}
-            contentContainerStyle={{ 
-              paddingHorizontal: 12, 
-              paddingTop: 50, 
-              paddingBottom: 20 
+            contentContainerStyle={{
+              paddingHorizontal: 12,
+              paddingTop: 50,
+              paddingBottom: 20
             }}
             showsVerticalScrollIndicator={false}
             maintainVisibleContentPosition={{
@@ -1150,9 +1360,9 @@ export default function HomeScreen({
               chat.type === "direct"
                 ? getDisplayAvatar(partnerEmail)
                 : chat.avatar || getDisplayAvatar();
-            const isUnread = chat.lastMessageSenderId && 
-                            chat.lastMessageSenderId !== user?.email && 
-                            !readConversations.has(chat.id);
+            const isUnread = chat.lastMessageSenderId &&
+              chat.lastMessageSenderId !== user?.email &&
+              !readConversations.has(chat.id);
             const partnerProfile = partnerEmail ? userProfiles[partnerEmail] : null;
             const isOnline = partnerProfile?.status === 'online';
 
@@ -1175,8 +1385,8 @@ export default function HomeScreen({
                 </View>
                 <View style={styles.chatInfo}>
                   <View style={styles.chatHeader}>
-                    <Text 
-                      style={[styles.chatName, isUnread && { fontWeight: '700', color: '#000' }]} 
+                    <Text
+                      style={[styles.chatName, isUnread && { fontWeight: '700', color: '#000' }]}
                       numberOfLines={1}
                     >
                       {chatName}
@@ -1190,11 +1400,11 @@ export default function HomeScreen({
                         : "--:--"}
                     </Text>
                   </View>
-                  <Text 
+                  <Text
                     style={[
-                      styles.lastMsg, 
+                      styles.lastMsg,
                       chat.unreadCount > 0 && { color: '#000', fontWeight: '700', fontSize: 14 }
-                    ]} 
+                    ]}
                     numberOfLines={1}
                   >
                     {getConversationPreview(chat)}
@@ -1469,15 +1679,15 @@ export default function HomeScreen({
         backgroundColor="transparent"
         translucent={true}
       />
-      {activeTab !== "contacts" && renderHeader()}
+      {activeTab !== "contacts" && !selectedChat && renderHeader()}
 
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingContainer}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
-        <View style={styles.content}>
-          {activeTab === "messages" && renderConversationsView()}
+        <View style={[styles.content, selectedChat && { paddingBottom: Platform.OS === 'ios' ? 8 : 4 }]}>
+          {activeTab === "chat" && renderConversationsView()}
           {activeTab === "contacts" && (
             <ContactsScreen
               user={user}
@@ -1491,102 +1701,231 @@ export default function HomeScreen({
           {activeTab === "profile" && renderProfileView()}
         </View>
 
-        <View style={[
-          styles.floatingTabBar, 
-          Platform.OS === 'ios' && { 
-            paddingBottom: Math.max(insets.bottom, 12),
-            height: 60 + Math.max(insets.bottom, 12)
-          }
-        ]}>
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("messages")}
-          >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "messages" && styles.tabIconActive,
-              ]}
+        {!selectedChat && (
+          <View style={[
+            styles.floatingTabBar,
+            Platform.OS === 'ios' && {
+              paddingBottom: Math.max(insets.bottom, 12),
+              height: 60 + Math.max(insets.bottom, 12)
+            }
+          ]}>
+            <TouchableOpacity
+              style={styles.tabItem}
+              onPress={() => setActiveTab("chat")}
             >
-              chat
-            </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "messages" && styles.tabLabelActive,
-              ]}
-            >
-              Tin nhắn
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  activeTab === "chat" && styles.tabIconActive,
+                ]}
+              >
+                chat
+              </Text>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === "chat" && styles.tabLabelActive,
+                ]}
+              >
+                Tin nhắn
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("contacts")}
-          >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "contacts" && styles.tabIconActive,
-              ]}
+            <TouchableOpacity
+              style={styles.tabItem}
+              onPress={() => setActiveTab("contacts")}
             >
-              contact_page
-            </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "contacts" && styles.tabLabelActive,
-              ]}
-            >
-              Danh bạ
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  activeTab === "contacts" && styles.tabIconActive,
+                ]}
+              >
+                contact_page
+              </Text>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === "contacts" && styles.tabLabelActive,
+                ]}
+              >
+                Danh bạ
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("notifications")}
-          >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "notifications" && styles.tabIconActive,
-              ]}
+            <TouchableOpacity
+              style={styles.tabItem}
+              onPress={() => setActiveTab("notifications")}
             >
-              notifications
-            </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "notifications" && styles.tabLabelActive,
-              ]}
-            >
-              Thông báo
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  activeTab === "notifications" && styles.tabIconActive,
+                ]}
+              >
+                notifications
+              </Text>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === "notifications" && styles.tabLabelActive,
+                ]}
+              >
+                Thông báo
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("profile")}
-          >
-            <Text
-              style={[
-                styles.tabIcon,
-                activeTab === "profile" && styles.tabIconActive,
-              ]}
+            <TouchableOpacity
+              style={styles.tabItem}
+              onPress={() => setActiveTab("profile")}
             >
-              person
-            </Text>
-            <Text
-              style={[
-                styles.tabLabel,
-                activeTab === "profile" && styles.tabLabelActive,
-              ]}
-            >
-              Cá nhân
-            </Text>
-          </TouchableOpacity>
-        </View>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  activeTab === "profile" && styles.tabIconActive,
+                ]}
+              >
+                person
+              </Text>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === "profile" && styles.tabLabelActive,
+                ]}
+              >
+                Cá nhân
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </KeyboardAvoidingView>
+
+      {actionMessage && (
+        <Pressable style={styles.overlay} onPress={closeMessageAction}>
+          <Pressable
+            style={styles.actionSheet}
+            onPress={(e) => e.stopPropagation()}
+          >
+            {/* Reactions Bar - Premium Design */}
+            <View style={styles.reactionBar}>
+              {REACTION_OPTIONS.map((emoji) => (
+                <TouchableOpacity
+                  key={`react-${emoji}`}
+                  style={styles.reactionOption}
+                  onPress={() => toggleReaction(actionMessage, emoji)}
+                >
+                  <Text style={styles.reactionEmoji}>{emoji}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.actionGrid}>
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => startReply(actionMessage)}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#f0f7ff' }]}>
+                  <Text style={[styles.actionIcon, { color: Colors.primary }]}>reply</Text>
+                </View>
+                <Text style={styles.actionText}>Trả lời</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => copyToClipboard(actionMessage.content)}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#f0fff4' }]}>
+                  <Text style={[styles.actionIcon, { color: '#22c55e' }]}>content_copy</Text>
+                </View>
+                <Text style={styles.actionText}>Sao chép</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => startForward(actionMessage)}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#fff7ed' }]}>
+                  <Text style={[styles.actionIcon, { color: '#f97316' }]}>forward</Text>
+                </View>
+                <Text style={styles.actionText}>Chuyển tiếp</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => pinMessage(actionMessage)}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#fef3c7' }]}>
+                  <Text style={[styles.actionIcon, { color: '#d97706' }]}>push_pin</Text>
+                </View>
+                <Text style={styles.actionText}>{actionMessage.pinned ? 'Bỏ ghim' : 'Ghim'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.actionList}>
+              {actionMessage.senderId === user?.email && !actionMessage.recalled && (
+                <TouchableOpacity
+                  style={styles.actionListItem}
+                  onPress={() => recallMessage(actionMessage.id)}
+                >
+                  <Text style={styles.actionListIcon}>history_toggle_off</Text>
+                  <Text style={[styles.actionListText, { color: '#ef4444' }]}>
+                    Thu hồi tin nhắn
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={styles.actionListItem}
+                onPress={() => deleteMessageForMe(actionMessage.id)}
+              >
+                <Text style={[styles.actionListIcon, { color: '#ef4444' }]}>delete</Text>
+                <Text style={[styles.actionListText, { color: '#ef4444' }]}>
+                  Xóa ở phía tôi
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      )}
+
+      {/* Forward Modal */}
+      <Modal
+        visible={isForwardModalOpen}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setIsForwardModalOpen(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setIsForwardModalOpen(false)}
+        >
+          <View style={styles.forwardSheet} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Chuyển tiếp đến...</Text>
+              <TouchableOpacity onPress={() => setIsForwardModalOpen(false)}>
+                <Text style={styles.closeIcon}>close</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.forwardList}>
+              {safeConversations.map((conv) => (
+                <TouchableOpacity
+                  key={conv.id}
+                  style={styles.forwardItem}
+                  onPress={() => handleForwardSelect(conv.id)}
+                >
+                  <Image
+                    style={styles.forwardAvatar}
+                  />
+                  <Text style={styles.forwardName} numberOfLines={1}>
+                    {conv.type === 'direct' ? getDisplayName(conv.partner) : conv.name}
+                  </Text>
+                  <Text style={styles.forwardSendIcon}>send</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Quick Action Menu (+) */}
       <Modal
@@ -1595,13 +1934,13 @@ export default function HomeScreen({
         animationType="fade"
         onRequestClose={() => setIsAddMenuOpen(false)}
       >
-        <Pressable 
-          style={styles.addMenuOverlay} 
+        <Pressable
+          style={styles.addMenuOverlay}
           onPress={() => setIsAddMenuOpen(false)}
         >
           <View style={[styles.addMenuDropdown, { top: insets.top + 50 }]}>
             <View style={styles.addMenuArrow} />
-            
+
             <TouchableOpacity style={styles.addMenuItem}>
               <Text style={styles.addMenuIcon}>person_add</Text>
               <Text style={styles.addMenuLabel}>Thêm bạn</Text>

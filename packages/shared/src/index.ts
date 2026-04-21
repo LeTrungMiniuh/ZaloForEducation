@@ -31,6 +31,7 @@ export interface FileURL {
   fileName: string;
   fileType: string;
   fileUrl: string;
+  size?: number;
 }
 
 export interface Conversation {
@@ -96,7 +97,7 @@ export interface Message {
   replyTo?: any; // msg object or id
   recalled?: boolean;
   removed?: string[]; // user emails
-  type: "text" | "image" | "video" | "file" | "system" | "contact_card" | "location";
+  type: "text" | "image" | "video" | "file" | "system" | "contact_card" | "location" | "SYSTEM_CALL";
   contactCard?: {
     email: string;
     fullName?: string;
@@ -159,3 +160,50 @@ export interface ApiResponse<T = any> {
   message: string;
   data?: T;
 }
+
+// --- Unified Call Model ---
+
+export type SystemCallStatus = 'calling' | 'ringing' | 'completed' | 'missed' | 'rejected' | 'canceled';
+
+export interface SystemCallMetadata {
+  callId: string;
+  callType: 'audio' | 'video';
+  callStatus: SystemCallStatus;
+  callerId: string;
+  receiverId: string;
+  duration: number; // in seconds
+}
+
+export const CALL_UI = {
+  colors: {
+    missed: '#ef4444', // Consistent Red-500
+    textPrimary: '#111827',
+    textSecondary: '#6b7280',
+    actionBlue: '#0068FF',
+  },
+  spacing: {
+    padding: '6px 12px',
+    radius: '8px',
+    gap: '6px',
+  }
+};
+
+/**
+ * Utility to format call duration into a high-fidelity string (Production Grade)
+ * 45s -> "0:45"
+ * 133s -> "2:13"
+ * 3722s -> "1:02:02"
+ */
+export const formatCallDuration = (sec: number = 0): string => {
+  if (sec <= 0) return '0:00';
+  
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+  
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};

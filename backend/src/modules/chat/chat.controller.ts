@@ -189,7 +189,7 @@ export class ChatController {
       limits: { fileSize: 100 * 1024 * 1024 }, // Max 100MB for the interceptor
     }),
   )
-  async uploadChatFile(@UploadedFile() file: Express.Multer.File) {
+  async uploadChatFile(@UploadedFile() file: any) {
     if (!file) {
       throw new BadRequestException("File is required");
     }
