@@ -116,6 +116,7 @@ export const useChatStore = create((set, get) => ({
   nextCursor: null,
   fetchToken: 0,
 
+<<<<<<< HEAD
   getMessageConvId: (message) => {
     if (!message || typeof message !== "object") return null;
     const convId = String(
@@ -130,6 +131,12 @@ export const useChatStore = create((set, get) => ({
         typeof updater === "function" ? updater(state.conversations) : updater;
       return { conversations: Array.isArray(next) ? next : [] };
     }),
+=======
+  setConversations: (update) =>
+    set((state) => ({
+      conversations: typeof update === "function" ? update(state.conversations) : (Array.isArray(update) ? update : []),
+    })),
+>>>>>>> 091efc1a82de504ad58d1b5454861604b6eb0ad5
 
   setActiveConversation: (convId) => {
     if (get().activeConvId === convId) return;
@@ -164,6 +171,7 @@ export const useChatStore = create((set, get) => ({
     set((state) => {
       const safeMessage = normalizeMessage(message);
       if (!safeMessage) return state;
+<<<<<<< HEAD
       const incomingConvId = get().getMessageConvId(safeMessage);
       if (!incomingConvId) return state;
 
@@ -178,6 +186,26 @@ export const useChatStore = create((set, get) => ({
 
       if (state.messages.find((m) => m.id === safeMessage.id)) return state;
       const newMessages = [...state.messages, safeMessage];
+=======
+
+      // Prevent adding if ID already exists
+      if (state.messages.some((m) => m.id === safeMessage.id)) return state;
+
+      // Optimistically remove any temporary message that matches this real one
+      // (Same sender, same content, and ID starts with TEMP#)
+      const filteredMessages = state.messages.filter(
+        (m) =>
+          !(
+            String(m.id).startsWith("TEMP#") &&
+            m.content === safeMessage.content &&
+            m.senderId === safeMessage.senderId
+          ),
+      );
+
+      const newMessages = [...filteredMessages, safeMessage];
+      if (state.activeConvId)
+        setCachedMessages(state.activeConvId, newMessages);
+>>>>>>> 091efc1a82de504ad58d1b5454861604b6eb0ad5
       return { messages: newMessages };
     }),
 
@@ -191,10 +219,20 @@ export const useChatStore = create((set, get) => ({
   fetchConversations: async () => {
     try {
       const res = await chatGet("/conversations");
-      const conversations = Array.isArray(res?.data) ? res.data : [];
-      set({ conversations });
+      let data = [];
+      if (Array.isArray(res?.data)) {
+        data = res.data;
+      } else if (res && typeof res === "object") {
+        const numericKeys = Object.keys(res).filter(k => /^\d+$/.test(k)).sort((a, b) => Number(a) - Number(b));
+        if (numericKeys.length > 0) {
+          data = numericKeys.map(k => res[k]);
+        }
+      }
+      set({ conversations: data });
+      return data;
     } catch (err) {
       console.error("Failed to fetch conversations", err);
+      return [];
     }
   },
 
@@ -273,6 +311,7 @@ export const useChatStore = create((set, get) => ({
         throw new Error("INVALID_MESSAGE_PAYLOAD");
       }
 
+<<<<<<< HEAD
       set((state) => ({
         messages:
           state.activeConvId === convId
@@ -289,6 +328,28 @@ export const useChatStore = create((set, get) => ({
           m.id === tempId ? { ...savedMessage, status: "sent" } : m,
         ),
       );
+=======
+      set((state) => {
+        // Check if the real message already exists (e.g., received via socket before API returned)
+        const alreadyExists = state.messages.some(
+          (m) => m.id === savedMessage.id && m.id !== tempId,
+        );
+
+        if (alreadyExists) {
+          // If the real message is already there, just remove the temporary one
+          return {
+            messages: state.messages.filter((m) => m.id !== tempId),
+          };
+        }
+
+        // Replace the temporary message with the real one
+        return {
+          messages: state.messages.map((m) =>
+            m.id === tempId ? { ...savedMessage, status: "sent" } : m,
+          ),
+        };
+      });
+>>>>>>> 091efc1a82de504ad58d1b5454861604b6eb0ad5
     } catch (err) {
       set((state) => ({
         messages:

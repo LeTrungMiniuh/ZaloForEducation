@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Modal, Platform, ActivityIndicator } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { apiRequest } from '../utils/api';
-import Alert from '../utils/Alert';
+import { apiRequest } from '../../utils/api';
+import Alert from '../../utils/Alert';
 import * as LocalAuthentication from 'expo-local-authentication';
 
 const QRScannerScreen = ({ onNavigate, goBack }) => {
