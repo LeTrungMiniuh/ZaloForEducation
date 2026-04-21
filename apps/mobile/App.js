@@ -15,6 +15,7 @@ import RegisterScreen from './src/screens/auth/RegisterScreen';
 import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
 import HomeScreen from './src/screens/main/HomeScreen';
+import ChatScreen from './src/screens/main/ChatScreen';
 import SessionsScreen from './src/screens/main/SessionsScreen';
 import ProfileScreen from './src/screens/profile/ProfileScreen';
 import QRScannerScreen from './src/screens/profile/QRScannerScreen';
@@ -147,6 +148,7 @@ function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, pa
     case 'reset-password': return <ResetPasswordScreen onNavigate={navigate} />;
     case 'sessions': return <SessionsScreen onNavigate={navigate} goBack={goBack} />;
     case 'profile': return <ProfileScreen onNavigate={navigate} onLogout={handleLogout} goBack={goBack} />;
+    case 'chat': return <ChatScreen onNavigate={navigate} goBack={goBack} params={params} />;
     case 'home': return <HomeScreen onNavigate={navigate} onLogout={handleLogout} initialTab={homeTab} goBack={goBack} onTabChange={handleTabChange} />;
     case 'qr-scanner': return <QRScannerScreen onNavigate={navigate} goBack={goBack} />;
     case 'status-picker': return <StatusPickerScreen onNavigate={navigate} goBack={goBack} />;

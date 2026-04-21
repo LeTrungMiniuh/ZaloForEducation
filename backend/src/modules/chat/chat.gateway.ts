@@ -33,6 +33,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly redisService: RedisService,
   ) {}
 
+  private async isConversationMember(convId: string, email: string) {
+    const metadata = await this.chatService.getConversationMetadata(convId);
+    if (!metadata || !Array.isArray(metadata.members)) return false;
+
+    const normalizedEmail = email.toLowerCase();
+    return metadata.members.some(
+      (member) => String(member).toLowerCase() === normalizedEmail,
+    );
+  }
+
   async handleConnection(client: Socket) {
     // Note: Guards don't automatically run on handleConnection in NestJS
     // We handle identification via join_identity for now, but presence starts here if possible
@@ -63,11 +73,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage("join_room")
-  handleJoinRoom(
+  async handleJoinRoom(
     @MessageBody() data: { convId: string },
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     if (!data.convId) return;
+    const user = client['user'];
+    const email = user?.email;
+    if (!email) return;
+
+    const allowed = await this.isConversationMember(data.convId, email);
+    if (!allowed) {
+      this.logger.warn(
+        `[SOCKET] Denied join_room for ${email} on conversation ${data.convId}`,
+      );
+      return;
+    }
+
     const room = data.convId.toLowerCase(); // Chuẩn hóa room
     client.join(room);
     this.logger.log(`[SOCKET] Client ${client.id} joined room: ${room}`);
@@ -116,14 +138,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage("typing")
-  handleTyping(
+  async handleTyping(
     @MessageBody() data: { convId: string; isTyping: boolean },
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     const user = client['user'];
     if (!user || !data.convId) return;
 
-    client.to(data.convId).emit("typing_update", {
+    const allowed = await this.isConversationMember(data.convId, user.email);
+    if (!allowed) return;
+
+    const room = data.convId.toLowerCase();
+
+    client.to(room).emit("typing_update", {
       convId: data.convId,
       email: user.email,
       isTyping: data.isTyping,
@@ -132,12 +159,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage("sendMessage")
-  handleMessage(
+  async handleMessage(
     @MessageBody() data: { convId: string; message: any },
     @ConnectedSocket() socket: Socket,
-  ): void {
+  ): Promise<void> {
+    const user = socket['user'];
+    if (!user || !data?.convId || !data?.message) return;
+
+    const allowed = await this.isConversationMember(data.convId, user.email);
+    if (!allowed) return;
+
+    const room = data.convId.toLowerCase();
+    const safeMessage = {
+      ...data.message,
+      conversationId: data.message.conversationId || data.convId,
+      senderId: data.message.senderId || user.email,
+    };
+
     // Broadcast message to everyone in the conversation room EXCEPT the sender
-    socket.to(data.convId).emit("receiveMessage", data.message);
+    socket.to(room).emit("receiveMessage", safeMessage);
   }
 
   notifyFriendRequest(email: string, payload: any) {

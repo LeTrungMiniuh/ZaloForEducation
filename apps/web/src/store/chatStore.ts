@@ -4,6 +4,30 @@ import { create } from 'zustand';
 import api from '../services/api';
 import type { Attachment } from '../utils/chatUtils';
 
+type MuteSetting = true | 'until-open' | number;
+
+const normalizeMutedConversations = (raw: any): Record<string, MuteSetting> => {
+  if (!raw || typeof raw !== 'object') return {};
+  const normalized: Record<string, MuteSetting> = {};
+
+  Object.entries(raw).forEach(([convId, value]) => {
+    if (value === true || value === 'until-open') {
+      normalized[convId] = value;
+      return;
+    }
+    if (typeof value === 'number' && Number.isFinite(value) && value > Date.now()) {
+      normalized[convId] = value;
+      return;
+    }
+    if (value === false) return;
+    if (value === 'manual') {
+      normalized[convId] = true;
+    }
+  });
+
+  return normalized;
+};
+
 interface ChatState {
   conversations: Conversation[];
   activeConvId: string | null;
@@ -14,6 +38,8 @@ interface ChatState {
   profileLoading: Set<string>;
   highlightedMessageId: string | null;
   previewImage: { url: string; name: string } | null;
+  hiddenConversations: Record<string, string>;
+  mutedConversations: Record<string, MuteSetting>;
   
   // Actions
   setConversations: (convs: Conversation[] | ((prev: Conversation[]) => Conversation[])) => void;
@@ -26,6 +52,14 @@ interface ChatState {
   setHighlightedMessageId: (id: string | null) => void;
   jumpToMessage: (messageId: string) => void;
   setPreviewImage: (url: string | null, name?: string) => void;
+  hideConversationWithPin: (convId: string, pin: string) => void;
+  unhideConversationWithPin: (convId: string, pin: string) => boolean;
+  isConversationHidden: (convId: string) => boolean;
+  setConversationMuted: (convId: string, muted: boolean) => void;
+  muteConversationFor: (convId: string, option: '1h' | '4h' | 'until-8am' | 'until-open' | 'manual') => void;
+  clearConversationMuted: (convId: string) => void;
+  toggleConversationMuted: (convId: string) => boolean;
+  isConversationMuted: (convId: string) => boolean;
   
   // Async Thunks (Logic)
   fetchConversations: () => Promise<void>;
@@ -70,6 +104,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   profileLoading: new Set(),
   highlightedMessageId: null,
   previewImage: null,
+  hiddenConversations: JSON.parse(localStorage.getItem('hidden_conversations') || '{}'),
+  mutedConversations: normalizeMutedConversations(JSON.parse(localStorage.getItem('muted_conversations') || '{}')),
 
   // Search Initial State
   isSearching: false,
@@ -139,6 +175,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   
   setActiveConversation: (convId) => {
+    // Auto unmute when muted "until-open" and user opens this conversation.
+    if (convId && get().mutedConversations[convId] === 'until-open') {
+      get().clearConversationMuted(convId);
+    }
+
     set({ activeConvId: convId, messages: [], nextCursor: null });
     if (convId) {
       get().fetchMessages(convId);
@@ -192,6 +233,134 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations: newConvs
     };
   }),
+
+  hideConversationWithPin: (convId, pin) => {
+    if (!convId || !pin) return;
+    set((state) => {
+      const nextHidden = {
+        ...state.hiddenConversations,
+        [convId]: pin,
+      };
+      localStorage.setItem('hidden_conversations', JSON.stringify(nextHidden));
+      return {
+        hiddenConversations: nextHidden,
+        activeConvId: state.activeConvId === convId ? null : state.activeConvId,
+        messages: state.activeConvId === convId ? [] : state.messages,
+        nextCursor: state.activeConvId === convId ? null : state.nextCursor,
+      };
+    });
+  },
+
+  unhideConversationWithPin: (convId, pin) => {
+    const currentPin = get().hiddenConversations[convId];
+    if (!currentPin || currentPin !== pin) return false;
+
+    set((state) => {
+      const nextHidden = { ...state.hiddenConversations };
+      delete nextHidden[convId];
+      localStorage.setItem('hidden_conversations', JSON.stringify(nextHidden));
+      return { hiddenConversations: nextHidden };
+    });
+    return true;
+  },
+
+  isConversationHidden: (convId) => !!get().hiddenConversations[convId],
+
+  setConversationMuted: (convId, muted) => {
+    if (!convId) return;
+    set((state) => {
+      const nextMuted: Record<string, MuteSetting> = {
+        ...state.mutedConversations,
+      };
+
+      if (muted) nextMuted[convId] = true;
+      else delete nextMuted[convId];
+
+      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
+      return { mutedConversations: nextMuted };
+    });
+  },
+
+  muteConversationFor: (convId, option) => {
+    if (!convId) return;
+
+    const now = new Date();
+    let nextSetting: MuteSetting = true;
+
+    if (option === '1h') {
+      nextSetting = Date.now() + 60 * 60 * 1000;
+    } else if (option === '4h') {
+      nextSetting = Date.now() + 4 * 60 * 60 * 1000;
+    } else if (option === 'until-8am') {
+      const until = new Date(now);
+      until.setHours(8, 0, 0, 0);
+      if (until.getTime() <= now.getTime()) {
+        until.setDate(until.getDate() + 1);
+      }
+      nextSetting = until.getTime();
+    } else if (option === 'until-open') {
+      nextSetting = 'until-open';
+    } else {
+      nextSetting = true;
+    }
+
+    set((state) => {
+      const nextMuted: Record<string, MuteSetting> = {
+        ...state.mutedConversations,
+        [convId]: nextSetting,
+      };
+      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
+      return { mutedConversations: nextMuted };
+    });
+  },
+
+  clearConversationMuted: (convId) => {
+    if (!convId) return;
+    set((state) => {
+      if (!(convId in state.mutedConversations)) return state;
+      const nextMuted: Record<string, MuteSetting> = { ...state.mutedConversations };
+      delete nextMuted[convId];
+      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
+      return { mutedConversations: nextMuted };
+    });
+  },
+
+  toggleConversationMuted: (convId) => {
+    if (!convId) return false;
+    let nextValue = false;
+    set((state) => {
+      const nextMuted: Record<string, MuteSetting> = {
+        ...state.mutedConversations,
+      };
+
+      if (nextMuted[convId]) {
+        delete nextMuted[convId];
+        nextValue = false;
+      } else {
+        nextMuted[convId] = true;
+        nextValue = true;
+      }
+
+      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
+      return { mutedConversations: nextMuted };
+    });
+    return nextValue;
+  },
+
+  isConversationMuted: (convId) => {
+    if (!convId) return false;
+    const setting = get().mutedConversations[convId];
+    if (!setting) return false;
+    if (setting === true || setting === 'until-open') return true;
+
+    if (typeof setting === 'number') {
+      if (Date.now() < setting) return true;
+      get().clearConversationMuted(convId);
+      return false;
+    }
+
+    return false;
+  },
 
   markAsRead: async (convId) => {
     // 1. Optimistic Update
@@ -290,8 +459,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  sendMessageOptimistic: async (convId, senderEmail, content, msgType = 'text', attachments = [], replyTo = null) => {
-    const tempId = `TEMP#${Date.now()}`;
+  sendMessageOptimistic: async (convId, senderEmail, content, msgType = 'text', attachments = [], replyTo = null, extraFields = {}) => {
+    const tempId = `TEMP#${Date.now()}#${Math.random().toString(36).slice(2, 8)}`;
     const timestamp = new Date().toISOString();
     
     // Categorize attachments
@@ -323,7 +492,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       createdAt: timestamp,
       media: media.length > 0 ? media : undefined,
       files: files.length > 0 ? files : undefined,
-      replyTo: replyTo || undefined
+      replyTo: replyTo || undefined,
+      ...extraFields
     };
 
     // 1. Add Optimistically
@@ -334,6 +504,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const updatedConv = {
           ...newConvs[convIndex],
           lastMessageContent: (() => {
+            if (msgType === 'contact_card') return '[Danh thiếp]';
             if (!content || content.startsWith('MSG#')) {
               if (media.length > 0) {
                 if (media.some((item: any) => item.isSticker === true || String(item.mimeType || '').includes('sticker'))) return '[Sticker]';
@@ -354,7 +525,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         newConvs.unshift(updatedConv);
       }
       return { 
-        messages: [...state.messages, optimisticMsg],
+        messages: state.activeConvId === convId ? [...state.messages, optimisticMsg] : state.messages,
         conversations: newConvs
       };
     });
@@ -365,7 +536,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         type: msgType,
         media: media.length > 0 ? media : undefined,
         files: files.length > 0 ? files : undefined,
-        replyTo: replyTo || undefined
+        replyTo: replyTo || undefined,
+        ...extraFields
       });
 
       // 2. Replace temp message with server ACK

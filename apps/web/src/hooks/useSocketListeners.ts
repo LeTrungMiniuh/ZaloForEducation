@@ -277,6 +277,17 @@ export const useSocketListeners = () => {
       }
     };
 
+    const handleGroupUpdate = (data: { convId: string, updates: any }) => {
+      setConversations((prev) => prev.map(c => 
+        c.id === data.convId ? { ...c, ...data.updates } : c
+      ));
+    };
+
+    const handleMuteUpdate = (data: { convId: string, mutedUntil: MuteSetting }) => {
+      // Internal state update handled via store actions, 
+      // but we can sync across devices here if needed.
+    };
+
     // Socket listeners — Chat
     socket.on('receiveMessage', handleReceiveMessage);
     socket.on('history_cleared', handleHistoryCleared);
@@ -288,6 +299,7 @@ export const useSocketListeners = () => {
     socket.on('PIN_UPDATE', handlePinUpdate);
     socket.on('participant_read', handleParticipantRead);
     socket.on('typing_update', handleTypingUpdate);
+    socket.on('group_update', handleGroupUpdate);
     // Socket listeners — Call
     socket.on('call:incoming', handleCallIncoming);
     socket.on('call:accept', handleCallAccept);
@@ -311,6 +323,7 @@ export const useSocketListeners = () => {
       socket.off('PIN_UPDATE', handlePinUpdate);
       socket.off('participant_read', handleParticipantRead);
       socket.off('typing_update', handleTypingUpdate);
+      socket.off('group_update', handleGroupUpdate);
       socket.off('call:incoming', handleCallIncoming);
       socket.off('call:accept', handleCallAccept);
       socket.off('call:dismiss', handleCallDismiss);

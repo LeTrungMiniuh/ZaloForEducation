@@ -55,9 +55,15 @@ const normalizeApiResponse = (res) => ({
 const normalizeMessage = (message) => {
   if (!message || typeof message !== "object") return null;
 
+  const conversationId = String(
+    message.conversationId || message.convId || "",
+  ).trim();
+
   const normalized = {
     ...message,
     id: String(message.id || "").trim(),
+    conversationId,
+    convId: conversationId,
     senderId: String(message.senderId || message.sender_id || "").trim(),
     content: String(message.content || ""),
   };
@@ -108,6 +114,15 @@ export const useChatStore = create((set, get) => ({
   messages: [],
   isLoadingMessages: false,
   nextCursor: null,
+  fetchToken: 0,
+
+  getMessageConvId: (message) => {
+    if (!message || typeof message !== "object") return null;
+    const convId = String(
+      message.conversationId || message.convId || "",
+    ).trim();
+    return convId || null;
+  },
 
   setConversations: (update) =>
     set((state) => ({
@@ -119,10 +134,11 @@ export const useChatStore = create((set, get) => ({
 
     // Offline-first: Load từ cache trước
     const cached = getCachedMessages(convId);
-    set({ activeConvId: convId, messages: cached, nextCursor: null });
+    const fetchToken = get().fetchToken + 1;
+    set({ activeConvId: convId, messages: cached, nextCursor: null, fetchToken });
 
     if (convId) {
-      get().fetchMessages(convId);
+      get().fetchMessages(convId, 30, fetchToken);
     }
   },
 
@@ -140,12 +156,21 @@ export const useChatStore = create((set, get) => ({
     set((state) => {
       const safeMessage = normalizeMessage(message);
       if (!safeMessage) return state;
+      const incomingConvId = get().getMessageConvId(safeMessage);
+      if (!incomingConvId) return state;
 
-      // Prevent adding if ID already exists
-      if (state.messages.some((m) => m.id === safeMessage.id)) return state;
+      const cached = getCachedMessages(incomingConvId);
+      if (!cached. some((m) => m.id === safeMessage.id)) {
+        setCachedMessages(incomingConvId, [...cached, safeMessage]);
+      }
+
+      if (incomingConvId !== state.activeConvId) {
+        return state;
+      }
+
+      if (state.messages.find((m) => m.id === safeMessage.id)) return state;
 
       // Optimistically remove any temporary message that matches this real one
-      // (Same sender, same content, and ID starts with TEMP#)
       const filteredMessages = state.messages.filter(
         (m) =>
           !(
@@ -156,8 +181,6 @@ export const useChatStore = create((set, get) => ({
       );
 
       const newMessages = [...filteredMessages, safeMessage];
-      if (state.activeConvId)
-        setCachedMessages(state.activeConvId, newMessages);
       return { messages: newMessages };
     }),
 
@@ -188,7 +211,7 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  fetchMessages: async (convId, limit = 30) => {
+  fetchMessages: async (convId, limit = 30, requestToken = get().fetchToken) => {
     set({ isLoadingMessages: true });
     try {
       const res = await chatGet(
@@ -203,6 +226,13 @@ export const useChatStore = create((set, get) => ({
           : [])
         .map(normalizeMessage)
         .filter(Boolean);
+
+      // Ignore stale responses when user switched conversations quickly.
+      if (get().activeConvId !== convId || get().fetchToken !== requestToken) {
+        set({ isLoadingMessages: false });
+        return;
+      }
+
       set({
         messages: newMessages,
         nextCursor: payload?.nextCursor || null,
@@ -220,8 +250,9 @@ export const useChatStore = create((set, get) => ({
     senderEmail,
     content,
     msgType = "text",
+    extraFields = {},
   ) => {
-    const tempId = `TEMP#${Date.now()}`;
+    const tempId = `TEMP#${Date.now()}#${Math.random().toString(36).slice(2, 8)}`;
     const timestamp = new Date().toISOString();
 
     const optimisticMsg = {
@@ -232,9 +263,16 @@ export const useChatStore = create((set, get) => ({
       type: msgType,
       status: "sending",
       createdAt: timestamp,
+      ...extraFields,
     };
 
-    set((state) => ({ messages: [...state.messages, optimisticMsg] }));
+    const cached = getCachedMessages(convId);
+    setCachedMessages(convId, [...cached, optimisticMsg]);
+
+    set((state) => {
+      if (state.activeConvId !== convId) return state;
+      return { messages: [...state.messages, optimisticMsg] };
+    });
 
     try {
       const res = await chatPost(
@@ -242,6 +280,7 @@ export const useChatStore = create((set, get) => ({
         {
           content,
           type: msgType,
+          ...extraFields,
         },
       );
       const savedMessage = normalizeMessage(res?.data || res);
@@ -250,32 +289,39 @@ export const useChatStore = create((set, get) => ({
         throw new Error("INVALID_MESSAGE_PAYLOAD");
       }
 
-      set((state) => {
-        // Check if the real message already exists (e.g., received via socket before API returned)
-        const alreadyExists = state.messages.some(
-          (m) => m.id === savedMessage.id && m.id !== tempId,
-        );
+      set((state) => ({
+        messages:
+          state.activeConvId === convId
+            ? state.messages.map((m) =>
+                m.id === tempId ? { ...savedMessage, status: "sent" } : m,
+              )
+            : state.messages,
+      }));
 
-        if (alreadyExists) {
-          // If the real message is already there, just remove the temporary one
-          return {
-            messages: state.messages.filter((m) => m.id !== tempId),
-          };
-        }
-
-        // Replace the temporary message with the real one
-        return {
-          messages: state.messages.map((m) =>
-            m.id === tempId ? { ...savedMessage, status: "sent" } : m,
-          ),
-        };
-      });
+      const currentCached = getCachedMessages(convId);
+      setCachedMessages(
+        convId,
+        currentCached.map((m) =>
+          m.id === tempId ? { ...savedMessage, status: "sent" } : m,
+        ),
+      );
     } catch (err) {
       set((state) => ({
-        messages: state.messages.map((m) =>
+        messages:
+          state.activeConvId === convId
+            ? state.messages.map((m) =>
+                m.id === tempId ? { ...m, status: "error" } : m,
+              )
+            : state.messages,
+      }));
+
+      const currentCached = getCachedMessages(convId);
+      setCachedMessages(
+        convId,
+        currentCached.map((m) =>
           m.id === tempId ? { ...m, status: "error" } : m,
         ),
-      }));
+      );
       console.error("Failed to send message", err);
     }
   },

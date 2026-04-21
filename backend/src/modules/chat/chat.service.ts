@@ -21,7 +21,7 @@ export class ChatService {
    */
   async createDirectConversation(email1: string, email2: string) {
     if (email1 === email2) throw new BadRequestException('Cannot create chat with yourself');
-    
+
     // Create a predictable conversation ID for 1-1 chats (e.g. sorted emails)
     const sorted = [email1, email2].sort();
     const convId = `CONV#DIRECT#${sorted[0]}#${sorted[1]}`;
@@ -41,7 +41,7 @@ export class ChatService {
         ...exists.Item,
         lastReadAt: userMapping.Item?.lastReadAt || 0
       } as Conversation;
-      
+
       const lastClearedAt = userMapping.Item?.lastClearedAt;
       if (lastClearedAt && conv.lastMessageTimestamp) {
         const clearTime = new Date(lastClearedAt).getTime();
@@ -126,7 +126,6 @@ export class ChatService {
       updatedAt: new Date().toISOString()
     };
 
-    // Construct TransactItems (Max 100 items per request in DynamoDB)
     const transactItems: any[] = [
       {
         Put: {

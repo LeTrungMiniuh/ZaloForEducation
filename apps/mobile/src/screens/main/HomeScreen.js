@@ -212,23 +212,12 @@ export default function HomeScreen({
   // ZUSTAND STORE
   const {
     conversations,
-    activeConvId,
-    messages,
-    isLoadingMessages,
-    setActiveConversation,
-    setMessages,
-    sendMessageOptimistic,
-    addMessage,
-    updateMessage,
     setConversations,
   } = useChatStore();
 
   const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
 
   const [activeTab, setActiveTab] = useState(initialTab || "messages");
-  const [inputText, setInputText] = useState("");
-  const [attachments, setAttachments] = useState([]);
-  const [sending, setSending] = useState(false);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [readConversations, setReadConversations] = useState(new Set());
   const [friendships, setFriendships] = useState([]);
@@ -238,19 +227,9 @@ export default function HomeScreen({
   const [friendSearchResult, setFriendSearchResult] = useState(null);
   const [friendActionLoading, setFriendActionLoading] = useState(false);
 
-  const [messageReactions, setMessageReactions] = useState({});
-  const [replyTarget, setReplyTarget] = useState(null);
-  const [actionMessage, setActionMessage] = useState(null);
   const [userProfiles, setUserProfiles] = useState({});
-  const [typingUsers, setTypingUsers] = useState({});
-  const [isFriendRequestsModalOpen, setIsFriendRequestsModalOpen] = useState(false);
-  const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  const [messageToForward, setMessageToForward] = useState(null);
 
-  const typingTimeoutRef = useRef(null);
-
-  const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
   
   const normalizeConversation = useCallback((conv) => {
@@ -569,10 +548,10 @@ export default function HomeScreen({
     const normalizedChat = normalizeConversation(chat);
     if (!normalizedChat) return;
 
-    setActiveConversation(normalizedChat.id);
-    setActiveTab("chat");
+    // Separate Navigation to ChatScreen
+    onNavigate('chat', 'messages', { conversationId: normalizedChat.id });
     
-    // Reset unread count locally
+    // Clear unread count locally for instant UI feedback
     setConversations(prev => prev.map(c => 
       c.id === normalizedChat.id ? { ...c, unreadCount: 0 } : c
     ));
@@ -582,17 +561,6 @@ export default function HomeScreen({
       next.add(normalizedChat.id);
       return next;
     });
-
-    setReplyTarget(null);
-    closeMessageAction();
-
-    if (normalizedChat.type === "direct" && normalizedChat.partner) {
-      loadUserProfile(normalizedChat.partner);
-    }
-
-    if (SocketService.socket) {
-      SocketService.socket.emit("join_room", { convId: normalizedChat.id });
-    }
   };
 
   const handleOpenDirectChat = async (friendEmail) => {
@@ -602,198 +570,23 @@ export default function HomeScreen({
     const convId = directRes?.id || directRes?.data?.id;
     if (!convId) return;
 
-    setActiveTab("chat");
     handleSelectChat({ id: convId, type: "direct", partner: friendEmail });
   };
 
   const handleOpenGroupConversation = async (conversation) => {
     if (!conversation?.id) return;
-    setActiveTab("chat");
     handleSelectChat(conversation);
   };
 
-  const getReactionData = (message) => messageReactions[message.id] || {};
-
-  const getCurrentUserReaction = (message) => {
-    if (!user?.email) return undefined;
-    const reactions = getReactionData(message);
-    const found = Object.entries(reactions).find(([, users]) =>
-      users.includes(user.email),
-    );
-    return found?.[0];
-  };
-
-  const getReactionSummary = (message) => {
-    const reactions = getReactionData(message);
-    return Object.entries(reactions)
-      .filter(([, users]) => users.length > 0)
-      .slice(0, 3);
-  };
-
-  const toggleReaction = async (message, emoji) => {
-    if (!user?.email || !selectedChat?.id) return;
-    const messageId = message.id;
-    const reactions = getReactionData(message);
-    const hasReactedWithThisEmoji = reactions[emoji]?.includes(user.email);
-    const action = hasReactedWithThisEmoji ? 'remove' : 'add';
-
-    const res = await chatPatch(
-      `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
-      {
-        action: "react",
-        reactAction: action,
-        emoji,
-      },
-    );
-
-    const updatedMessage = res?.data || res;
-    updateMessage(messageId, updatedMessage);
-    setMessageReactions((prev) => ({
-      ...prev,
-      [messageId]: updatedMessage.reactions || {},
-    }));
-
-    if (SocketService.socket && updatedMessage) {
-      SocketService.socket.emit("sendMessage", {
-        convId: selectedChat.id,
-        message: updatedMessage,
-      });
-    }
-    closeMessageAction();
-  };
-
-  const pinMessage = async (message) => {
-    if (!selectedChat?.id) return;
-    const res = await chatPatch(
-      `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(message.id)}`,
-      { action: "pin" },
-    );
-    const updatedMessage = res?.data || res;
-    setMessages((prev) =>
-      prev.map((item) => (item.id === message.id ? updatedMessage : item)),
-    );
-    if (SocketService.socket && updatedMessage) {
-      SocketService.socket.emit("sendMessage", {
-        convId: selectedChat.id,
-        message: updatedMessage,
-      });
-    }
-    closeMessageAction();
-  };
-
-  const unpinMessage = async (messageId) => {
-    if (!selectedChat?.id) return;
-    const res = await chatPatch(
-      `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
-      { action: "unpin" },
-    );
-    const updatedMessage = res?.data || res;
-    setMessages((prev) =>
-      prev.map((item) => (item.id === messageId ? updatedMessage : item)),
-    );
-    if (SocketService.socket && updatedMessage) {
-      SocketService.socket.emit("sendMessage", {
-        convId: selectedChat.id,
-        message: updatedMessage,
-      });
-    }
-    closeMessageAction();
-  };
-
-  const deleteMessageForMe = async (messageId) => {
-    if (!selectedChat?.id) return;
-    try {
-      const res = await chatPatch(
-        `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
-        { action: "deleteForMe" },
-      );
-      if (res.ok) {
-        setMessages((prev) => prev.filter((m) => m.id !== messageId));
-      }
-    } catch (err) {
-      console.error("Delete for me failed", err);
-    }
-    closeMessageAction();
-  };
-
-  const copyToClipboard = async (text) => {
-    if (!text) return;
-    await Clipboard.setStringAsync(text);
-    // Optional: show a small toast or overlay
-    closeMessageAction();
-  };
-
-  const handleForwardSelect = async (targetConvId) => {
-    if (!messageToForward || !targetConvId) return;
-
-    setIsForwardModalOpen(false);
-    const msg = messageToForward;
-
-    try {
-      // Logic similar to Web: Send a new message to the target conversation
-      const res = await chatPost(
-        `/conversations/${encodeURIComponent(targetConvId)}/messages`,
-        {
-          content: msg.content || (msg.media?.length > 0 ? "[Hình ảnh]" : "[Tệp đính kèm]"),
-          media: msg.media || [],
-          files: msg.files || [],
-          type: msg.type || 'text',
-        },
-      );
-
-      if (res.ok) {
-        Alert.alert("Thành công", "Đã chuyển tiếp tin nhắn.");
-      }
-    } catch (err) {
-      console.error("Forward failed", err);
-      Alert.alert("Lỗi", "Không thể chuyển tiếp tin nhắn.");
-    } finally {
-      setMessageToForward(null);
-    }
-  };
-
-  const startForward = (message) => {
-    setMessageToForward(message);
-    setIsForwardModalOpen(true);
-    closeMessageAction();
-  };
-
-  const recallMessage = async (messageId) => {
-    if (!selectedChat?.id) return;
-    const res = await chatPatch(
-      `/conversations/${encodeURIComponent(selectedChat.id)}/messages/${encodeURIComponent(messageId)}`,
-      { action: "recall" },
-    );
-
-    const updatedMessage = res?.data || res;
-    setMessages((prev) =>
-      prev.map((msg) => (msg.id === messageId ? updatedMessage : msg)),
-    );
-    upsertConversationLastMessage(selectedChat.id, "Tin nhắn đã được thu hồi");
-
-    setMessageReactions((prev) => {
-      const next = { ...prev };
-      delete next[messageId];
-      return next;
-    });
-
-    if (SocketService.socket && updatedMessage) {
-      SocketService.socket.emit("sendMessage", {
-        convId: selectedChat.id,
-        message: updatedMessage,
-      });
-    }
-    closeMessageAction();
-  };
-
-  const startReply = (message) => {
-    setReplyTarget({
-      id: message.id,
-      senderId: message.senderId,
-      content: getMessagePreview(message),
-    });
-    closeMessageAction();
-  };
+  const acceptedFriends = useMemo(
+    () =>
+      friendships
+        .filter((item) => item.status === "accepted")
+        .map((item) =>
+          item.sender_id === user?.email ? item.receiver_id : item.sender_id,
+        ),
+    [friendships, user?.email],
+  );
 
   const pickImages = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -1676,15 +1469,15 @@ export default function HomeScreen({
         backgroundColor="transparent"
         translucent={true}
       />
-      {activeTab !== "contacts" && !selectedChat && renderHeader()}
+      {activeTab !== "contacts" && renderHeader()}
 
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingContainer}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
-        <View style={[styles.content, selectedChat && { paddingBottom: Platform.OS === 'ios' ? 8 : 4 }]}>
-          {activeTab === "chat" && renderConversationsView()}
+        <View style={styles.content}>
+          {activeTab === "messages" && renderConversationsView()}
           {activeTab === "contacts" && (
             <ContactsScreen
               user={user}
@@ -1698,231 +1491,102 @@ export default function HomeScreen({
           {activeTab === "profile" && renderProfileView()}
         </View>
 
-        {!selectedChat && (
-          <View style={[
-            styles.floatingTabBar, 
-            Platform.OS === 'ios' && { 
-              paddingBottom: Math.max(insets.bottom, 12),
-              height: 60 + Math.max(insets.bottom, 12)
-            }
-          ]}>
-            <TouchableOpacity
-              style={styles.tabItem}
-              onPress={() => setActiveTab("chat")}
-            >
-              <Text
-                style={[
-                  styles.tabIcon,
-                  activeTab === "chat" && styles.tabIconActive,
-                ]}
-              >
-                chat
-              </Text>
-              <Text
-                style={[
-                  styles.tabLabel,
-                  activeTab === "chat" && styles.tabLabelActive,
-                ]}
-              >
-                Tin nhắn
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.tabItem}
-              onPress={() => setActiveTab("contacts")}
-            >
-              <Text
-                style={[
-                  styles.tabIcon,
-                  activeTab === "contacts" && styles.tabIconActive,
-                ]}
-              >
-                contact_page
-              </Text>
-              <Text
-                style={[
-                  styles.tabLabel,
-                  activeTab === "contacts" && styles.tabLabelActive,
-                ]}
-              >
-                Danh bạ
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.tabItem}
-              onPress={() => setActiveTab("notifications")}
-            >
-              <Text
-                style={[
-                  styles.tabIcon,
-                  activeTab === "notifications" && styles.tabIconActive,
-                ]}
-              >
-                notifications
-              </Text>
-              <Text
-                style={[
-                  styles.tabLabel,
-                  activeTab === "notifications" && styles.tabLabelActive,
-                ]}
-              >
-                Thông báo
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.tabItem}
-              onPress={() => setActiveTab("profile")}
-            >
-              <Text
-                style={[
-                  styles.tabIcon,
-                  activeTab === "profile" && styles.tabIconActive,
-                ]}
-              >
-                person
-              </Text>
-              <Text
-                style={[
-                  styles.tabLabel,
-                  activeTab === "profile" && styles.tabLabelActive,
-                ]}
-              >
-                Cá nhân
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </KeyboardAvoidingView>
-
-      {actionMessage && (
-        <Pressable style={styles.overlay} onPress={closeMessageAction}>
-          <Pressable
-            style={styles.actionSheet}
-            onPress={(e) => e.stopPropagation()}
+        <View style={[
+          styles.floatingTabBar, 
+          Platform.OS === 'ios' && { 
+            paddingBottom: Math.max(insets.bottom, 12),
+            height: 60 + Math.max(insets.bottom, 12)
+          }
+        ]}>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => setActiveTab("messages")}
           >
-            {/* Reactions Bar - Premium Design */}
-            <View style={styles.reactionBar}>
-              {REACTION_OPTIONS.map((emoji) => (
-                <TouchableOpacity
-                  key={`react-${emoji}`}
-                  style={styles.reactionOption}
-                  onPress={() => toggleReaction(actionMessage, emoji)}
-                >
-                  <Text style={styles.reactionEmoji}>{emoji}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <Text
+              style={[
+                styles.tabIcon,
+                activeTab === "messages" && styles.tabIconActive,
+              ]}
+            >
+              chat
+            </Text>
+            <Text
+              style={[
+                styles.tabLabel,
+                activeTab === "messages" && styles.tabLabelActive,
+              ]}
+            >
+              Tin nhắn
+            </Text>
+          </TouchableOpacity>
 
-            <View style={styles.actionGrid}>
-              <TouchableOpacity
-                style={styles.actionItem}
-                onPress={() => startReply(actionMessage)}
-              >
-                <View style={[styles.actionIconBox, { backgroundColor: '#f0f7ff' }]}>
-                  <Text style={[styles.actionIcon, { color: Colors.primary }]}>reply</Text>
-                </View>
-                <Text style={styles.actionText}>Trả lời</Text>
-              </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => setActiveTab("contacts")}
+          >
+            <Text
+              style={[
+                styles.tabIcon,
+                activeTab === "contacts" && styles.tabIconActive,
+              ]}
+            >
+              contact_page
+            </Text>
+            <Text
+              style={[
+                styles.tabLabel,
+                activeTab === "contacts" && styles.tabLabelActive,
+              ]}
+            >
+              Danh bạ
+            </Text>
+          </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.actionItem}
-                onPress={() => copyToClipboard(actionMessage.content)}
-              >
-                <View style={[styles.actionIconBox, { backgroundColor: '#f0fff4' }]}>
-                  <Text style={[styles.actionIcon, { color: '#22c55e' }]}>content_copy</Text>
-                </View>
-                <Text style={styles.actionText}>Sao chép</Text>
-              </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => setActiveTab("notifications")}
+          >
+            <Text
+              style={[
+                styles.tabIcon,
+                activeTab === "notifications" && styles.tabIconActive,
+              ]}
+            >
+              notifications
+            </Text>
+            <Text
+              style={[
+                styles.tabLabel,
+                activeTab === "notifications" && styles.tabLabelActive,
+              ]}
+            >
+              Thông báo
+            </Text>
+          </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.actionItem}
-                onPress={() => startForward(actionMessage)}
-              >
-                <View style={[styles.actionIconBox, { backgroundColor: '#fff7ed' }]}>
-                  <Text style={[styles.actionIcon, { color: '#f97316' }]}>forward</Text>
-                </View>
-                <Text style={styles.actionText}>Chuyển tiếp</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.actionItem}
-                onPress={() => pinMessage(actionMessage)}
-              >
-                <View style={[styles.actionIconBox, { backgroundColor: '#fef3c7' }]}>
-                  <Text style={[styles.actionIcon, { color: '#d97706' }]}>push_pin</Text>
-                </View>
-                <Text style={styles.actionText}>{actionMessage.pinned ? 'Bỏ ghim' : 'Ghim'}</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.actionList}>
-              {actionMessage.senderId === user?.email && !actionMessage.recalled && (
-                <TouchableOpacity
-                  style={styles.actionListItem}
-                  onPress={() => recallMessage(actionMessage.id)}
-                >
-                  <Text style={styles.actionListIcon}>history_toggle_off</Text>
-                  <Text style={[styles.actionListText, { color: '#ef4444' }]}>
-                    Thu hồi tin nhắn
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                style={styles.actionListItem}
-                onPress={() => deleteMessageForMe(actionMessage.id)}
-              >
-                <Text style={[styles.actionListIcon, { color: '#ef4444' }]}>delete</Text>
-                <Text style={[styles.actionListText, { color: '#ef4444' }]}>
-                  Xóa ở phía tôi
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      )}
-
-      {/* Forward Modal */}
-      <Modal
-        visible={isForwardModalOpen}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setIsForwardModalOpen(false)}
-      >
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setIsForwardModalOpen(false)}
-        >
-          <View style={styles.forwardSheet} onStartShouldSetResponder={() => true}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Chuyển tiếp đến...</Text>
-              <TouchableOpacity onPress={() => setIsForwardModalOpen(false)}>
-                <Text style={styles.closeIcon}>close</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.forwardList}>
-              {safeConversations.map((conv) => (
-                <TouchableOpacity
-                  key={conv.id}
-                  style={styles.forwardItem}
-                  onPress={() => handleForwardSelect(conv.id)}
-                >
-                  <Image
-                    style={styles.forwardAvatar}
-                  />
-                  <Text style={styles.forwardName} numberOfLines={1}>
-                    {conv.type === 'direct' ? getDisplayName(conv.partner) : conv.name}
-                  </Text>
-                  <Text style={styles.forwardSendIcon}>send</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </Pressable>
-      </Modal>
+          <TouchableOpacity
+            style={styles.tabItem}
+            onPress={() => setActiveTab("profile")}
+          >
+            <Text
+              style={[
+                styles.tabIcon,
+                activeTab === "profile" && styles.tabIconActive,
+              ]}
+            >
+              person
+            </Text>
+            <Text
+              style={[
+                styles.tabLabel,
+                activeTab === "profile" && styles.tabLabelActive,
+              ]}
+            >
+              Cá nhân
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
 
       {/* Quick Action Menu (+) */}
       <Modal
