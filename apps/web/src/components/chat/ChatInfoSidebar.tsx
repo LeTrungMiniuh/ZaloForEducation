@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
 import { useChatStore } from '../../store/chatStore';
 import { formatFileSize, getDisplayAvatar, getDisplayName, normalizeAttachment } from '../../utils/chatUtils';
@@ -19,7 +20,19 @@ import { formatFileSize, getDisplayAvatar, getDisplayName, normalizeAttachment }
 const ChatInfoSidebar: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { conversations, activeConvId, userProfiles, messages, setConversationAutoDelete } = useChatStore();
+  const {
+    conversations,
+    activeConvId,
+    userProfiles,
+    messages,
+    setConversationAutoDelete,
+    setPreviewImage,
+    clearHistory,
+    mutedConversations,
+    muteConversationFor,
+    clearConversationMuted,
+    isConversationMuted,
+  } = useChatStore();
 
   const activeChat = conversations.find(c => c.id === activeConvId);
   const [activeStorageTab, setActiveStorageTab] = useState<'media' | 'file' | 'link'>('media');
@@ -44,6 +57,23 @@ const ChatInfoSidebar: React.FC = () => {
     : (activeChat.avatar || '/logo_blue.png');
 
   const currentAutoDeleteDays = activeChat.autoDeleteDays ?? null;
+  const muted = !!(activeConvId && isConversationMuted(activeConvId));
+  const muteSetting = activeConvId ? mutedConversations[activeConvId] : undefined;
+
+  const getMuteStatusLabel = () => {
+    if (!activeConvId || !muted) return 'ĐANG BẬT';
+    if (muteSetting === 'until-open') return 'ĐẾN KHI MỞ LẠI';
+    if (muteSetting === true) return 'VĨNH VIỄN';
+    if (typeof muteSetting === 'number') {
+      const diff = muteSetting - Date.now();
+      if (diff <= 0) return 'ĐANG BẬT';
+      const hours = Math.floor(diff / (60 * 60 * 1000));
+      const minutes = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
+      if (hours > 0) return `${hours}G ${minutes}P`;
+      return `${Math.max(1, minutes)} PHÚT`;
+    }
+    return 'ĐANG TẮT';
+  };
 
   const autoDeleteLabel = (days: 1 | 7 | 30 | null) => {
     if (days === 1) return '1 ngày';
@@ -82,13 +112,28 @@ const ChatInfoSidebar: React.FC = () => {
   // Combine all attachments and store senderId for filtering
   const allAttachments = messages.flatMap(m => {
     const arr = [...(m.media || []), ...(m.files || [])];
-    return arr.map(a => ({ ...a, senderId: m.senderId }));
-  }).map(f => ({ ...normalizeAttachment(f), senderId: f.senderId })).reverse();
+    return arr.map(a => ({ ...a, senderId: m.senderId, createdAt: m.createdAt }));
+  }).map(f => ({ ...normalizeAttachment(f), senderId: f.senderId, createdAt: f.createdAt })).reverse();
 
-  const isMedia = (f: any) => 
-    f.mimeType?.startsWith('image/') || 
-    f.mimeType?.startsWith('video/') ||
-    f.name?.match(/\.(jpg|jpeg|png|gif|webp|mp4|mov|avi|wmv)$/i);
+  const isStickerOrGif = (f: any) => {
+    const mime = String(f?.mimeType || '').toLowerCase();
+    const name = String(f?.name || '').toLowerCase();
+    return (
+      mime.includes('sticker') ||
+      mime === 'image/gif' ||
+      /^sticker-/.test(name) ||
+      /\.gif(\?.*)?$/.test(name)
+    );
+  };
+
+  const isMedia = (f: any) => {
+    if (isStickerOrGif(f)) return false;
+    return (
+      f.mimeType?.startsWith('image/') ||
+      f.mimeType?.startsWith('video/') ||
+      f.name?.match(/\.(jpg|jpeg|png|webp|mp4|mov|avi|wmv)$/i)
+    );
+  };
 
   const isVideoMedia = (f: any) => {
     const mime = String(f?.mimeType || '').toLowerCase();
@@ -110,8 +155,9 @@ const ChatInfoSidebar: React.FC = () => {
     }
   }
 
-  const sharedMedia = filteredAttachments.filter(isMedia);
-  const sharedFiles = filteredAttachments.filter(f => !isMedia(f));
+  const storageAttachments = filteredAttachments.filter((f) => !isStickerOrGif(f));
+  const sharedMedia = storageAttachments.filter(isMedia);
+  const sharedFiles = storageAttachments.filter((f) => !isMedia(f));
 
   // Extract links and apply filters
   const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -141,6 +187,86 @@ const ChatInfoSidebar: React.FC = () => {
   const handleOpenProfile = () => {
     if (!partnerEmail) return;
     navigate(`/profile?email=${encodeURIComponent(partnerEmail)}`);
+  };
+
+  const handleToggleMute = async () => {
+    if (!activeConvId) return;
+
+    if (muted) {
+      clearConversationMuted(activeConvId);
+      await Swal.fire({
+        icon: 'success',
+        title: 'Đã bật lại thông báo',
+        timer: 1300,
+        showConfirmButton: false,
+      });
+      return;
+    }
+
+    const choice = await Swal.fire({
+      title: 'Xác nhận',
+      html: `
+        <div style="text-align:left; margin-top:8px; font-size:18px; color:#1f2a44;">
+          Bạn có chắc muốn tắt thông báo hội thoại này:
+        </div>
+        <div style="margin-top:12px; display:flex; flex-direction:column; gap:12px; text-align:left; font-size:16px;">
+          <label><input type="radio" name="mute-option" value="1h" checked /> Trong 1 giờ</label>
+          <label><input type="radio" name="mute-option" value="4h" /> Trong 4 giờ</label>
+          <label><input type="radio" name="mute-option" value="until-8am" /> Cho đến 8:00 AM</label>
+          <label><input type="radio" name="mute-option" value="until-open" /> Cho đến khi được mở lại</label>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Đồng ý',
+      cancelButtonText: 'Hủy',
+      focusConfirm: false,
+      preConfirm: () => {
+        const selected = document.querySelector('input[name="mute-option"]:checked') as HTMLInputElement | null;
+        return selected?.value || '1h';
+      },
+    });
+
+    if (!choice.isConfirmed || !choice.value) return;
+
+    muteConversationFor(activeConvId, choice.value as '1h' | '4h' | 'until-8am' | 'until-open');
+    await Swal.fire({
+      icon: 'success',
+      title: 'Đã tắt thông báo',
+      timer: 1300,
+      showConfirmButton: false,
+    });
+  };
+
+  const handleClearConversationOneSide = async () => {
+    if (!activeConvId) return;
+
+    const confirm = await Swal.fire({
+      icon: 'warning',
+      title: 'Xóa cuộc trò chuyện phía bạn?',
+      text: 'Tin nhắn sẽ bị xóa ở tài khoản của bạn, phía đối phương vẫn giữ nguyên.',
+      showCancelButton: true,
+      confirmButtonText: 'Xóa',
+      cancelButtonText: 'Hủy',
+      confirmButtonColor: '#d93025',
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    try {
+      await clearHistory(activeConvId);
+      await Swal.fire({
+        icon: 'success',
+        title: 'Đã xóa cuộc trò chuyện',
+        timer: 1400,
+        showConfirmButton: false,
+      });
+    } catch {
+      await Swal.fire({
+        icon: 'error',
+        title: 'Không thể xóa cuộc trò chuyện',
+        text: 'Vui lòng thử lại sau.',
+      });
+    }
   };
 
   return (
@@ -215,7 +341,7 @@ const ChatInfoSidebar: React.FC = () => {
                 ) : (
                   <div className="grid grid-cols-3 gap-1">
                     {sharedMedia.map((m, i) => (
-                      <a key={i} href={m.dataUrl} target="_blank" rel="noreferrer" className="relative group block">
+                      <div key={i} className="relative group block">
                         {isVideoMedia(m) ? (
                           <video
                             src={m.dataUrl}
@@ -225,14 +351,19 @@ const ChatInfoSidebar: React.FC = () => {
                             playsInline
                           />
                         ) : (
-                          <img src={m.dataUrl} className="w-full aspect-square object-cover rounded-lg border border-outline-variant/10 cursor-alias hover:opacity-80 transition-opacity" alt="" />
+                          <img
+                            src={m.dataUrl}
+                            className="w-full aspect-square object-cover rounded-lg border border-outline-variant/10 cursor-pointer hover:opacity-80 transition-opacity"
+                            alt=""
+                            onClick={() => setPreviewImage(m.dataUrl, m.name || `image-${i + 1}.png`)}
+                          />
                         )}
                         <div className="absolute inset-x-0 bottom-0 pointer-events-none bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-b-lg p-1 flex justify-end">
                            <span className="text-[9px] font-medium text-white/90">
                              {m.createdAt ? new Date(m.createdAt).toLocaleDateString('vi-VN') : ''}
                            </span>
                         </div>
-                      </a>
+                      </div>
                     ))}
                   </div>
                 )
@@ -293,13 +424,24 @@ const ChatInfoSidebar: React.FC = () => {
               </span>
               <span className="text-[12px] font-bold text-primary">{autoDeleteLabel(currentAutoDeleteDays as 1 | 7 | 30 | null)}</span>
             </button>
-            <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all">
-              <BellOff size={20} className="text-on-surface-variant" />
-              Tắt thông báo
+            <button
+              onClick={handleToggleMute}
+              className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all ${muted ? 'bg-surface-container/70' : ''}`}
+            >
+              <span className="flex items-center gap-3">
+                <BellOff size={20} className={muted ? 'text-primary' : 'text-on-surface-variant'} />
+                {muted ? 'Bật lại thông báo' : 'Tắt thông báo'}
+              </span>
+              <span className={`text-[11px] font-bold ${muted ? 'text-primary' : 'text-on-surface-variant/70'}`}>
+                {getMuteStatusLabel()}
+              </span>
             </button>
-            <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-error dark:text-[#eef3fb] font-bold text-[13px] transition-all">
+            <button
+              onClick={handleClearConversationOneSide}
+              className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-error dark:text-[#eef3fb] font-bold text-[13px] transition-all"
+            >
               <Trash2 size={20} />
-              Xóa lịch sử trò chuyện
+              Xóa cuộc trò chuyện (1 phía)
             </button>
           </div>
         </div>

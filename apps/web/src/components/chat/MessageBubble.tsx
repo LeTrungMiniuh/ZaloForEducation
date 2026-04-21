@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {
     AlertCircle,
+  AudioLines,
     Download,
     FileDigit,
     FileImage,
@@ -12,11 +13,13 @@ import {
     Music,
     Pin,
     Quote,
+    ThumbsUp,
     Video
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useCallStore } from '../../store/callStore';
 import { useChatStore } from '../../store/chatStore';
 import { formatFileSize, getDisplayAvatar, getDisplayName, normalizeAttachment, truncateFileName } from '../../utils/chatUtils';
 
@@ -62,11 +65,57 @@ const FluentEmoji: React.FC<{ emoji: string, className?: string, alt?: string }>
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, userProfiles, onReply, onForward }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { patchMessageOptimistic, activeConvId, highlightedMessageId, setPreviewImage } = useChatStore();
+  const isCallOverlayActive = useCallStore((state) => state.callState === 'CONNECTED' || state.callState === 'JOINING');
+  const { patchMessageOptimistic, activeConvId, highlightedMessageId, setPreviewImage, startDirectChat } = useChatStore();
+  const [isReactionDockOpen, setIsReactionDockOpen] = useState(false);
+  const reactionDockRef = useRef<HTMLDivElement | null>(null);
   const isMe = message.senderId === user?.email;
   const isRecalled = !!message.recalled;
   const isPinned = !!message.pinned;
   const isHighlighted = highlightedMessageId === message.id;
+  const hasReactions = !!(message.reactions && Object.keys(message.reactions).length > 0 && !isRecalled);
+
+  useEffect(() => {
+    setIsReactionDockOpen(false);
+  }, [activeConvId, message.id]);
+
+  useEffect(() => {
+    if (isCallOverlayActive) {
+      setIsReactionDockOpen(false);
+    }
+  }, [isCallOverlayActive]);
+
+  useEffect(() => {
+    if (!isReactionDockOpen) return;
+
+    const closePicker = () => setIsReactionDockOpen(false);
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        closePicker();
+      }
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const node = reactionDockRef.current;
+      if (!node) return;
+      if (event.target instanceof Node && !node.contains(event.target)) {
+        closePicker();
+      }
+    };
+
+    window.addEventListener('blur', closePicker);
+    window.addEventListener('scroll', closePicker, true);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('pointerdown', handlePointerDown, true);
+
+    return () => {
+      window.removeEventListener('blur', closePicker);
+      window.removeEventListener('scroll', closePicker, true);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [isReactionDockOpen]);
 
   const isVideoMedia = (mediaItem: any) => {
     const mime = String(mediaItem?.mimeType || mediaItem?.fileType || '').toLowerCase();
@@ -79,11 +128,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
     return mime.includes('sticker') || mediaItem?.isSticker === true;
   };
 
+  const isAudioFile = (fileItem: any) => {
+    const mime = String(fileItem?.mimeType || fileItem?.fileType || '').toLowerCase();
+    const name = String(fileItem?.name || fileItem?.fileName || '').toLowerCase();
+    return mime.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(name);
+  };
+
   const bubbleClass = isMe 
     ? 'bg-primary/10 text-on-surface rounded-2xl rounded-tr-none' 
     : 'bg-white dark:bg-surface-container-high text-on-surface rounded-2xl rounded-tl-none';
 
   const handleReact = (emoji: string, action: 'add' | 'remove' = 'add') => {
+    if (isCallOverlayActive) return;
     if (!activeConvId) return;
     
     patchMessageOptimistic(activeConvId, message.id, {
@@ -174,8 +230,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
         {/* Bubble & Actions Wrapper */}
         <div className="relative group/bubble">
           {/* Action Toolbar (Hover icons on the side) */}
-          {!isRecalled && (
-            <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center gap-1.5 z-[100] ${isMe ? '-left-32 flex-row-reverse animate-in slide-in-from-right-4' : '-right-32 animate-in slide-in-from-left-4'}`}>
+          {!isRecalled && !isCallOverlayActive && (
+            <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center gap-1.5 z-[220] ${isMe ? '-left-32 flex-row-reverse animate-in slide-in-from-right-4' : '-right-32 animate-in slide-in-from-left-4'}`}>
                
                {/* Click for Context Menu */}
                <button 
@@ -206,37 +262,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
                >
                  <Quote size={18} className="group-hover/btn:text-primary transition-colors" />
                </button>
-
-               {/* Reaction Button with Hover Emoji Bar */}
-               <div className="relative group/reactbtn">
-                 <button 
-                    className="w-8 h-8 flex items-center justify-center bg-white dark:bg-surface-container border border-outline-variant/30 dark:border-outline-variant/40 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant group/btn"
-                    title="Thả cảm xúc"
-                 >
-                   <Heart size={18} className="group-hover/btn:text-error transition-colors" />
-                 </button>
-
-                 {/* Floating Emoji Bar */}
-                 <div className={`absolute bottom-full mb-2 opacity-0 group-hover/reactbtn:opacity-100 group-hover/reactbtn:translate-y-0 translate-y-2 pointer-events-none group-hover:pointer-events-auto transition-all duration-200 bg-white/95 dark:bg-surface-container/95 backdrop-blur-md border border-outline-variant/20 dark:border-outline-variant/40 rounded-full flex items-center p-1.5 gap-1 shadow-[0_8px_30px_rgba(0,0,0,0.15)] z-[110] ${isMe ? 'right-0' : 'left-0'}`}>
-                    {[
-                      { e: '👍', label: 'Thích' },
-                      { e: '❤️', label: 'Yêu thích' },
-                      { e: '😄', label: 'Cười' },
-                      { e: '😮', label: 'Ngạc nhiên' },
-                      { e: '😭', label: 'Buồn' },
-                      { e: '😡', label: 'Giận dữ' }
-                    ].map(({e, label}) => (
-                      <button 
-                        key={e} 
-                        onClick={() => handleReact(e)}
-                        className="w-10 h-10 flex items-center justify-center hover:bg-primary/5 rounded-full transition-all hover:scale-150 active:scale-110"
-                        title={label}
-                      >
-                        <FluentEmoji emoji={e} className="w-7 h-7" alt={label} />
-                      </button>
-                    ))}
-                 </div>
-               </div>
             </div>
           )}
 
@@ -254,6 +279,56 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
              <p className={`text-[15px] leading-relaxed whitespace-pre-wrap ${isRecalled ? 'italic opacity-50 font-medium' : 'text-on-surface'}`}>
                {isRecalled ? 'Tin nhắn đã được thu hồi' : message.content}
              </p>
+
+             {!isRecalled && message.contactCard && (
+               <div className="mt-2 p-3 rounded-2xl border border-primary/20 bg-white/70 dark:bg-surface-container-high/70 max-w-[320px]">
+                 <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary/80 mb-2">Danh thiếp liên hệ</p>
+                 <div className="flex items-center gap-3">
+                   <img
+                     src={message.contactCard.avatarUrl || getDisplayAvatar(message.contactCard.email, user, userProfiles)}
+                     alt=""
+                     className="w-11 h-11 rounded-full object-cover ring-1 ring-outline-variant/20"
+                   />
+                   <div className="min-w-0 flex-1">
+                     <p className="text-[14px] font-extrabold text-on-surface truncate">{message.contactCard.fullName || message.contactCard.email}</p>
+                     <p className="text-[12px] text-on-surface-variant truncate">{message.contactCard.email}</p>
+                     {message.contactCard.phone && <p className="text-[11px] text-on-surface-variant/80 truncate">{message.contactCard.phone}</p>}
+                   </div>
+                 </div>
+                 {message.contactCard.email && message.contactCard.email !== user?.email && (
+                   <button
+                     type="button"
+                     className="mt-3 px-3 py-1.5 rounded-full bg-primary text-white text-[12px] font-bold hover:opacity-90 active:scale-[0.98]"
+                     onClick={() => startDirectChat(message.contactCard.email)}
+                   >
+                     Nhắn tin
+                   </button>
+                 )}
+               </div>
+             )}
+
+             {!isRecalled && message.location && (
+               <div className="mt-2 p-3 rounded-2xl border border-sky-200 bg-sky-50/70 dark:bg-sky-900/20 max-w-[340px]">
+                 <p className="text-[10px] font-extrabold uppercase tracking-wider text-sky-700 mb-2">
+                   {message.location.isLive ? 'Vị trí trực tiếp' : 'Vị trí hiện tại'}
+                 </p>
+                 <p className="text-[13px] font-semibold text-on-surface">{message.location.label || 'Vị trí chia sẻ'}</p>
+                 <p className="text-[11px] text-on-surface-variant mt-0.5">
+                   {Number(message.location.latitude).toFixed(5)}, {Number(message.location.longitude).toFixed(5)}
+                 </p>
+                 {message.location.isLive && (
+                   <p className="text-[11px] text-rose-600 font-bold mt-1">Đang chia sẻ trực tiếp</p>
+                 )}
+                 <a
+                   href={`https://www.google.com/maps?q=${message.location.latitude},${message.location.longitude}`}
+                   target="_blank"
+                   rel="noreferrer"
+                   className="inline-flex mt-3 px-3 py-1.5 rounded-full bg-sky-600 text-white text-[12px] font-bold hover:opacity-90"
+                 >
+                   Mở bản đồ
+                 </a>
+               </div>
+             )}
 
              {!isRecalled && (
                <div className="mt-2 space-y-2">
@@ -311,6 +386,22 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
                  
                  {(message.files || []).map((f: any, i: number) => {
                    const file = normalizeAttachment(f);
+
+                   if (isAudioFile(f)) {
+                     return (
+                       <div
+                         key={i}
+                         className="flex items-center gap-2 p-2.5 w-[270px] md:w-[320px] max-w-full bg-white/70 dark:bg-surface-container-high/70 border border-outline-variant/15 rounded-xl"
+                       >
+                         <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                           <AudioLines size={18} />
+                         </div>
+                         <audio controls preload="metadata" className="flex-1 h-9">
+                           <source src={file.dataUrl} type={file.mimeType || 'audio/webm'} />
+                         </audio>
+                       </div>
+                     );
+                   }
                    
                    const handleDownload = async (e: React.MouseEvent) => {
                      e.preventDefault();
@@ -354,9 +445,49 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
              )}
           </div>
 
+          {/* Detached Reaction Picker (below bubble to avoid clipping) */}
+          {!isRecalled && !isCallOverlayActive && (
+            <div
+              ref={reactionDockRef}
+              className={`absolute ${hasReactions ? '-bottom-10' : '-bottom-4'} ${isMe ? 'left-2' : 'right-2'} z-[220]`}
+              onMouseEnter={() => setIsReactionDockOpen(true)}
+              onMouseLeave={() => setIsReactionDockOpen(false)}
+            >
+              <div className="absolute bottom-full h-3 left-0 right-0" />
+              <button
+                className="w-8 h-8 flex items-center justify-center bg-white dark:bg-surface-container border border-outline-variant/30 dark:border-outline-variant/40 rounded-full shadow-lg hover:bg-surface-container active:scale-90 transition-all text-on-surface-variant"
+                title="Thả cảm xúc"
+              >
+                <ThumbsUp size={16} className={`transition-colors ${isReactionDockOpen ? 'text-primary' : ''}`} />
+              </button>
+
+              <div
+                className={`absolute bottom-full mb-2 transition-all duration-200 bg-white/95 dark:bg-surface-container/95 backdrop-blur-md border border-outline-variant/20 dark:border-outline-variant/40 rounded-full flex items-center p-1.5 gap-1 shadow-[0_8px_30px_rgba(0,0,0,0.15)] z-[230] ${isMe ? 'right-0' : 'left-0'} ${isReactionDockOpen ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'}`}
+              >
+                {[
+                  { e: '👍', label: 'Thích' },
+                  { e: '❤️', label: 'Yêu thích' },
+                  { e: '😄', label: 'Cười' },
+                  { e: '😮', label: 'Ngạc nhiên' },
+                  { e: '😭', label: 'Buồn' },
+                  { e: '😡', label: 'Giận dữ' }
+                ].map(({e, label}) => (
+                  <button
+                    key={e}
+                    onClick={() => handleReact(e)}
+                    className="w-10 h-10 flex items-center justify-center hover:bg-primary/5 rounded-full transition-all hover:scale-150 active:scale-110"
+                    title={label}
+                  >
+                    <FluentEmoji emoji={e} className="w-7 h-7" alt={label} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Reactions Row */}
-          {message.reactions && Object.keys(message.reactions).length > 0 && !isRecalled && (
-            <div className={`absolute -bottom-3 flex flex-wrap gap-1 ${isMe ? 'right-0' : 'left-0'} z-[5]`}>
+          {hasReactions && (
+            <div className={`absolute -bottom-3 flex flex-wrap gap-1 ${isMe ? 'right-0' : 'left-0'} z-[5] ${isCallOverlayActive ? 'pointer-events-none' : ''}`}>
               <div className="flex items-center bg-white dark:bg-surface-container-high shadow-md rounded-full px-1.5 py-0.5 border border-outline-variant/10 dark:border-outline-variant/40 gap-1 animate-in zoom-in-50 duration-200">
                 {Object.entries(message.reactions).map(([emoji, users]: [string, any]) => (
                   <div 

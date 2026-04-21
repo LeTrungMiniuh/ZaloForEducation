@@ -1,100 +1,101 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect } from 'react';
+import type { Message } from '@zalo-edu/shared';
+import { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useCallStore } from '../store/callStore';
 import { useChatStore } from '../store/chatStore';
-import { getMessagePreview } from '../utils/chatUtils';
+import { useCallStore } from '../store/callStore';
 import { leaveCurrentSession, toggleCamera as toggleCameraChime } from './useChime';
+
+type PresenceStatus = 'online' | 'offline';
+
+type PresencePayload = {
+  email?: string;
+  status?: PresenceStatus | string;
+};
+
+type ConversationReadPayload = {
+  convId?: string;
+};
+
+type HistoryClearedPayload = {
+  convId?: string;
+};
+
+type TypingPayload = {
+  convId?: string;
+  email?: string;
+  isTyping?: boolean;
+};
+
+type SocketMessage = Message & {
+  convId?: string;
+};
+
+type MuteSetting = true | 'until-open' | number;
 
 export const useSocketListeners = () => {
   const { socket, user } = useAuth();
-  const { 
-    addMessage, 
-    activeConvId, 
-    markAsRead, 
-    setLocalRead, 
-    setConversations,
-    localClearHistory,
-    updateMessage,
-    setUserProfiles,
-    setMessages
-  } = useChatStore();
-
-  // Helper to update conv list locally
-  const upsertConversationLastMessage = useCallback((convId: string, msg: any) => {
-    setConversations((prev) => {
-      const index = prev.findIndex((conv) => conv.id === convId);
-      if (index === -1) return prev;
-
-      const next = [...prev];
-      const target = next[index];
-      const updated = {
-        ...target,
-        lastMessageContent: getMessagePreview(msg),
-        lastMessageSenderId: msg.senderId,
-        lastMessageTimestamp: msg.createdAt ? new Date(msg.createdAt).getTime() : Date.now(),
-        updatedAt: msg.createdAt || new Date().toISOString(),
-      };
-
-      next.splice(index, 1);
-      next.unshift(updated);
-      return next;
-    });
-  }, [setConversations]);
+  
+  const addMessage = useChatStore((state) => state.addMessage);
+  const markAsRead = useChatStore((state) => state.markAsRead);
+  const setLocalRead = useChatStore((state) => state.setLocalRead);
+  const localClearHistory = useChatStore((state) => state.localClearHistory);
+  const setUserProfiles = useChatStore((state) => state.setUserProfiles);
+  const updateMessage = useChatStore((state) => state.updateMessage);
+  const setConversations = useChatStore((state) => state.setConversations);
+  const setMessages = useChatStore((state) => state.setMessages);
+  const activeConvId = useChatStore((state) => state.activeConvId);
 
   useEffect(() => {
     if (!socket || !user) return;
 
-    const handleReceiveMessage = (msg: any) => {
+    const handleReceiveMessage = (msg: SocketMessage) => {
       if (!msg?.id) return;
 
       addMessage(msg);
 
       const incomingConvId = msg.conversationId || msg.convId;
-      if (incomingConvId) {
-        upsertConversationLastMessage(incomingConvId, msg);
+      if (!incomingConvId) return;
 
-        // Auto mark as read if we are in the active conversation
-        if (incomingConvId === activeConvId) {
-          markAsRead(incomingConvId);
-        }
+      if (incomingConvId === useChatStore.getState().activeConvId) {
+        markAsRead(incomingConvId).catch((error) => {
+          console.error('Failed to mark conversation as read', error);
+        });
       }
     };
 
-    const handleConversationRead = (data: { convId: string }) => {
+    const handleConversationRead = (data: ConversationReadPayload) => {
+      if (!data?.convId) return;
       setLocalRead(data.convId);
     };
 
-    const handleHistoryCleared = (data: { convId: string }) => {
+    const handleHistoryCleared = (data: HistoryClearedPayload) => {
+      if (!data?.convId) return;
       localClearHistory(data.convId);
     };
 
-    const handlePresenceUpdate = (data: { email: string; status: 'online' | 'offline' }) => {
-      setUserProfiles((prev: Record<string, any>) => {
-        const existing = prev[data.email] || {};
+    const handlePresenceUpdate = (data: PresencePayload) => {
+      const email = String(data?.email || '').trim().toLowerCase();
+      if (!email) return;
+
+      const status = data?.status;
+      if (status !== 'online' && status !== 'offline') return;
+
+      setUserProfiles((prev) => {
+        const existing = prev[email] || {};
         return {
           ...prev,
-          [data.email]: {
+          [email]: {
             ...existing,
-            email: data.email,
-            status: data.status
-          }
+            email,
+            status,
+          },
         };
       });
     };
 
-    const handleMessageReaction = (data: { messageId: string, reactions: any }) => {
-       updateMessage(data.messageId, { reactions: data.reactions });
-    };
-    
-    const handleMessageRecalled = (data: { messageId: string }) => {
-      updateMessage(data.messageId, { 
-        recalled: true, 
-        content: 'Tin nhắn đã được thu hồi', 
-        media: [], 
-        files: [], 
-        reactions: {} 
-      } as any);
+    const handleTypingUpdate = (data: TypingPayload) => {
+      if (!data?.convId || !data?.email) return;
+      document.dispatchEvent(new CustomEvent('chat_typing_update', { detail: data }));
     };
 
     const handleMessagePinned = (data: { messageId: string, pinned: boolean, pinnedBy: string }) => {
@@ -112,8 +113,6 @@ export const useSocketListeners = () => {
     };
 
     const handleParticipantRead = (data: { convId: string, email: string, timestamp: number }) => {
-      // If someone else read the conversation I am currently in,
-      // I should update my sent messages to "read".
       if (data.email !== user.email && data.convId === activeConvId) {
         const state = useChatStore.getState();
         const updatedMessages = state.messages.map((m): typeof m => {
@@ -130,19 +129,11 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleTypingUpdate = (data: { convId: string, email: string, isTyping: boolean }) => {
-      // Dispatch typing event to document so ChatPage can listen without deep store rerenders
-      const event = new CustomEvent('chat_typing_update', { detail: data });
-      document.dispatchEvent(event);
-    };
-
     // ── Call Events ──────────────────────────────────────────────────────────
     const handleCallIncoming = (data: any) => {
       console.log('[Socket] call:incoming', data);
       const { callState, activeCallId } = useCallStore.getState();
       
-      // [SENIOR] Busy check: Only reject if we are actively in a non-idle, non-ended call
-      // If we are in 'ENDED' (UI hiding delay), we SHOULD allow a new call to take over.
       if (callState !== 'IDLE' && callState !== 'ENDED' && activeCallId && activeCallId !== data.callId) {
         console.warn('[Socket] Busy, auto-rejecting callId:', data.callId);
         socket.emit('call:reject', {
@@ -157,7 +148,7 @@ export const useSocketListeners = () => {
 
       useCallStore.getState().setIncomingCall(
         data.convId,
-        data.callId, // [SENIOR]
+        data.callId,
         data.callerProfile,
         data.callType || 'audio',
         data.fromEmail,
@@ -176,7 +167,6 @@ export const useSocketListeners = () => {
     const handleCallDismiss = (data: any) => {
       const { activeCallId, resetCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
-        // [SENIOR] Protect active call from accidental dismiss signals
         if (callState === 'CONNECTED' || callState === 'JOINING') {
           console.log('[Socket] call:dismiss ignored — call is already active/joining');
           return;
@@ -189,7 +179,6 @@ export const useSocketListeners = () => {
     const handleCallHandledElsewhere = (data: any) => {
       const { activeCallId, resetCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
-        // [SENIOR] Protect active call from syncing state when this device IS the handler
         if (callState === 'CONNECTED' || callState === 'JOINING') {
           console.log('[Socket] call:handled_elsewhere ignored — call is already active/joining');
           return;
@@ -217,11 +206,9 @@ export const useSocketListeners = () => {
       }
     };
 
-
     const handleCallTimeout = (data: any) => {
       const { activeCallId, rejectCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
-        // [SENIOR] Protect active call from accidental timeout signals
         if (callState === 'CONNECTED' || callState === 'JOINING') {
           console.log('[Socket] call:timeout ignored — call is already active/joining');
           return;
@@ -238,7 +225,6 @@ export const useSocketListeners = () => {
         setIncomingUpgradeRequest(true);
         setUpgradeRequesterEmail(data.fromProfile?.email ?? null);
 
-        // [SENIOR] 20s receiver-side timeout
         setTimeout(() => {
           const checkState = useCallStore.getState();
           if (checkState.incomingUpgradeRequest && checkState.activeCallId === data.callId) {
@@ -263,7 +249,6 @@ export const useSocketListeners = () => {
         setCallType('video');
         setCameraOn(true);
         setUpgradeRequestPending(false);
-        // Trigger actual camera start via AWS Chime hook
         await toggleCameraChime(true);
       }
     };
@@ -284,22 +269,20 @@ export const useSocketListeners = () => {
     };
 
     const handleMuteUpdate = (data: { convId: string, mutedUntil: MuteSetting }) => {
-      // Internal state update handled via store actions, 
-      // but we can sync across devices here if needed.
+      // Syncing mute state if needed
     };
 
-    // Socket listeners — Chat
     socket.on('receiveMessage', handleReceiveMessage);
-    socket.on('history_cleared', handleHistoryCleared);
     socket.on('conversation_marked_read', handleConversationRead);
+    socket.on('history_cleared', handleHistoryCleared);
     socket.on('presence_update', handlePresenceUpdate);
-    socket.on('message_reaction', handleMessageReaction);
-    socket.on('message_recalled', handleMessageRecalled);
-    socket.on('message_pinned', handleMessagePinned);
-    socket.on('PIN_UPDATE', handlePinUpdate);
-    socket.on('participant_read', handleParticipantRead);
     socket.on('typing_update', handleTypingUpdate);
     socket.on('group_update', handleGroupUpdate);
+    socket.on('message_pinned', handleMessagePinned);
+    socket.on('pin_update', handlePinUpdate);
+    socket.on('participant_read', handleParticipantRead);
+    socket.on('mute_update', handleMuteUpdate);
+
     // Socket listeners — Call
     socket.on('call:incoming', handleCallIncoming);
     socket.on('call:accept', handleCallAccept);
@@ -314,16 +297,16 @@ export const useSocketListeners = () => {
 
     return () => {
       socket.off('receiveMessage', handleReceiveMessage);
-      socket.off('history_cleared', handleHistoryCleared);
       socket.off('conversation_marked_read', handleConversationRead);
+      socket.off('history_cleared', handleHistoryCleared);
       socket.off('presence_update', handlePresenceUpdate);
-      socket.off('message_reaction', handleMessageReaction);
-      socket.off('message_recalled', handleMessageRecalled);
-      socket.off('message_pinned', handleMessagePinned);
-      socket.off('PIN_UPDATE', handlePinUpdate);
-      socket.off('participant_read', handleParticipantRead);
       socket.off('typing_update', handleTypingUpdate);
       socket.off('group_update', handleGroupUpdate);
+      socket.off('message_pinned', handleMessagePinned);
+      socket.off('pin_update', handlePinUpdate);
+      socket.off('participant_read', handleParticipantRead);
+      socket.off('mute_update', handleMuteUpdate);
+      
       socket.off('call:incoming', handleCallIncoming);
       socket.off('call:accept', handleCallAccept);
       socket.off('call:dismiss', handleCallDismiss);
@@ -335,5 +318,18 @@ export const useSocketListeners = () => {
       socket.off('call:upgrade_accepted', handleUpgradeAccepted);
       socket.off('call:upgrade_declined', handleUpgradeDeclined);
     };
-  }, [socket, user, activeConvId, addMessage, markAsRead, setLocalRead, setConversations, localClearHistory, setUserProfiles, updateMessage, setMessages, upsertConversationLastMessage]);
+  }, [
+    socket,
+    user,
+    activeConvId,
+    addMessage,
+    markAsRead,
+    setLocalRead,
+    localClearHistory,
+    setUserProfiles,
+    updateMessage,
+    setConversations,
+    setMessages,
+  ]);
 };
+

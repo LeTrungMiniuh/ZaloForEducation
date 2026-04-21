@@ -124,10 +124,12 @@ export const useChatStore = create((set, get) => ({
     return convId || null;
   },
 
-  setConversations: (update) =>
-    set((state) => ({
-      conversations: typeof update === "function" ? update(state.conversations) : (Array.isArray(update) ? update : []),
-    })),
+  setConversations: (updater) =>
+    set((state) => {
+      const next =
+        typeof updater === "function" ? updater(state.conversations) : updater;
+      return { conversations: Array.isArray(next) ? next : [] };
+    }),
 
   setActiveConversation: (convId) => {
     if (get().activeConvId === convId) return;
@@ -142,15 +144,21 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  setMessages: (messages, nextCursor) => {
-    const safeMessages = Array.isArray(messages)
-      ? messages.map(normalizeMessage).filter(Boolean)
-      : [];
-    set({ messages: safeMessages, nextCursor });
-    if (get().activeConvId) {
-      setCachedMessages(get().activeConvId, safeMessages);
-    }
-  },
+  setMessages: (updater, nextCursor) =>
+    set((state) => {
+      const source =
+        typeof updater === "function" ? updater(state.messages) : updater;
+      const safeMessages = Array.isArray(source)
+        ? source.map(normalizeMessage).filter(Boolean)
+        : [];
+      if (state.activeConvId) {
+        setCachedMessages(state.activeConvId, safeMessages);
+      }
+      return {
+        messages: safeMessages,
+        nextCursor: nextCursor === undefined ? state.nextCursor : nextCursor,
+      };
+    }),
 
   addMessage: (message) =>
     set((state) => {
@@ -160,7 +168,7 @@ export const useChatStore = create((set, get) => ({
       if (!incomingConvId) return state;
 
       const cached = getCachedMessages(incomingConvId);
-      if (!cached. some((m) => m.id === safeMessage.id)) {
+      if (!cached.some((m) => m.id === safeMessage.id)) {
         setCachedMessages(incomingConvId, [...cached, safeMessage]);
       }
 
@@ -169,7 +177,6 @@ export const useChatStore = create((set, get) => ({
       }
 
       if (state.messages.find((m) => m.id === safeMessage.id)) return state;
-
       // Optimistically remove any temporary message that matches this real one
       const filteredMessages = state.messages.filter(
         (m) =>

@@ -20,6 +20,7 @@ const normalizeMutedConversations = (raw: any): Record<string, MuteSetting> => {
       return;
     }
     if (value === false) return;
+    // Backward compatibility for legacy payloads.
     if (value === 'manual') {
       normalized[convId] = true;
     }
@@ -65,7 +66,7 @@ interface ChatState {
   fetchConversations: () => Promise<void>;
   fetchMessages: (convId: string, limit?: number) => Promise<void>;
   loadMoreMessages: (convId: string, limit?: number) => Promise<void>;
-  sendMessageOptimistic: (convId: string, senderEmail: string, content: string, msgType?: string, attachments?: Attachment[], replyTo?: any) => Promise<void>;
+  sendMessageOptimistic: (convId: string, senderEmail: string, content: string, msgType?: string, attachments?: Attachment[], replyTo?: any, extraFields?: Record<string, any>) => Promise<void>;
   createGroupConversation: (name: string, members: string[]) => Promise<any>;
   startDirectChat: (targetEmail: string) => Promise<void>;
   clearHistory: (convId: string) => Promise<void>;
@@ -189,30 +190,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setMessages: (messages, nextCursor) => set({ messages, nextCursor }),
 
   addMessage: (message) => set((state) => {
+    const incomingConvId = message.conversationId || (message as any).convId;
+    if (!incomingConvId) return state;
+
+    const isActiveConversation = incomingConvId === state.activeConvId;
+
     // 1. Tránh trùng lặp tin nhắn dựa trên ID
-    if (state.messages.find(m => m.id === message.id)) return state;
-    
+    if (isActiveConversation && state.messages.find(m => m.id === message.id)) return state;
+
     // 2. Kiểm tra nếu tin nhắn này "trùng khớp" với một tin nhắn đang ở trạng thái 'sending' (Optimistic)
     // Điều này xảy ra khi Socket báo về nhanh hơn API response
-    const optimisticIndex = state.messages.findIndex(m => 
+    const optimisticIndex = isActiveConversation
+      ? state.messages.findIndex(m =>
+      (m.conversationId || (m as any).convId) === incomingConvId &&
       m.senderId === message.senderId && 
       m.content === message.content && 
       m.status === 'sending' &&
       Math.abs(new Date(m.createdAt).getTime() - new Date(message.createdAt).getTime()) < 10000 // Trong vòng 10s
-    );
+    )
+      : -1;
 
     let newMessages;
     if (optimisticIndex !== -1) {
       // "Hợp nhất" tin nhắn thật vào vị trí tin nhắn tạm
       newMessages = [...state.messages];
       newMessages[optimisticIndex] = { ...message, status: 'sent' };
-    } else {
+    } else if (isActiveConversation) {
       newMessages = [...state.messages, message];
+    } else {
+      newMessages = state.messages;
     }
     
     // 3. Cập nhật Preview trong danh sách hội thoại và đẩy lên đầu
     const newConvs = [...state.conversations];
-    const incomingConvId = message.conversationId || (message as any).convId;
     const convIndex = newConvs.findIndex(c => c.id === incomingConvId);
     
     if (convIndex !== -1) {
@@ -493,7 +503,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       media: media.length > 0 ? media : undefined,
       files: files.length > 0 ? files : undefined,
       replyTo: replyTo || undefined,
-      ...extraFields
+      ...extraFields,
     };
 
     // 1. Add Optimistically
@@ -524,7 +534,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         newConvs.splice(convIndex, 1);
         newConvs.unshift(updatedConv);
       }
-      return { 
+      return {
         messages: state.activeConvId === convId ? [...state.messages, optimisticMsg] : state.messages,
         conversations: newConvs
       };
@@ -537,7 +547,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         media: media.length > 0 ? media : undefined,
         files: files.length > 0 ? files : undefined,
         replyTo: replyTo || undefined,
-        ...extraFields
+        ...extraFields,
       });
 
       // 2. Replace temp message with server ACK
@@ -690,6 +700,135 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } else {
       set({ previewImage: { url, name } });
     }
+  },
+
+  hideConversationWithPin: (convId, pin) => {
+    if (!convId || !pin) return;
+    set((state) => {
+      const nextHidden = {
+        ...state.hiddenConversations,
+        [convId]: pin,
+      };
+      localStorage.setItem('hidden_conversations', JSON.stringify(nextHidden));
+      return {
+        hiddenConversations: nextHidden,
+        activeConvId: state.activeConvId === convId ? null : state.activeConvId,
+        messages: state.activeConvId === convId ? [] : state.messages,
+        nextCursor: state.activeConvId === convId ? null : state.nextCursor,
+      };
+    });
+  },
+
+  unhideConversationWithPin: (convId, pin) => {
+    const currentPin = get().hiddenConversations[convId];
+    if (!currentPin || currentPin !== pin) return false;
+
+    set((state) => {
+      const nextHidden = { ...state.hiddenConversations };
+      delete nextHidden[convId];
+      localStorage.setItem('hidden_conversations', JSON.stringify(nextHidden));
+      return { hiddenConversations: nextHidden };
+    });
+    return true;
+  },
+
+  isConversationHidden: (convId) => !!get().hiddenConversations[convId],
+
+  setConversationMuted: (convId, muted) => {
+    if (!convId) return;
+    set((state) => {
+      const nextMuted: Record<string, MuteSetting> = {
+        ...state.mutedConversations,
+      };
+
+      if (muted) nextMuted[convId] = true;
+      else delete nextMuted[convId];
+
+      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
+      return { mutedConversations: nextMuted };
+    });
+  },
+
+  muteConversationFor: (convId, option) => {
+    if (!convId) return;
+
+    const now = new Date();
+    let nextSetting: MuteSetting = true;
+
+    if (option === '1h') {
+      nextSetting = Date.now() + 60 * 60 * 1000;
+    } else if (option === '4h') {
+      nextSetting = Date.now() + 4 * 60 * 60 * 1000;
+    } else if (option === 'until-8am') {
+      const until = new Date(now);
+      until.setHours(8, 0, 0, 0);
+      if (until.getTime() <= now.getTime()) {
+        until.setDate(until.getDate() + 1);
+      }
+      nextSetting = until.getTime();
+    } else if (option === 'until-open') {
+      nextSetting = 'until-open';
+    } else {
+      nextSetting = true;
+    }
+
+    set((state) => {
+      const nextMuted: Record<string, MuteSetting> = {
+        ...state.mutedConversations,
+        [convId]: nextSetting,
+      };
+      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
+      return { mutedConversations: nextMuted };
+    });
+  },
+
+  clearConversationMuted: (convId) => {
+    if (!convId) return;
+    set((state) => {
+      if (!(convId in state.mutedConversations)) return state;
+      const nextMuted: Record<string, MuteSetting> = { ...state.mutedConversations };
+      delete nextMuted[convId];
+      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
+      return { mutedConversations: nextMuted };
+    });
+  },
+
+  toggleConversationMuted: (convId) => {
+    if (!convId) return false;
+    let nextValue = false;
+    set((state) => {
+      const nextMuted: Record<string, MuteSetting> = {
+        ...state.mutedConversations,
+      };
+
+      if (nextMuted[convId]) {
+        delete nextMuted[convId];
+        nextValue = false;
+      } else {
+        nextMuted[convId] = true;
+        nextValue = true;
+      }
+
+      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
+      return { mutedConversations: nextMuted };
+    });
+    return nextValue;
+  },
+
+  isConversationMuted: (convId) => {
+    if (!convId) return false;
+    const setting = get().mutedConversations[convId];
+    if (!setting) return false;
+    if (setting === true || setting === 'until-open') return true;
+
+    if (typeof setting === 'number') {
+      if (Date.now() < setting) return true;
+      // Auto clear expired mute.
+      get().clearConversationMuted(convId);
+      return false;
+    }
+
+    return false;
   },
 
   // Search Implementation
