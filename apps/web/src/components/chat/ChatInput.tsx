@@ -1,16 +1,23 @@
-import React, { useState, useRef } from 'react';
-import { chatService } from '../../services/chatService';
-import type { Attachment } from '../../utils/chatUtils';
-import { 
-  Reply, 
-  X, 
-  FileText, 
-  Image, 
-  Paperclip, 
-  Smile, 
-  SendHorizontal,
-  Loader2
+import {
+    FileText,
+    Image,
+    Loader2,
+    Paperclip,
+    Reply,
+    SendHorizontal,
+    Smile,
+    Sticker,
+    X
 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import Swal from 'sweetalert2';
+import { useAuth } from '../../context/AuthContext';
+import { chatService } from '../../services/chatService';
+import { useChatStore } from '../../store/chatStore';
+import type { Attachment } from '../../utils/chatUtils';
+import { compressImage } from '../../utils/imageUtils';
+import GifPicker from './GifPicker';
+import StickerPicker from './StickerPicker';
 
 interface ChatInputProps {
   onSendMessage: (text: string, attachments: Attachment[]) => Promise<void>;
@@ -22,9 +29,29 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, replyTarget, onCle
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [sendImageAsHD, setSendImageAsHD] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const { socket } = useAuth();
+  const { activeConvId } = useChatStore();
+
+  const handleTyping = () => {
+    if (!socket || !activeConvId) return;
+
+    // Only emit once every 2 seconds
+    if (!typingTimeoutRef.current) {
+      socket.emit('typing', { convId: activeConvId, isTyping: true });
+      typingTimeoutRef.current = setTimeout(() => {
+        typingTimeoutRef.current = null;
+      }, 2000);
+    }
+  };
 
   const handleSend = async () => {
     if (!text.trim() && attachments.length === 0) return;
@@ -34,25 +61,97 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, replyTarget, onCle
     setText('');
     setAttachments([]);
     
+    if (socket && activeConvId) {
+      socket.emit('typing', { convId: activeConvId, isTyping: false });
+    }
+    
     await onSendMessage(currentText, currentAttachments);
   };
 
+  const handleGifSelect = async (url: string) => {
+    setShowGifPicker(false);
+    // Instant send for GIF
+    await onSendMessage('', [{
+      name: `meme-${Date.now()}.gif`,
+      mimeType: 'image/gif',
+      size: 1024,
+      dataUrl: url,
+      file: null as any
+    }]);
+  };
+
+  const handleStickerSelect = async (sticker: { url: string; name: string }) => {
+    setShowStickerPicker(false);
+    await onSendMessage('', [{
+      name: `sticker-${Date.now()}.png`,
+      mimeType: 'image/sticker',
+      size: 1024,
+      dataUrl: sticker.url,
+      file: null as any,
+      isSticker: true,
+    }]);
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, _type: 'image' | 'file') => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+    let validFiles = Array.from(e.target.files || []);
+    if (validFiles.length === 0) return;
+
+    if (attachments.length + validFiles.length > 50) {
+      Swal.fire('Quá giới hạn', 'Chỉ được tải lên tối đa 50 tệp/ảnh cùng một lúc.', 'warning');
+      validFiles = validFiles.slice(0, 50 - attachments.length);
+      if (validFiles.length === 0) return;
+    }
+
+    const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+    const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
+
+    const oversizedFiles = validFiles.filter(f => {
+      if (f.type.startsWith('image/')) {
+        return f.size > MAX_IMAGE_SIZE;
+      }
+      // Covers video and all other file types
+      return f.size > MAX_FILE_SIZE;
+    });
+
+    if (oversizedFiles.length > 0) {
+      Swal.fire(
+        'Tệp quá lớn', 
+        `Có ${oversizedFiles.length} tệp vượt quá kích thước cho phép (Ảnh được vác tối đa 10MB, Video & Tệp tối đa 100MB) nên tự động bị bỏ qua.`, 
+        'warning'
+      );
+      validFiles = validFiles.filter(f => {
+        if (f.type.startsWith('image/')) {
+          return f.size <= MAX_IMAGE_SIZE;
+        }
+        return f.size <= MAX_FILE_SIZE;
+      });
+      if (validFiles.length === 0) return;
+    }
 
     setIsUploading(true);
     try {
       const newAttachments: Attachment[] = [];
-      for (const file of files) {
-        const res = await chatService.upload(file);
+      for (const file of validFiles) {
+        let fileToUpload = file;
+        const isImage = _type === 'image' && file.type.startsWith('image/');
+
+        if (isImage && !sendImageAsHD && file.type !== 'image/gif') {
+          try {
+            fileToUpload = await compressImage(file, 1600, 0.82);
+          } catch (compressError) {
+            console.warn('Image compression failed, fallback to original file:', compressError);
+          }
+        }
+
+        const res = await chatService.upload(fileToUpload);
         const data = res.data;
         newAttachments.push({
-          name: data.name || file.name,
-          mimeType: data.mimeType || file.type,
-          size: data.size || file.size,
-          dataUrl: data.fileUrl || data.url || URL.createObjectURL(file),
-          file: file
+          name: data.name || fileToUpload.name,
+          mimeType: data.mimeType || fileToUpload.type,
+          size: data.size || fileToUpload.size,
+          dataUrl: data.fileUrl || data.url || URL.createObjectURL(fileToUpload),
+          file: fileToUpload,
+          isHD: isImage && sendImageAsHD,
         });
       }
       setAttachments(prev => [...prev, ...newAttachments]);
@@ -62,11 +161,16 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, replyTarget, onCle
     } finally {
       setIsUploading(false);
       if (e.target) e.target.value = '';
+      
+      // Auto focus textarea so Enter key acts on send immediately after picking files
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 100);
     }
   };
 
   return (
-    <div className="p-4 bg-white/80 backdrop-blur-xl border-t border-outline-variant/10 space-y-3 shadow-[0_-4px_24px_rgba(0,0,0,0.03)] z-10 transition-all duration-300">
+    <div className="p-4 bg-white/80 dark:bg-surface-container/90 backdrop-blur-xl border-t border-outline-variant/10 dark:border-outline-variant/30 space-y-3 shadow-[0_-4px_24px_rgba(0,0,0,0.03)] dark:shadow-[0_-4px_24px_rgba(0,0,0,0.25)] z-10 transition-all duration-300">
       {/* Reply Preview */}
       {replyTarget && (
         <div className="flex items-center justify-between p-3 bg-primary/5 rounded-2xl border-l-[4px] border-primary animate-in slide-in-from-bottom-3 fade-in duration-300 shadow-sm overflow-hidden relative group">
@@ -89,7 +193,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, replyTarget, onCle
 
       {/* Attachment Previews */}
       {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-3 py-2 animate-in fade-in slide-in-from-left-2 duration-300">
+        <div className="flex flex-wrap gap-3 py-2 animate-in fade-in slide-in-from-left-2 duration-300 max-h-[220px] overflow-y-auto custom-scrollbar">
           {attachments.map((a, i) => (
             <div key={i} className="relative group/att shadow-sm hover:shadow-md transition-all duration-300">
               <div className="w-20 h-20 rounded-2xl bg-surface-container-low border border-outline-variant/10 flex items-center justify-center overflow-hidden relative">
@@ -99,6 +203,12 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, replyTarget, onCle
                   <div className="flex flex-col items-center gap-1">
                     <FileText size={28} className="text-primary" />
                     <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-tighter truncate w-14 px-1">{a.name.split('.').pop()}</span>
+                  </div>
+                )}
+                {(a.isSticker || a.isHD) && (
+                  <div className="absolute left-1 bottom-1 flex gap-1">
+                    {a.isSticker && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-600 text-white">STK</span>}
+                    {a.isHD && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary text-white">HD</span>}
                   </div>
                 )}
                 <div className="absolute inset-0 bg-black/0 group-hover/att:bg-black/5 transition-all" />
@@ -115,14 +225,22 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, replyTarget, onCle
       )}
 
       {/* Main Input Bar */}
-      <div className="flex items-center gap-3 bg-surface-container-low/50 p-2 rounded-[28px] border border-primary/20 transition-all duration-300 hover:shadow-lg focus-within:shadow-xl focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/10 group">
-        <div className="flex items-center gap-1 px-1">
+      <div className="flex items-end gap-3 bg-surface-container-low/50 p-2 rounded-[28px] border border-primary/20 transition-all duration-300 hover:shadow-lg focus-within:shadow-xl focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/10 group">
+        <div className="flex items-center gap-1 px-1 pb-1">
           <button 
             onClick={() => imageInputRef.current?.click()}
             className="w-10 h-10 flex items-center justify-center hover:bg-primary/10 rounded-full text-on-surface-variant hover:text-primary transition-all duration-300 active:scale-90 group/btn"
             title="Gửi hình ảnh"
           >
             <Image size={22} className="group-hover/btn:scale-110 transition-transform" />
+          </button>
+          <button
+            onClick={() => setSendImageAsHD(prev => !prev)}
+            className={`h-8 px-2 rounded-full text-[11px] font-bold transition-all border ${sendImageAsHD ? 'bg-primary text-white border-primary' : 'bg-transparent text-on-surface-variant border-outline-variant/40 hover:border-primary/60 hover:text-primary'}`}
+            title="Bật để gửi ảnh HD (không nén)"
+            type="button"
+          >
+            HD
           </button>
           <button 
             onClick={() => fileInputRef.current?.click()}
@@ -133,12 +251,14 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, replyTarget, onCle
           </button>
         </div>
 
-        <div className="flex-1 flex items-center min-w-0">
+        <div className="flex-1 flex items-end min-w-0 pb-1">
           <textarea
+            ref={textareaRef}
             rows={1}
             value={text}
             onChange={(e) => {
               setText(e.target.value);
+              handleTyping();
               e.target.style.height = 'auto';
               e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
             }}
@@ -149,11 +269,44 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, replyTarget, onCle
               }
             }}
             placeholder="Nhập tin nhắn..."
-            className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-[14px] font-medium py-2.5 px-1 resize-none max-h-32 hide-scrollbar text-on-surface placeholder:text-on-surface-variant/60 leading-relaxed transition-all"
+            className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-[14px] font-medium py-1 px-1 resize-none max-h-32 hide-scrollbar text-on-surface placeholder:text-on-surface-variant/60 leading-relaxed transition-all"
           />
-          <button className="w-10 h-10 flex items-center justify-center hover:bg-yellow-500/10 rounded-full text-yellow-500/80 hover:text-yellow-500 transition-all duration-300 active:scale-90 overflow-hidden">
-            <Smile size={22} className="animate-in zoom-in-50" />
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => {
+                setShowStickerPicker(!showStickerPicker);
+                setShowGifPicker(false);
+              }}
+              className={`w-10 h-10 shrink-0 flex items-center justify-center rounded-full transition-all duration-300 active:scale-90 overflow-hidden ${showStickerPicker ? 'bg-emerald-500/20 text-emerald-600' : 'hover:bg-emerald-500/10 text-emerald-600/80 hover:text-emerald-600'}`}
+              type="button"
+              title="Gửi sticker"
+            >
+              <Sticker size={21} className="animate-in zoom-in-50" />
+            </button>
+            {showStickerPicker && (
+              <div className="absolute bottom-[120%] right-0 z-50">
+                <StickerPicker onSelect={handleStickerSelect} />
+              </div>
+            )}
+          </div>
+
+          <div className="relative">
+            <button 
+              onClick={() => {
+                setShowGifPicker(!showGifPicker);
+                setShowStickerPicker(false);
+              }}
+              className={`w-10 h-10 shrink-0 flex items-center justify-center rounded-full transition-all duration-300 active:scale-90 overflow-hidden ${showGifPicker ? 'bg-yellow-500/20 text-yellow-500' : 'hover:bg-yellow-500/10 text-yellow-500/80 hover:text-yellow-500'}`}
+              type="button"
+            >
+              <Smile size={22} className="animate-in zoom-in-50" />
+            </button>
+            {showGifPicker && (
+              <div className="absolute bottom-[120%] right-0 z-50">
+                <GifPicker onSelect={handleGifSelect} />
+              </div>
+            )}
+          </div>
         </div>
 
         <button 

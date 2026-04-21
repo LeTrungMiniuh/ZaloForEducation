@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/logo_white.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/logo_white.png",
       "resizeMode": "contain",
@@ -17,7 +17,8 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Ứng dụng cần quyền camera để thực hiện cuộc gọi video.",
         "NSMicrophoneUsageDescription": "Ứng dụng cần quyền microphone để thực hiện cuộc gọi âm thanh và video."
-      }
+      },
+      "bitcode": false
     },
     "android": {
       "adaptiveIcon": {
@@ -28,14 +29,25 @@
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
-        "MODIFY_AUDIO_SETTINGS"
-      ]
+        "MODIFY_AUDIO_SETTINGS",
+        "ACCESS_NETWORK_STATE",
+        "INTERNET",
+        "WAKE_LOCK",
+        "BLUETOOTH",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "SYSTEM_ALERT_WINDOW"
+      ],
+      "package": "com.lechung.zaloedu",
+      "newArchEnabled": false
     },
     "web": {
       "favicon": "./assets/logo_white.png"
     },
     "plugins": [
       "expo-camera",
+      "expo-image-picker",
+      "expo-document-picker",
       "expo-local-authentication"
     ]
   }

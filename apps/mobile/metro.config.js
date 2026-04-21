@@ -1,27 +1,29 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
-// Đường dẫn tới root của monorepo
-const monorepoRoot = path.resolve(__dirname, '../..');
-
-// Đường dẫn tới workspace này
+// 1. Xác định các đường dẫn root
 const projectRoot = __dirname;
+const monorepoRoot = path.resolve(projectRoot, '../..');
 
+// 2. Khởi tạo config mặc định từ Expo
 const config = getDefaultConfig(projectRoot);
 
-// Thêm root monorepo vào watchFolders
-// để Metro thấy được node_modules ở cấp trên
+// 3. Monorepo: Theo dõi toàn bộ thư mục root để thấy node_modules chung
 config.watchFolders = [monorepoRoot];
 
-// Resolver tìm modules theo thứ tự:
-// 1. node_modules của app (apps/mobile/node_modules)
-// 2. node_modules của monorepo root
+// 4. Resolver: Ưu tiên tìm modules trong app rồi mới lên root
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(monorepoRoot, 'node_modules'),
 ];
 
-// Đảm bảo Metro resolve đúng react-native từ root
+// 5. [SENIOR FIX] BlockList - Né các thư mục rác gây lỗi ENOENT trên Windows
+config.resolver.blockList = [
+  /.*\.gradle.*/,
+  /.*node_modules\/.*\/build\/.*/,
+];
+
+// 6. Đảm bảo hỗ trợ New Architecture nếu cần
 config.resolver.disableHierarchicalLookup = false;
 
 module.exports = config;

@@ -9,14 +9,14 @@ import {
   StyleSheet,
   Image
 } from 'react-native';
-import { useOtpCountdown } from '../hooks/useOtpCountdown';
+import { useOtpCountdown } from '../../hooks/useOtpCountdown';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Alert from '../utils/Alert';
+import Alert from '../../utils/Alert';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import Input from '../components/Input';
-import Button from '../components/Button';
-import { Colors, Typography, Shadows } from '../constants/Theme';
+import Input from '../../components/Input';
+import Button from '../../components/Button';
+import { Colors, Typography, Shadows } from '../../constants/Theme';
 
 export default function RegisterScreen({ onNavigate }) {
   const [step, setStep] = useState(1);
@@ -213,7 +213,7 @@ export default function RegisterScreen({ onNavigate }) {
           <View style={styles.headerContainer}>
             <View style={styles.logoBox}>
               <Image 
-                source={require('../../assets/logo_blue.png')} 
+                source={require('../../../assets/logo_blue.png')} 
                 style={styles.logoImage}
                 resizeMode="cover"
               />

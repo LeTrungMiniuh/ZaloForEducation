@@ -264,7 +264,7 @@ const CTASection: React.FC = () => {
 
 const LandingPage: React.FC = () => {
   return (
-    <div className="min-h-screen bg-white text-primary font-body selection:bg-primary selection:text-white">
+    <div className="min-h-screen bg-white dark:bg-surface text-primary dark:text-on-surface font-body selection:bg-primary selection:text-white">
       <Navbar />
       
       <main>

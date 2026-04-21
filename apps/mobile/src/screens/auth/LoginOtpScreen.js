@@ -5,15 +5,15 @@ import {
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Alert from '../utils/Alert';
+import Alert from '../../utils/Alert';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import Input from '../components/Input';
-import Button from '../components/Button';
-import { Colors, Typography, Shadows } from '../constants/Theme';
-import { apiRequest } from '../utils/api';
-import { useAuth } from '../context/AuthContext';
-import { useOtpCountdown } from '../hooks/useOtpCountdown';
+import Input from '../../components/Input';
+import Button from '../../components/Button';
+import { Colors, Typography, Shadows } from '../../constants/Theme';
+import { apiRequest } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
+import { useOtpCountdown } from '../../hooks/useOtpCountdown';
 
 export default function LoginOtpScreen({ onNavigate, goBack, params }) {
   const { login } = useAuth();

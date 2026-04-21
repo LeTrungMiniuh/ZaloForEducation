@@ -10,32 +10,32 @@ const IncomingCallModal: React.FC = () => {
     peerProfile,
     conversationId,
     callType,
+    activeCallId, // [SENIOR]
     toEmail,
     resetCall,
     acceptCall,
     setMeetingData,
   } = useCallStore();
 
-  const { socket } = useAuth();
-  const [timeLeft, setTimeLeft] = useState(30);
+  const { socket, user } = useAuth();
+  const [timeLeft, setTimeLeft] = useState(60);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
 
   // Reset countdown khi modal mở lại
   useEffect(() => {
-    if (callState === 'RINGING') {
-      setTimeLeft(30);
+    if (callState === 'RINGING' && activeCallId) {
+      setTimeLeft(60);
     }
-  }, [callState]);
+  }, [callState, activeCallId]);
 
-  // Countdown timer — tự động từ chối sau 30s
+  // Countdown timer — tự động từ chối sau 60s
   useEffect(() => {
-    if (callState === 'RINGING') {
+    if (callState === 'RINGING' && activeCallId) {
       const timer = setInterval(() => {
         setTimeLeft((prev) => {
           if (prev <= 1) {
             clearInterval(timer);
-            resetCall();
             return 0;
           }
           return prev - 1;
@@ -43,7 +43,7 @@ const IncomingCallModal: React.FC = () => {
       }, 1000);
       return () => clearInterval(timer);
     }
-  }, [callState, resetCall]);
+  }, [callState, activeCallId, resetCall]);
 
   // Camera preview cho video call
   useEffect(() => {
@@ -75,7 +75,9 @@ const IncomingCallModal: React.FC = () => {
   }, [callState, callType]);
 
   const handleAccept = async () => {
-    // Dừng camera preview để giải phóng hardware trước khi Chime chiếm
+    if (!activeCallId) return;
+
+    // Dừng camera preview để giải phóng hardware trước khi Chime/WebRTC chiếm
     if (previewStream) {
       previewStream.getTracks().forEach(t => t.stop());
       setPreviewStream(null);
@@ -89,17 +91,20 @@ const IncomingCallModal: React.FC = () => {
     await new Promise(resolve => setTimeout(resolve, 500));
 
     try {
-      const res = await api.post('/call/join', { conversationId });
+      const res = await api.post('/call/join', { conversationId, callId: activeCallId });
       const data = res.data;
-
       setMeetingData(data.meeting, data.attendee, data.callType);
+ 
       acceptCall();
 
-      // Thông báo cho caller biết callee đã join → hiển thị "Đang trò chuyện"
-      if (toEmail && socket) {
-        socket.emit('call:peer_joined', {
+      // Thông báo cho caller biết callee đã accept (kích hoạt peerJoin / WebRTC offer)
+      if (toEmail && socket && user) {
+        socket.emit('call:accept', {
           convId: conversationId,
+          callId: activeCallId,
+          fromEmail: user.email,
           toEmail,
+          meetingInfo: data // [FIX] Đã cập nhật gửi thông tin meeting đầy chủ cho đối phương
         });
       }
     } catch (error) {
@@ -110,8 +115,13 @@ const IncomingCallModal: React.FC = () => {
 
   const handleDecline = () => {
     // Notify caller
-    if (toEmail && socket && conversationId) {
-      socket.emit('call:hangup', { convId: conversationId, toEmail });
+    if (toEmail && socket && conversationId && activeCallId && user) {
+      socket.emit('call:reject', { 
+        convId: conversationId, 
+        callId: activeCallId,
+        fromEmail: user.email,
+        toEmail 
+      });
     }
     resetCall();
   };

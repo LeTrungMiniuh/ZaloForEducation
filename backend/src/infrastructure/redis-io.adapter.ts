@@ -21,6 +21,7 @@ export class RedisIoAdapter extends IoAdapter {
     const pubClient = new Redis(redisUrl, {
       maxRetriesPerRequest: null,
       enableReadyCheck: true,
+      family: 4, // [SENIOR] Force IPv4 to fix DNS ENOTFOUND on some Node environments
     });
     const subClient = pubClient.duplicate();
 

@@ -5,14 +5,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import Alert from '../utils/Alert';
-import { Colors, Typography, Shadows } from '../constants/Theme';
-import Storage from '../utils/storage';
+import Alert from '../../utils/Alert';
+import { Colors, Typography, Shadows } from '../../constants/Theme';
+import Storage from '../../utils/storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 
-import SocketService from '../utils/socket';
-import { apiRequest } from '../utils/api';
+import SocketService from '../../utils/socket';
+import { apiRequest } from '../../utils/api';
 
 export default function SessionsScreen({ onNavigate, goBack }) {
   const [activeSessions, setActiveSessions] = useState([]);

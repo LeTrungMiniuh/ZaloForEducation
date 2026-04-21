@@ -10,7 +10,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { Typography } from '../constants/Theme';
+import { Typography } from '../../constants/Theme';
 
 const EXPIRE_IN_MS = 24 * 60 * 60 * 1000;
 

@@ -8,6 +8,7 @@ import { AuthModule } from '../auth/auth.module';
 @Module({
   imports: [
     forwardRef(() => AuthModule), // Dùng JwtAuthGuard trong CallController
+    forwardRef(() => ChatModule), // Để dùng MessageService
   ],
   providers: [
     {

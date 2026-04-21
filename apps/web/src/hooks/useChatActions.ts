@@ -25,9 +25,8 @@ export const useChatActions = () => {
         navigate('/chat');
       } else {
         // 2. Create new direct conversation if not exists
-        const res = await api.post('/chat/conversations', { 
-          partnerEmail,
-          type: 'direct'
+        const res = await api.post('/chat/conversations/direct', { 
+          targetEmail: partnerEmail
         });
         const newConv = res.data;
         

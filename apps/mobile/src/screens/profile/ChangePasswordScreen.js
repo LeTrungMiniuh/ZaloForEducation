@@ -13,11 +13,11 @@ import {
     Platform
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Colors, Shadows, Typography } from '../constants/Theme';
-import { apiRequest } from '../utils/api';
-import Alert from '../utils/Alert';
-import { useAuth } from '../context/AuthContext';
-import { useOtpCountdown } from '../hooks/useOtpCountdown';
+import { Colors, Shadows, Typography } from '../../constants/Theme';
+import { apiRequest } from '../../utils/api';
+import Alert from '../../utils/Alert';
+import { useAuth } from '../../context/AuthContext';
+import { useOtpCountdown } from '../../hooks/useOtpCountdown';
 
 export default function ChangePasswordScreen({ onNavigate, goBack }) {
     const { logout, user } = useAuth();

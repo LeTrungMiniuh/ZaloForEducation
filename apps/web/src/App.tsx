@@ -1,15 +1,11 @@
-import React, { useState, useEffect } from "react";
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  Navigate,
-} from "react-router-dom";
-import { GoogleOAuthProvider } from "@react-oauth/google";
-import { AuthProvider, useAuth } from "./context/AuthContext";
-import IncomingCallModal from "./components/call/IncomingCallModal";
-import CallOverlay from "./components/call/CallOverlay";
-import ChimeSessionManager from "./components/call/ChimeSessionManager";
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { GoogleOAuthProvider } from '@react-oauth/google';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
+import IncomingCallModal from './components/call/IncomingCallModal';
+import CallOverlay from './components/call/CallOverlay';
+import ChimeSessionManager from './components/call/ChimeSessionManager';
 
 import SplashScreen from "./components/SplashScreen";
 import LoginPage from "./pages/LoginPage";
@@ -130,9 +126,11 @@ function App() {
   return (
     <Router>
       <GoogleOAuthProvider clientId="1094444929007-avg6u84ak9i7n9ggnc543e1prb4otv9g.apps.googleusercontent.com">
-        <AuthProvider>
-          <AppContent />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <AppContent />
+          </AuthProvider>
+        </ThemeProvider>
       </GoogleOAuthProvider>
     </Router>
   );

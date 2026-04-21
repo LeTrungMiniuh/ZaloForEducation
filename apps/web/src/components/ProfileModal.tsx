@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { userService } from '../services/userService';
 import Swal from 'sweetalert2';
 import { 
@@ -21,6 +22,7 @@ interface ProfileModalProps {
 
 const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const { user, refreshUser } = useAuth();
+  const { isDark } = useTheme();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -131,7 +133,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white w-full max-w-[420px] rounded-[32px] overflow-hidden shadow-2xl animate-slide-up flex flex-col h-fit max-h-[90vh]">
+      <div className="bg-white dark:bg-surface-container w-full max-w-[420px] rounded-[32px] overflow-hidden shadow-2xl animate-slide-up flex flex-col h-fit max-h-[90vh]">
         
         {/* Header - Transparent overlay on background */}
         <div className="relative h-48 shrink-0">
@@ -220,7 +222,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
 
           <div className="space-y-6">
             <div className="flex items-center justify-between border-b border-outline-variant/10 pb-4">
-              <h3 className="font-extrabold text-[#00418f] text-[15px] tracking-tight">Thông tin cá nhân</h3>
+              <h3 className="font-extrabold text-primary dark:text-on-surface text-[15px] tracking-tight">Thông tin cá nhân</h3>
               {!isEditing ? (
                 <button 
                   onClick={() => setIsEditing(true)}
@@ -238,7 +240,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
                   </button>
                   <button 
                     onClick={handleUpdate}
-                    className="bg-primary text-white hover:bg-primary-container px-4 py-1.5 rounded-full text-xs font-bold shadow-md shadow-primary/20 transition-all"
+                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${isDark ? 'bg-[#4b5d7a] text-[#eef3fb] border border-[#6c7fa1] hover:bg-[#55698a]' : 'bg-primary text-white hover:bg-primary-container shadow-md shadow-primary/20'}`}
                   >
                     Lưu
                   </button>

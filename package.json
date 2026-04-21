@@ -24,6 +24,8 @@
   },
   "overrides": {
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "expo-modules-core": "3.0.29",
+    "expo-image-loader": "55.0.0"
   }
 }
