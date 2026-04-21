@@ -3,13 +3,14 @@ import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import { getDisplayName, getDisplayAvatar, isUnread } from '../../utils/chatUtils';
 import CreateGroupModal from './CreateGroupModal';
+import { BOT_EMAIL } from '@zalo-edu/shared';
 
-import { 
-  UserPlus, 
-  Users, 
-  MessageSquarePlus, 
-  Settings, 
-  Menu 
+import {
+  UserPlus,
+  Users,
+  MessageSquarePlus,
+  Settings,
+  Menu
 } from 'lucide-react';
 
 const InboxList: React.FC = () => {
@@ -58,9 +59,10 @@ const InboxList: React.FC = () => {
     setIsSearching(true);
   };
 
-  const filteredConversations = conversations.filter(conv => 
-    chatFilter === 'all' || isUnread(conv, user?.email)
-  );
+  const filteredConversations = conversations.filter(conv => {
+    if (Array.isArray(conv.members) && conv.members.includes(BOT_EMAIL)) return false;
+    return chatFilter === 'all' || isUnread(conv, user?.email);
+  });
 
   return (
     <div className="w-[340px] h-full border-r border-outline-variant/30 flex flex-col bg-white dark:bg-surface-container shrink-0">

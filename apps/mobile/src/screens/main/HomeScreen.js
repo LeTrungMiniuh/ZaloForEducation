@@ -37,6 +37,22 @@ import ChatInput from '../../components/chat/ChatInput';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from 'react-native';
 const REACTION_OPTIONS = ["❤️", "👍", "😂", "😮", "😢", "😡"];
+} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as ImagePicker from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Colors, Typography } from '../constants/Theme';
+import Alert from '../utils/Alert';
+import { useAuth } from '../context/AuthContext';
+import { apiRequest } from '../utils/api';
+import { BOT_EMAIL } from '../constants/bot';
+import SocketService from '../utils/socket';
+import { useChatStore } from '../store/chatStore';
+import BotChatScreen from './BotChatScreen';
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+const REACTION_OPTIONS = ['❤️', '👍', '😂', '😮', '😢', '😡'];
 const MAX_ATTACHMENTS_PER_MESSAGE = 8;
 const TAB_ALIAS = {
   messages: "chat",
@@ -863,14 +879,20 @@ export default function HomeScreen({
           }),
         );
 
-        const imageAttachments = uploadedAttachments.filter(
-          (f) =>
-            f.fileType?.startsWith("image/") ||
-            f.mimeType?.startsWith("image/"),
-        );
-        const fileAttachments = uploadedAttachments.filter(
-          (f) => !imageAttachments.includes(f),
-        );
+        const imageAttachments = uploadedAttachments.filter((f) => f.fileType?.startsWith('image/') || f.mimeType?.startsWith('image/'));
+        const fileAttachments = uploadedAttachments.filter((f) => !imageAttachments.includes(f));
+
+        const res = await chatPost(`/conversations/${selectedChat.id}/messages`, {
+          content: trimmedInput || (imageAttachments.length > 0 ? '[Hình ảnh]' : '[Tệp đính kèm]'),
+          media: imageAttachments,
+          files: fileAttachments,
+          replyTo: replyTarget || undefined,
+      if (createdMessage?.id) {
+        // User message appears immediately
+        setMessages((prev) => {
+          const existed = prev.some((item) => item.id === createdMessage.id);
+          return existed ? prev : [...prev, createdMessage];
+        });
 
         const res = await chatPost(
           `/conversations/${selectedChat.id}/messages`,
@@ -1342,6 +1364,8 @@ export default function HomeScreen({
       <ScrollView key="conversations-list-scroll" style={styles.scrollContainer}>
         <View style={styles.chatList}>
           {safeConversations.map((chat) => {
+          <Text style={[styles.sectionTitle, { marginLeft: 20, marginBottom: 10 }]}>Tin nhắn nội bộ</Text>
+          {conversations.filter((chat) => !(Array.isArray(chat.members) && chat.members.includes(BOT_EMAIL))).map((chat) => {
             const partnerEmail =
               chat.type === "direct"
                 ? chat.partner ||
@@ -1580,6 +1604,7 @@ export default function HomeScreen({
       <Text style={styles.aiSubtitle}>Đang được nâng cấp. Sắp ra mắt!</Text>
     </View>
   );
+  const AIView = BotChatScreen;
 
   const renderProfileView = () => (
     <ScrollView style={styles.scrollContainer}>
