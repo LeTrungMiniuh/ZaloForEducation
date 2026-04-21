@@ -1,10 +1,8 @@
-import React, { useRef, useState } from 'react';
-import { View, TextInput, TouchableOpacity, Text, StyleSheet, Keyboard, ScrollView, Image, ActivityIndicator, Platform } from 'react-native';
-import { Colors } from '../../constants/Theme';
+import { View, TextInput, TouchableOpacity, Text, Keyboard, ScrollView, Image, ActivityIndicator, Platform, StyleSheet } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import Alert from '../../utils/Alert';
-import { apiRequest } from '../../utils/api';
+import GifPicker from './GifPicker';
 
 const getFileIcon = (mimeType, fileName) => {
   const mime = String(mimeType || "").toLowerCase();
@@ -20,20 +18,22 @@ const getFileIcon = (mimeType, fileName) => {
 };
 
 const FLUENT_EMOJI_MAP = {
-    '❤️': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Red%20Heart/3D/red_heart_3d.png',
-    '👍': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Thumbs%20Up/3D/thumbs_up_3d.png',
-    '😄': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Grinning%20Face%20with%20Big%20Eyes/3D/grinning_face_with_big_eyes_3d.png',
-    '😮': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Face%20with%20Open%20Mouth/3D/face_with_open_mouth_3d.png',
-    '😭': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Loudly%20Crying%20Face/3D/loudly_crying_face_3d.png',
-    '😡': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Enraged%20Face/3D/enraged_face_3d.png',
+    '❤️': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Red%20Heart/3D/red_heart_3d.png',
+    '👍': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Thumbs%20Up/3D/thumbs_up_3d.png',
+    '😄': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Grinning%20Face%20with%20Big%20Eyes/3D/grinning_face_with_big_eyes_3d.png',
+    '😮': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Face%20with%20Open%20Mouth/3D/face_with_open_mouth_3d.png',
+    '😭': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Loudly%20Crying%20Face/3D/loudly_crying_face_3d.png',
+    '😡': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Enraged%20Face/3D/enraged_face_3d.png',
+    '😂': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Face%20with%20Tears%20of%20Joy/3D/face_with_tears_of_joy_3d.png',
 };
 
-export default function ChatInput({ onSendMessage, replyTarget, onClearReply, onTyping }) {
+export default function ChatInput({ onSendMessage, replyTarget, onClearReply, onTyping, onShareLocation, onShareContact }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
   const [sendImageAsHD, setSendImageAsHD] = useState(false);
   const [showStickers, setShowStickers] = useState(false);
+  const [pickerTab, setPickerTab] = useState('stickers'); 
   const inputRef = useRef(null);
 
   React.useEffect(() => {
@@ -43,7 +43,6 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
     return () => clearTimeout(timer);
   }, []);
 
-  // TODO: typing timeout logic inside here
   const handleTextChange = (t) => {
     setText(t);
     if (onTyping) onTyping();
@@ -53,10 +52,8 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
     if (!text.trim() && attachments.length === 0) return;
     const currentText = text;
     const currentAttachments = [...attachments];
-    
     setText('');
     setAttachments([]);
-    
     await onSendMessage(currentText, currentAttachments);
   };
 
@@ -122,129 +119,149 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
   const handleSelectSticker = (emoji) => {
       const url = FLUENT_EMOJI_MAP[emoji];
       if (!url) return;
-      
       const stickerFile = {
           name: `sticker-${Date.now()}.png`,
           mimeType: 'image/sticker',
           size: 1024,
+          dataUrl: url,
           uri: url,
           isSticker: true
       };
       
-      processFiles([stickerFile]);
+      onSendMessage("", [stickerFile]);
       setShowStickers(false);
   };
+
+  const handleSelectGif = (url) => {
+    if (!url) return;
+    const gifFile = { name: `gif-${Date.now()}.gif`, mimeType: 'image/gif', size: 1024, dataUrl: url, uri: url };
+    onSendMessage("", [gifFile]);
+    setShowStickers(false);
+  }
 
   const removeAttachment = (index) => {
     setAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
   return (
-    <View style={styles.container}>
-      {/* Reply Preview */}
+    <View style={styles.composerContainer}>
       {replyTarget && (
-        <View style={styles.replyPreview}>
-          <View style={styles.replyPreviewIconWrapper}>
-            <Text style={styles.replyPreviewIcon}>reply</Text>
+        <View className="flex-row items-center bg-blue-50/50 p-2 rounded-xl border-l-[4px] border-blue-600 mb-2 mx-1">
+          <View className="mr-2">
+            <Text className="font-material text-[20px] text-blue-600">reply</Text>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.replyPreviewTitle}>Đang trả lời {replyTarget.senderId}</Text>
-            <Text style={styles.replyPreviewText} numberOfLines={1}>{replyTarget.content || "Đính kèm"}</Text>
+          <View className="flex-1">
+            <Text className="text-[10px] font-black text-blue-600 uppercase">Đang trả lời {replyTarget.senderId}</Text>
+            <Text className="text-[13px] text-slate-800 italic" numberOfLines={1}>{replyTarget.content || "Đính kèm"}</Text>
           </View>
-          <TouchableOpacity style={styles.replyPreviewCloseBtn} onPress={onClearReply}>
-            <Text style={styles.replyPreviewCloseIcon}>close</Text>
+          <TouchableOpacity className="p-1" onPress={onClearReply}>
+            <Text className="font-material text-[18px] text-slate-400">close</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Attachments Preview */}
       {attachments.length > 0 && (
-        <View style={styles.attachmentStripWrapper}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.attachmentStrip}>
-            {attachments.map((a, i) => {
-              const isImage = a.mimeType.startsWith('image/');
-              return (
-                <View key={i} style={styles.attachmentItem}>
-                  {isImage ? (
-                    <Image source={{ uri: a.dataUrl }} style={styles.attachmentThumb} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.attachmentFileBox}>
-                      <Text style={styles.attachmentFileIcon}>{getFileIcon(a.mimeType, a.name)}</Text>
-                      <Text style={styles.attachmentFileExt}>{a.name.split('.').pop()}</Text>
-                    </View>
-                  )}
-                  {(a.isHD || a.isSticker) && (
-                    <View style={styles.aBadgeBg}>
-                      <Text style={styles.aBadgeText}>{a.isSticker ? "STK" : "HD"}</Text>
-                    </View>
-                  )}
-                  <TouchableOpacity style={styles.attachmentRemoveBtn} onPress={() => removeAttachment(i)}>
-                    <Text style={styles.attachmentRemoveIcon}>close</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
-          </ScrollView>
-        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="max-h-[40px] mb-2">
+          {attachments.map((a, i) => (
+            <View key={i} className="flex-row items-center bg-slate-100 rounded-full px-2.5 py-1 mr-2 border border-slate-200">
+              <Text className="font-material text-[16px] text-slate-500 mr-1">{getFileIcon(a.mimeType, a.name)}</Text>
+              <Text className="text-[12px] max-w-[100px] text-slate-800 mr-1" numberOfLines={1}>{a.name}</Text>
+              <TouchableOpacity onPress={() => removeAttachment(i)}>
+                <Text className="font-material text-[16px] text-slate-400">close</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
       )}
 
-      {/* Sticker Picker */}
       {showStickers && (
-          <View style={styles.stickerPicker}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stickerScroll}>
-                  {Object.keys(FLUENT_EMOJI_MAP).map(emoji => (
-                      <TouchableOpacity key={emoji} style={styles.stickerOption} onPress={() => handleSelectSticker(emoji)}>
-                          <Image source={{ uri: FLUENT_EMOJI_MAP[emoji].replace(/ /g, '%20') }} style={styles.stickerImg} />
-                      </TouchableOpacity>
-                  ))}
-              </ScrollView>
+          <View className="h-[180px] bg-white border-t border-slate-100 py-2">
+              <View className="flex-row px-4 pb-2 border-b border-slate-50 mb-2 gap-4">
+                <TouchableOpacity 
+                  className={`flex-row items-center py-1.5 px-3 rounded-xl gap-1.5 ${pickerTab === 'stickers' ? "bg-blue-600/10" : ""}`}
+                  onPress={() => setPickerTab('stickers')}
+                >
+                   <Text className={`font-material text-[20px] ${pickerTab === 'stickers' ? "text-[#0058bc]" : "text-slate-500"}`}>mood</Text>
+                   <Text className={`text-[13px] font-bold ${pickerTab === 'stickers' ? "text-[#0058bc]" : "text-slate-500"}`}>Sticker</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  className={`flex-row items-center py-1.5 px-3 rounded-xl gap-1.5 ${pickerTab === 'gifs' ? "bg-blue-600/10" : ""}`}
+                  onPress={() => setPickerTab('gifs')}
+                >
+                   <Text className={`font-material text-[20px] ${pickerTab === 'gifs' ? "text-[#0058bc]" : "text-slate-500"}`}>gif_box</Text>
+                   <Text className={`text-[13px] font-bold ${pickerTab === 'gifs' ? "text-[#0058bc]" : "text-slate-500"}`}>Meme</Text>
+                </TouchableOpacity>
+              </View>
+
+              {pickerTab === 'stickers' ? (
+                <View className="flex-1">
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, alignItems: 'center', gap: 12 }}>
+                      {Object.keys(FLUENT_EMOJI_MAP).map(emoji => (
+                          <TouchableOpacity key={emoji} className="w-[70px] h-[70px] rounded-2xl bg-slate-50 items-center justify-center border border-slate-100 shadow-sm" onPress={() => handleSelectSticker(emoji)}>
+                              <Image source={{ uri: FLUENT_EMOJI_MAP[emoji] }} className="w-[50px] h-[50px]" resizeMode="contain" />
+                          </TouchableOpacity>
+                      ))}
+                  </ScrollView>
+                </View>
+              ) : (
+                <GifPicker onSelect={handleSelectGif} />
+              )}
           </View>
       )}
 
-      {/* Main Input Row */}
-      <View style={styles.inputRow}>
-        <View style={styles.actionTools}>
-          <TouchableOpacity style={styles.actionBtn} onPress={pickImages}>
-            <Text style={styles.actionIcon}>image</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.hdBtn, sendImageAsHD && styles.hdBtnActive]} 
-            onPress={() => setSendImageAsHD(!sendImageAsHD)}
-          >
-            <Text style={[styles.hdBtnText, sendImageAsHD && styles.hdBtnTextActive]}>HD</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={pickFiles}>
-            <Text style={styles.actionIcon}>attach_file</Text>
-          </TouchableOpacity>
+      <View className="flex-row items-center mb-2 px-1">
+        <TouchableOpacity className="w-9 h-9 rounded-full bg-slate-50 items-center justify-center mr-2.5" onPress={pickImages}>
+          <Text className="font-material text-[22px] text-slate-700">image</Text>
+        </TouchableOpacity>
+        <TouchableOpacity className="w-9 h-9 rounded-full bg-slate-50 items-center justify-center mr-2.5" onPress={pickFiles}>
+          <Text className="font-material text-[22px] text-slate-700">attach_file</Text>
+        </TouchableOpacity>
+        <TouchableOpacity className="w-9 h-9 rounded-full bg-slate-50 items-center justify-center mr-2.5" onPress={onShareLocation}>
+          <Text className="font-material text-[22px] text-slate-700">location_on</Text>
+        </TouchableOpacity>
+        <TouchableOpacity className="w-9 h-9 rounded-full bg-slate-50 items-center justify-center mr-2.5" onPress={onShareContact}>
+          <Text className="font-material text-[22px] text-slate-700">contact_page</Text>
+        </TouchableOpacity>
+        <View className="flex-1 flex-row justify-end">
+           <TouchableOpacity 
+             className={`px-2 py-1 rounded-md border ${sendImageAsHD ? "bg-[#0058bc] border-[#0058bc]" : "bg-slate-100 border-slate-200"}`}
+             onPress={() => setSendImageAsHD(!sendImageAsHD)}
+           >
+             <Text className={`text-[10px] font-bold ${sendImageAsHD ? "text-white" : "text-slate-500"}`}>HD</Text>
+           </TouchableOpacity>
         </View>
+      </View>
 
-        <View style={styles.textInputWrapper}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
+        <View style={styles.inputOuterContainer}>
           <TextInput
             ref={inputRef}
-            autoFocus={true}
-            value={text}
-            onChangeText={handleTextChange}
+            multiline
             placeholder="Nhập tin nhắn..."
             placeholderTextColor="#8a9099"
+            value={text}
+            onChangeText={handleTextChange}
             style={styles.textInput}
-            multiline
             maxLength={2000}
             blurOnSubmit={false}
           />
-          <TouchableOpacity style={styles.stickerBtn} onPress={() => setShowStickers(!showStickers)}>
-            <Text style={[styles.stickerIcon, showStickers && { color: Colors.primary }]}>mood</Text>
+          <TouchableOpacity className="p-0.5 ml-1" onPress={() => setShowStickers(!showStickers)}>
+            <Text className={`font-material text-[24px] ${showStickers ? "text-[#0058bc]" : "text-slate-500"}`}>mood</Text>
           </TouchableOpacity>
         </View>
 
         <TouchableOpacity 
-          style={[styles.sendBtn, (!text.trim() && attachments.length === 0) ? styles.sendBtnDisabled : null]}
-          disabled={!text.trim() && attachments.length === 0 || isUploading}
+          style={[
+            styles.sendButton,
+            (!text.trim() && attachments.length === 0) && { backgroundColor: "#cbd5e1" }
+          ]}
+          disabled={(!text.trim() && attachments.length === 0) || isUploading}
           onPress={handleSend}
         >
           {isUploading ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
-            <Text style={styles.sendIcon}>send</Text>
+            <Text style={styles.sendButtonText}>send</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -253,252 +270,43 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
 }
 
 const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#fff',
+  composerContainer: {
+    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.05)',
-    paddingHorizontal: 8,
-    paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 4,
+    borderTopColor: "#e5eaf2",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    paddingBottom: Platform.OS === "ios" ? 14 : 8,
   },
-  replyPreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,65,143,0.05)',
-    padding: 8,
-    borderRadius: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.primary,
-    marginBottom: 8,
-    marginHorizontal: 4,
-  },
-  replyPreviewIconWrapper: {
-    marginRight: 8,
-  },
-  replyPreviewIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 20,
-    color: Colors.primary,
-  },
-  replyPreviewTitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: Colors.primary,
-    textTransform: 'uppercase',
-  },
-  replyPreviewText: {
-    fontSize: 13,
-    color: '#1f2631',
-    fontStyle: 'italic',
-  },
-  replyPreviewCloseBtn: {
-    padding: 4,
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    borderRadius: 12,
-  },
-  replyPreviewCloseIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 16,
-    color: '#5a6781',
-  },
-  attachmentStripWrapper: {
-    marginBottom: 8,
-  },
-  attachmentStrip: {
-    gap: 12,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-  },
-  attachmentItem: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    backgroundColor: '#f1f5f9',
-    position: 'relative',
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.05)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  attachmentThumb: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 11,
-  },
-  attachmentFileBox: {
+  inputOuterContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  attachmentFileIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 24,
-    color: Colors.primary,
-  },
-  attachmentFileExt: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#5a6781',
-    textTransform: 'uppercase',
-  },
-  aBadgeBg: {
-    position: 'absolute',
-    left: 4,
-    bottom: 4,
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  aBadgeText: {
-    fontSize: 8,
-    fontWeight: '900',
-    color: '#fff',
-  },
-  attachmentRemoveBtn: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#ef4444',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  attachmentRemoveIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 12,
-    color: '#fff',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    backgroundColor: '#f8fafc',
-    borderRadius: 24,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(0,65,143,0.15)',
-  },
-  actionTools: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingBottom: 4,
-  },
-  actionBtn: {
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  actionIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 24,
-    color: '#7a8391',
-  },
-  hdBtn: {
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 12,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  hdBtnActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  hdBtnText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#7a8391',
-  },
-  hdBtnTextActive: {
-    color: '#fff',
-  },
-  textInputWrapper: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    backgroundColor: "#f1f5fa",
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
   textInput: {
     flex: 1,
-    maxHeight: 100,
-    paddingTop: 10,
-    paddingBottom: 10,
-    paddingLeft: 4,
-    fontSize: 14,
-    color: '#1f2631',
+    maxHeight: 110,
+    minHeight: 36,
+    fontSize: 15,
+    color: "#1f2631",
+    paddingTop: Platform.OS === 'ios' ? 8 : 4,
+    paddingBottom: Platform.OS === 'ios' ? 8 : 4,
   },
-  stickerBtn: {
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 2,
-    marginBottom: 2,
+  sendButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0058bc",
   },
-  stickerIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 24,
-    color: '#10b981', // emerald
+  sendButtonText: {
+    fontFamily: "Material Symbols Outlined",
+    fontSize: 22,
+    color: "#fff",
   },
-  sendBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  sendBtnDisabled: {
-    backgroundColor: '#e2e8f0',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  sendIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 20,
-    color: '#fff',
-    marginLeft: 4,
-  },
-  stickerPicker: {
-      backgroundColor: '#f1f5f9',
-      borderTopWidth: 1,
-      borderTopColor: 'rgba(0,0,0,0.05)',
-      paddingVertical: 12,
-      marginBottom: 8,
-      borderRadius: 16,
-  },
-  stickerScroll: {
-      paddingHorizontal: 12,
-      gap: 16,
-  },
-  stickerOption: {
-      width: 50,
-      height: 50,
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: '#fff',
-      borderRadius: 12,
-      elevation: 2,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.1,
-      shadowRadius: 2,
-  },
-  stickerImg: {
-      width: 36,
-      height: 36,
-  }
 });

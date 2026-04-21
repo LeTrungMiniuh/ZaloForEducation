@@ -1,23 +1,18 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, Pressable, TouchableOpacity, Linking } from 'react-native';
-import { Colors, Typography } from '../../constants/Theme';
+import { View, Text, Image, Pressable, TouchableOpacity, Linking, Platform, StyleSheet } from 'react-native';
 
 const FLUENT_EMOJI_MAP = {
-  '👍': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Thumbs%20Up/3D/thumbs_up_3d.png',
-  '❤️': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Red%20Heart/3D/red_heart_3d.png',
-  '😄': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Grinning%20Face%20with%20Big%20Eyes/3D/grinning_face_with_big_eyes_3d.png',
-  '😮': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Face%20with%20Open%20Mouth/3D/face_with_open_mouth_3d.png',
-  '😭': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Loudly%20Crying%20Face/3D/loudly_crying_face_3d.png',
-  '😡': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Enraged%20Face/3D/enraged_face_3d.png',
+  '👍': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Thumbs%20Up/3D/thumbs_up_3d.png',
+  '❤️': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Red%20Heart/3D/red_heart_3d.png',
+  '😄': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Grinning%20Face%20with%20Big%20Eyes/3D/grinning_face_with_big_eyes_3d.png',
+  '😮': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Face%20with%20Open%20Mouth/3D/face_with_open_mouth_3d.png',
+  '😭': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Loudly%20Crying%20Face/3D/loudly_crying_face_3d.png',
+  '😡': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Enraged%20Face/3D/enraged_face_3d.png',
+  '😂': 'https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Face%20with%20Tears%20of%20Joy/3D/face_with_tears_of_joy_3d.png',
 };
 
-// URL-encode spaces for all links
-Object.keys(FLUENT_EMOJI_MAP).forEach(key => {
-  FLUENT_EMOJI_MAP[key] = FLUENT_EMOJI_MAP[key].replace(/ /g, '%20');
-});
-
 const getDisplayAvatar = (userId) => {
-  return "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png"; // Fallback, pass from props if available
+  return "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png"; 
 };
 
 const normalizeAttachment = (attachment) => {
@@ -43,7 +38,6 @@ const formatFileSize = (bytes) => {
 const getFileIcon = (mimeType, fileName) => {
   const mime = String(mimeType || "").toLowerCase();
   const name = String(fileName || "").toLowerCase();
-
   if (mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp)$/i.test(name)) return "image";
   if (mime.startsWith("video/") || /\.(mp4|mov|avi|wmv)$/i.test(name)) return "movie";
   if (mime.startsWith("audio/") || /\.(mp3|wav|ogg|m4a)$/i.test(name)) return "audio_file";
@@ -65,100 +59,146 @@ const isStickerMedia = (item) => {
   return mime.includes('sticker') || item?.isSticker === true;
 };
 
-export default function MessageBubble({ message, isMe, userProfile, onLongPress, onReaction, onReply }) {
+export default function MessageBubble({ message, isMe, userProfile, onLongPress, onReaction }) {
   const isRecalled = !!message.recalled;
   const isPinned = !!message.pinned;
 
   const reactionSummary = [];
   if (message.reactions) {
     Object.entries(message.reactions).forEach(([emoji, users]) => {
-      if (users && users.length > 0) {
-        reactionSummary.push([emoji, users]);
-      }
+      if (users && users.length > 0) reactionSummary.push([emoji, users]);
     });
   }
 
-  // System Message
   if (message.type === 'system') {
     return (
-      <View style={styles.systemContainer}>
-        <View style={styles.systemBadge}>
-          <Text style={styles.systemText}>{message.content}</Text>
+      <View className="items-center my-4">
+        <View className="bg-black/5 px-4 py-1.5 rounded-full">
+          <Text className="text-[11px] font-bold text-slate-500 text-center">{message.content}</Text>
         </View>
-        <Text style={styles.systemTime}>
-          {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', {
-            hour: '2-digit', minute: '2-digit'
-          })}
+        <Text className="text-[10px] text-slate-400 mt-1">
+          {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
         </Text>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, isMe ? styles.containerMe : styles.containerOther]}>
+    <View style={[styles.messageRow, isMe ? styles.messageRowMe : styles.messageRowOther]} className="mb-4">
       {!isMe && (
-        <Image source={{ uri: userProfile?.avatarUrl || getDisplayAvatar(message.senderId) }} style={styles.avatar} />
+        <Image 
+          source={{ uri: userProfile?.avatarUrl || getDisplayAvatar(message.senderId) }} 
+          style={styles.msgAvatar}
+          className="mr-2 mb-1"
+        />
       )}
       
-      <View style={[styles.bubbleWrapper, isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperOther]}>
-        {/* Name and Pin Header */}
-        <View style={styles.headerRow}>
-          {isPinned && (
-            <View style={styles.pinBadge}>
-              <Text style={styles.pinIcon}>push_pin</Text>
-              <Text style={styles.pinText}>Đã ghim</Text>
-            </View>
-          )}
-        </View>
+      <View style={{ maxWidth: '75%', alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+        {isPinned && (
+           <View className="flex-row items-center bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-200 mb-1 gap-0.5">
+              <Text className="font-material text-[10px] text-amber-600">push_pin</Text>
+              <Text className="text-[9px] font-extrabold text-amber-600 uppercase">Đã ghim</Text>
+           </View>
+        )}
 
         <Pressable 
-          style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]} 
+          style={[
+            styles.messageBubble,
+            isMe ? styles.messageBubbleMe : styles.messageBubbleOther
+          ]}
           onLongPress={() => onLongPress(message)}
         >
           {message.replyTo && (
-            <View style={styles.replyBox}>
-              <Text style={styles.replyHeader}>ĐANG TRẢ LỜI</Text>
-              <Text style={styles.replyContent} numberOfLines={1}>{message.replyTo.content}</Text>
+            <View className="bg-black/5 border-l-4 border-[#0058bc] p-2 rounded mb-2">
+              <Text className="text-[10px] font-extrabold opacity-60 mb-0.5 uppercase">ĐANG TRẢ LỜI</Text>
+              <Text className="text-[13px] italic opacity-80" numberOfLines={1}>{message.replyTo.content}</Text>
             </View>
           )}
 
-          <Text style={[styles.messageText, isRecalled && styles.recalledText, !isMe && styles.messageTextOther]}>
+          <Text className={`text-[15px] leading-[22px] ${isRecalled ? "italic opacity-50" : "text-slate-800"}`}>
             {isRecalled ? "Tin nhắn đã được thu hồi" : message.content}
           </Text>
 
+          {/* Contact Card */}
+          {!isRecalled && (message.type === 'contact_card' || message.contactCard) && (
+            <View className="bg-white rounded-2xl p-4 mt-2 border border-black/5 w-[240px] shadow-lg">
+              <View className="flex-row items-center mb-4">
+                <View className="relative mr-3">
+                  <Image 
+                    source={{ uri: message.contactCard?.avatarUrl || getDisplayAvatar(message.contactCard?.email) }} 
+                    className="w-12 h-12 rounded-full border-2 border-slate-50" 
+                  />
+                  <View className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-white" />
+                </View>
+                <View className="flex-1">
+                  <Text className="font-bold text-[15px] text-slate-800" numberOfLines={1}>
+                    {message.contactCard?.fullName || message.contactCard?.fullname || message.contactCard?.email}
+                  </Text>
+                  <Text className="text-[12px] text-slate-500" numberOfLines={1}>{message.contactCard?.email}</Text>
+                </View>
+              </View>
+              <View className="flex-row gap-2">
+                <TouchableOpacity 
+                   className="flex-[4] flex-row items-center justify-center bg-[#0058bc] py-2.5 rounded-xl gap-1.5"
+                   onPress={() => { if (message.contactCard?.email) Linking.openURL(`mailto:${message.contactCard.email}`); }}
+                >
+                  <Text className="font-material text-[18px] text-white">chat</Text>
+                  <Text className="text-[13px] font-bold text-white">Nhắn tin</Text>
+                </TouchableOpacity>
+                <TouchableOpacity className="flex-1 bg-slate-100 items-center justify-center rounded-xl">
+                  <Text className="font-material text-[18px] text-slate-500">person_add</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Location */}
+          {!isRecalled && (message.type === 'location' || (message.latitude && message.longitude)) && (
+            <TouchableOpacity 
+              className="flex-row items-center bg-white rounded-xl p-3 mt-2 border border-black/5 w-[220px]"
+              onPress={() => {
+                const lat = message.latitude;
+                const lon = message.longitude;
+                const url = Platform.select({ ios: `maps:0,0?q=${lat},${lon}`, android: `geo:0,0?q=${lat},${lon}` });
+                Linking.openURL(url);
+              }}
+            >
+              <View className="w-10 h-10 rounded-lg bg-red-50 items-center justify-center mr-3">
+                <Text className="font-material text-2xl text-red-500">location_on</Text>
+              </View>
+              <View className="flex-1">
+                <Text className="text-[13px] font-bold text-slate-800" numberOfLines={1}>{message.content || "Vị trí hiện tại"}</Text>
+                <Text className="text-[11px] text-slate-500">Mở trên bản đồ</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
           {/* Media & Files */}
-          {!isRecalled && (Array.isArray(message.media) || Array.isArray(message.files)) && (
-            <View style={styles.mediaContainer}>
-              {/* Media (Images/Videos) */}
-              <View style={styles.imageGrid}>
+          {!isRecalled && (Array.isArray(message.media) || Array.isArray(message.files)) && message.type !== 'contact_card' && (
+            <View className="mt-2 gap-2">
+              <View className="flex-row flex-wrap gap-1">
                 {(Array.isArray(message.media) ? message.media : []).map((item, index) => {
                   const file = normalizeAttachment(item);
-                  const isVideo = isVideoAttachment(item);
                   const isSticker = isStickerMedia(item);
-                  const isHD = item?.isHD === true;
-                  
-                  if (isVideo) {
+                  if (isVideoAttachment(item)) {
                     return (
-                      <TouchableOpacity key={index} style={styles.videoBox} onPress={() => Linking.openURL(file.dataUrl)}>
-                        <Image source={{ uri: file.dataUrl }} style={styles.mediaImage} blurRadius={10} />
-                        <View style={styles.videoOverlay}>
-                          <Text style={styles.videoIcon}>play_circle</Text>
-                        </View>
+                      <TouchableOpacity key={index} className="w-[110px] h-[110px] rounded-xl overflow-hidden bg-black items-center justify-center" onPress={() => Linking.openURL(file.dataUrl)}>
+                        <Image source={{ uri: file.dataUrl }} className="absolute inset-0 opacity-50" blurRadius={10} />
+                        <Text className="font-material text-3xl text-white">play_circle</Text>
                       </TouchableOpacity>
                     );
                   }
-
                   return (
-                    <View key={index} style={styles.imageBox}>
+                    <View key={index} className="relative w-[110px] h-[110px] rounded-xl overflow-hidden bg-black/5">
                       <Image 
                         source={{ uri: file.dataUrl }} 
-                        style={[styles.mediaImage, isSticker && styles.stickerImage]} 
+                        className={`w-full h-full ${isSticker ? "p-2" : ""}`}
                         resizeMode={isSticker ? "contain" : "cover"} 
                       />
-                      {(isSticker || isHD) && (
-                        <View style={styles.mediaBadgeRow}>
-                          {isSticker && <View style={styles.stkBadge}><Text style={styles.badgeText}>STK</Text></View>}
-                          {isHD && <View style={styles.hdBadge}><Text style={styles.badgeText}>HD</Text></View>}
+                      {(isSticker || item?.isHD) && (
+                        <View className="absolute bottom-1.5 left-1.5 flex-row gap-1">
+                          {isSticker && <View className="bg-emerald-600 px-1.5 py-0.5 rounded-lg"><Text className="text-white text-[8px] font-black">STK</Text></View>}
+                          {item?.isHD && <View className="bg-blue-600 px-1.5 py-0.5 rounded-lg"><Text className="text-white text-[8px] font-black">HD</Text></View>}
                         </View>
                       )}
                     </View>
@@ -166,18 +206,17 @@ export default function MessageBubble({ message, isMe, userProfile, onLongPress,
                 })}
               </View>
 
-              {/* Files */}
-              <View style={styles.fileList}>
+              <View className="gap-1.5">
                 {(Array.isArray(message.files) ? message.files : []).map((item, index) => {
                   const file = normalizeAttachment(item);
                   return (
-                    <TouchableOpacity key={index} style={styles.fileCard} onPress={() => Linking.openURL(file.dataUrl)}>
-                      <View style={styles.fileIconBox}>
-                        <Text style={styles.fileIcon}>{getFileIcon(file.mimeType, file.name)}</Text>
+                    <TouchableOpacity key={index} className="flex-row items-center bg-white/70 border border-black/5 p-2 rounded-xl w-[230px]" onPress={() => Linking.openURL(file.dataUrl)}>
+                      <View className="w-8 h-8 bg-blue-100 rounded-lg items-center justify-center mr-2">
+                        <Text className="font-material text-[18px] text-[#0058bc]">{getFileIcon(file.mimeType, file.name)}</Text>
                       </View>
-                      <View style={styles.fileInfo}>
-                        <Text numberOfLines={1} style={styles.fileName}>{file.name}</Text>
-                        <Text style={styles.fileSize}>{formatFileSize(file.size)}</Text>
+                      <View className="flex-1">
+                        <Text className="font-bold text-[12px] text-slate-800" numberOfLines={1}>{file.name}</Text>
+                        <Text className="text-[10px] text-slate-500">{formatFileSize(file.size)}</Text>
                       </View>
                     </TouchableOpacity>
                   );
@@ -189,22 +228,22 @@ export default function MessageBubble({ message, isMe, userProfile, onLongPress,
 
         {/* Reactions Summary */}
         {reactionSummary.length > 0 && (
-          <View style={[styles.reactionSummary, isMe ? styles.reactionSummaryMe : styles.reactionSummaryOther]}>
+          <View className={`flex-row flex-wrap -mt-2 mb-1 z-10 gap-1 ${isMe ? "self-end mr-2" : "self-start ml-2"}`}>
             {reactionSummary.map(([emoji, users]) => (
-              <TouchableOpacity key={emoji} style={styles.reactionBadge} onPress={() => onReaction && onReaction(message, emoji)}>
-                <Image source={{ uri: FLUENT_EMOJI_MAP[emoji] || '' }} style={styles.reactionEmojiIcon} />
-                <Text style={styles.reactionCount}>{users.length}</Text>
+              <TouchableOpacity key={emoji} className="flex-row items-center bg-white border border-black/10 rounded-full px-1.5 py-0.5 gap-1 shadow-sm">
+                <Image source={{ uri: FLUENT_EMOJI_MAP[emoji] || '' }} className="w-3.5 h-3.5" />
+                <Text className="text-[10px] font-black text-slate-600">{users.length}</Text>
               </TouchableOpacity>
             ))}
           </View>
         )}
 
-        <View style={[styles.footerRow, isMe && styles.footerRowMe]}>
-          <Text style={styles.timeText}>
+        <View className={`flex-row items-center gap-1.5 mt-0.5 px-1 ${isMe ? "justify-end" : "justify-start"}`}>
+          <Text className="text-[10px] font-bold text-slate-400">
             {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
           </Text>
           {isMe && (
-            <Text style={styles.statusText}>
+            <Text className="text-[10px] font-bold text-blue-500">
               {message.status === 'sending' ? 'Đang gửi...' : message.status === 'error' ? 'Lỗi' : 'Đã gửi'}
             </Text>
           )}
@@ -215,308 +254,24 @@ export default function MessageBubble({ message, isMe, userProfile, onLongPress,
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    marginBottom: 16,
-    alignItems: 'flex-end',
-  },
-  containerMe: {
-    justifyContent: 'flex-end',
-  },
-  containerOther: {
-    justifyContent: 'flex-start',
-  },
-  avatar: {
-    width: 32,
-    height: 32,
+  messageRow: { flexDirection: "row", alignItems: "flex-end" },
+  messageRowMe: { justifyContent: "flex-end" },
+  messageRowOther: { justifyContent: "flex-start" },
+  msgAvatar: { width: 28, height: 28, borderRadius: 14 },
+  messageBubble: {
+    maxWidth: "100%",
     borderRadius: 16,
-    marginRight: 8,
-    marginBottom: 4,
-  },
-  bubbleWrapper: {
-    maxWidth: '75%',
-  },
-  bubbleWrapperMe: {
-    alignItems: 'flex-end',
-  },
-  bubbleWrapperOther: {
-    alignItems: 'flex-start',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-    gap: 6,
-  },
-  senderName: {
-    ...Typography.body,
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#7a8391',
-  },
-  pinBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fffbeb', // amber-50
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 12,
+    padding: 10,
     borderWidth: 1,
-    borderColor: '#fde68a', // amber-200
   },
-  pinIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 10,
-    color: '#d97706',
-    marginRight: 2,
+  messageBubbleMe: { 
+    backgroundColor: "#dfefff", 
+    borderColor: "#c8dcff",
+    borderBottomRightRadius: 4 
   },
-  pinText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#d97706',
-    textTransform: 'uppercase',
+  messageBubbleOther: { 
+    backgroundColor: "#fff", 
+    borderColor: "#e3e8f0",
+    borderBottomLeftRadius: 4 
   },
-  bubble: {
-    padding: 12,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  bubbleMe: {
-    backgroundColor: '#e6f0fa', // Primary/10
-    borderBottomLeftRadius: 16,
-    borderBottomRightRadius: 4,
-  },
-  bubbleOther: {
-    backgroundColor: '#ffffff',
-    borderBottomLeftRadius: 4,
-    borderBottomRightRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.05)',
-  },
-  messageText: {
-    ...Typography.body,
-    fontSize: 15,
-    color: '#1f2631',
-    lineHeight: 22,
-  },
-  messageTextOther: {
-    color: '#1f2631',
-  },
-  recalledText: {
-    fontStyle: 'italic',
-    opacity: 0.5,
-  },
-  replyBox: {
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.primary,
-    padding: 8,
-    borderRadius: 6,
-    marginBottom: 8,
-  },
-  replyHeader: {
-    fontSize: 10,
-    fontWeight: '800',
-    opacity: 0.6,
-    marginBottom: 2,
-  },
-  replyContent: {
-    ...Typography.body,
-    fontSize: 13,
-    fontStyle: 'italic',
-    opacity: 0.8,
-  },
-  mediaContainer: {
-    marginTop: 8,
-    gap: 8,
-  },
-  imageGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 4,
-  },
-  imageBox: {
-    width: 120,
-    height: 120,
-    borderRadius: 12,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  mediaImage: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: 'rgba(0,0,0,0.05)',
-  },
-  stickerImage: {
-    backgroundColor: 'transparent',
-  },
-  videoBox: {
-    width: 120,
-    height: 120,
-    borderRadius: 12,
-    overflow: 'hidden',
-    position: 'relative',
-    backgroundColor: '#000',
-  },
-  videoOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  videoIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 32,
-    color: '#fff',
-  },
-  mediaBadgeRow: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    flexDirection: 'row',
-    gap: 4,
-  },
-  stkBadge: {
-    backgroundColor: '#059669',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  hdBadge: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  badgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#fff',
-  },
-  fileList: {
-    gap: 6,
-  },
-  fileCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.7)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.05)',
-    padding: 8,
-    borderRadius: 12,
-    width: 240,
-  },
-  fileIconBox: {
-    width: 32,
-    height: 32,
-    backgroundColor: 'rgba(0,65,143,0.1)',
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  fileIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 20,
-    color: Colors.primary,
-  },
-  fileInfo: {
-    flex: 1,
-  },
-  fileName: {
-    ...Typography.body,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  fileSize: {
-    fontSize: 10,
-    color: '#7a8391',
-    marginTop: 2,
-  },
-  reactionSummary: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: -8,
-    marginBottom: 4,
-    zIndex: 10,
-    gap: 4,
-  },
-  reactionSummaryMe: {
-    alignSelf: 'flex-end',
-    marginRight: 10,
-  },
-  reactionSummaryOther: {
-    alignSelf: 'flex-start',
-    marginLeft: 10,
-  },
-  reactionBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.08)',
-    borderRadius: 12,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    gap: 4,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  reactionEmojiIcon: {
-    width: 14,
-    height: 14,
-  },
-  reactionCount: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#5a6781',
-  },
-  footerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 2,
-    paddingHorizontal: 4,
-  },
-  footerRowMe: {
-    justifyContent: 'flex-end',
-  },
-  timeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#9ba3b2',
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: Colors.primary,
-  },
-  systemContainer: {
-    alignItems: 'center',
-    marginVertical: 16,
-  },
-  systemBadge: {
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  systemText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#5a6781',
-  },
-  systemTime: {
-    fontSize: 10,
-    color: '#9ba3b2',
-    marginTop: 4,
-  }
 });

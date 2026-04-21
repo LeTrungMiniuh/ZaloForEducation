@@ -18,7 +18,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import styles from './style/HomeScreen.styles';
+// import styles from './style/HomeScreen.styles';
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -220,7 +220,7 @@ export default function HomeScreen({
     setConversations,
   } = useChatStore();
 
-  const [activeTab, setActiveTab] = useState(initialTab || "messages");
+  const [activeTab, setActiveTab] = useState(normalizeHomeTab(initialTab));
   const [inputText, setInputText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
@@ -344,19 +344,22 @@ export default function HomeScreen({
     return raw;
   };
 
-  const normalizeConversation = (conv) => {
-    if (conv?.type !== "direct") return conv;
+  const enhanceConversationProperties = (conv) => {
+    if (!conv) return null;
+    const normalized = normalizeConversation(conv);
+    if (!normalized || normalized.type !== "direct") return normalized;
+
     const partner =
-      conv.partner ||
-      (Array.isArray(conv.members)
-        ? conv.members.find((member) => member !== user?.email)
+      normalized.partner ||
+      (Array.isArray(normalized.members)
+        ? normalized.members.find((member) => member !== user?.email)
         : undefined);
 
     return {
-      ...conv,
+      ...normalized,
       partner,
-      name: conv.name || getDisplayName(partner),
-      avatar: conv.avatar || getDisplayAvatar(partner),
+      name: normalized.name || getDisplayName(partner),
+      avatar: normalized.avatar || getDisplayAvatar(partner),
     };
   };
 
@@ -431,7 +434,7 @@ export default function HomeScreen({
       }
 
       const normalized = rawData
-        .map(normalizeConversation)
+        .map(enhanceConversationProperties)
         .filter((c) => c !== null);
 
       console.log(`[Chat] Successfully loaded ${normalized.length} conversations`);
@@ -577,7 +580,7 @@ export default function HomeScreen({
   };
 
   const handleSelectChat = async (chat) => {
-    const normalizedChat = normalizeConversation(chat);
+    const normalizedChat = enhanceConversationProperties(chat);
     if (!normalizedChat) return;
 
     setActiveConversation(normalizedChat.id);
@@ -1411,8 +1414,8 @@ export default function HomeScreen({
                 </Pressable>
 
               );
-            })}
-          </ScrollView>
+            }}
+          />
 
           {replyTarget && (
             <View style={styles.replyComposer}>
@@ -1486,7 +1489,7 @@ export default function HomeScreen({
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       );
     }
 
@@ -1831,7 +1834,7 @@ export default function HomeScreen({
   );
 
   return (
-    <View style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea}>
       <StatusBar
         barStyle="light-content"
         backgroundColor="transparent"

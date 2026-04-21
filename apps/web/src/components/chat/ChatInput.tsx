@@ -1,26 +1,27 @@
 import {
   CheckCircle2,
+  Contact,
   CreditCard,
   Crop,
-  Contact,
+  FileText,
+  Image,
+  Loader2,
   MapPin,
   Mic,
-  Radio,
-  Square,
-    FileText,
-    Image,
-    Loader2,
   MoreHorizontal,
-    Paperclip,
+  Paperclip,
   PenTool,
-    Reply,
-    SendHorizontal,
-    Search,
-    Smile,
-    Sticker,
+  Radio,
+  Reply,
+  Search,
+  SendHorizontal,
+  Smile,
+  Square,
+  Sticker,
   ThumbsUp,
-    X
+  X
 } from 'lucide-react';
+
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Swal from 'sweetalert2';
@@ -50,7 +51,11 @@ interface ChatInputProps {
     sentAt?: string;
     expiresAt?: string;
   }) => Promise<void>;
-  replyTarget: any | null;
+  replyTarget: {
+    senderId: string;
+    content: string;
+    [key: string]: unknown;
+  } | null;
   onClearReply: () => void;
 }
 
@@ -77,7 +82,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -144,7 +149,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
             mimeType: data.mimeType || fileToUpload.type,
             size: data.size || fileToUpload.size,
             dataUrl: data.fileUrl || data.url || item.dataUrl,
-            file: null as any,
+            file: undefined,
             isHD: isImage ? sendImageAsHD : undefined,
             isSticker: item.isSticker,
           };
@@ -193,7 +198,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
         mimeType: data.mimeType || mimeType,
         size: data.size || blob.size,
         dataUrl: data.fileUrl || data.url,
-        file: null as any,
+        file: undefined,
       }]);
       return true;
     } catch (error) {
@@ -403,7 +408,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
       mimeType: 'image/gif',
       size: 1024,
       dataUrl: url,
-      file: null as any
+      file: undefined
     }]);
   };
 
@@ -414,7 +419,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
       mimeType: 'image/sticker',
       size: 1024,
       dataUrl: sticker.url,
-      file: null as any,
+      file: undefined,
       isSticker: true,
     }]);
   };
@@ -471,7 +476,8 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
     })
     .sort((a, b) => a.displayName.localeCompare(b.displayName, 'vi'));
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, _type: 'image' | 'file') => {
+  // _type is intentionally unused for now, kept for future logic
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     let validFiles = Array.from(e.target.files || []);
     if (validFiles.length === 0) return;
 
@@ -510,7 +516,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
     try {
       const newAttachments: Attachment[] = [];
       for (const file of validFiles) {
-        const isImage = _type === 'image' && file.type.startsWith('image/');
+        // const isImage = _type === 'image' && file.type.startsWith('image/');
         newAttachments.push({
           name: file.name,
           mimeType: file.type || 'application/octet-stream',
@@ -800,8 +806,8 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
       </div>
 
       {/* Hidden Inputs */}
-      <input type="file" ref={imageInputRef} className="hidden" accept="image/*" multiple onChange={(e) => handleFileChange(e, 'image')} />
-      <input type="file" ref={fileInputRef} className="hidden" multiple onChange={(e) => handleFileChange(e, 'file')} />
+      <input type="file" ref={imageInputRef} className="hidden" accept="image/*" multiple onChange={handleFileChange} />
+      <input type="file" ref={fileInputRef} className="hidden" multiple onChange={handleFileChange} />
 
       {showContactPicker && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-[1000] bg-black/40 backdrop-blur-[2px] flex items-start justify-center pt-3 p-4" onClick={() => setShowContactPicker(false)}>
