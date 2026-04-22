@@ -383,16 +383,28 @@ const CallOverlay = () => {
 
   const handleHangup = async () => {
     try {
+      // [FIX] Lấy thời lượng thực tế từ đồng hồ CallOverlay
+      const durationSec = (callState === 'CONNECTED' && startTime) 
+        ? Math.floor((Date.now() - startTime) / 1000) 
+        : 0;
+
       SocketService.socket.emit('call:hangup', {
         convId: conversationId,
         callId: activeCallId,
         fromEmail: user.email,
-        toEmail: isIncoming ? caller.email : receiver.email
+        toEmail: isIncoming ? caller.email : receiver.email,
+        duration: durationSec, // Gửi thời lượng thực tế
+        callType: callType     // Gửi loại cuộc gọi thực tế
       });
       
       await apiRequest('/call/hangup', { 
         method: 'POST',
-        body: JSON.stringify({ conversationId, callId: activeCallId }) 
+        body: JSON.stringify({ 
+          conversationId, 
+          callId: activeCallId,
+          duration: durationSec,
+          callType: callType
+        }) 
       });
       
       cleanup();

@@ -1,116 +1,105 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 
-const CALL_UI = {
-  colors: {
-    missed: '#ef4444',
-    textPrimary: '#111827',
-    textSecondary: '#6b7280',
-    actionBlue: '#0068FF',
-  }
-};
-
-const formatCallDuration = (sec = 0) => {
-  if (sec <= 0) return '0:00';
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-};
-
 /**
- * SystemCallMessageItem - Minimalist Premium Version (v3.0)
+ * SystemCallMessageItem - Custom Premium Design 10/10
+ * Uses unified metadata structure for robust rendering
  */
 const SystemCallMessageItem = ({ message, currentUserEmail, onCallBack }) => {
-  // 1. Extract Unified Metadata
-  const metadata = message.metadata || message;
-  let { callType = 'audio', callStatus, duration = 0, callerId } = metadata;
+  const callerId = message.callerId || message.senderId;
+  const isCaller = callerId === currentUserEmail;
 
-  // 2. Fail-safe Status for SYSTEM_CALL
-  if (!callStatus && message.type === 'SYSTEM_CALL') {
-    callStatus = 'completed';
-  }
+  // [SENIOR 10/10] Super Radar: Tìm dữ liệu chuẩn nhất từ mọi ngóc ngách
+  const callType = message.callType || message.metadata?.callType || 
+                  (message.content?.toLowerCase().includes('video') ? 'video' : 'audio');
   
-  // 3. [SENIOR] Legacy Parsing Fallback
-  if (!callStatus && message.type !== 'SYSTEM_CALL' && message.content) {
-    const content = message.content;
-    callType = content.includes('video') ? 'video' : 'audio';
-    if (content.includes('lỡ') || content.includes('nhỡ')) callStatus = 'missed';
-    else if (content.includes('từ chối')) callStatus = 'rejected';
-    else callStatus = 'completed';
+  const callStatus = (message.callStatus || message.metadata?.callStatus || 'missed').toLowerCase();
+  
+  const duration = message.duration || message.metadata?.duration || 0;
 
-    const durationMatch = content.match(/\((\d{2}):(\d{2})\)/);
-    if (durationMatch) {
-      duration = parseInt(durationMatch[1], 10) * 60 + parseInt(durationMatch[2], 10);
-      if (duration > 0) callStatus = 'completed';
-    }
-    if (!callerId) callerId = message.senderId;
-  }
-
-  // 4. Direction Logic (Fail-safe)
-  const isOutgoing = !!callerId && callerId.toLowerCase() === currentUserEmail.toLowerCase();
-
-  // 5. [UI 10/10] Zalo Card Mapping (Individual Perspective)
-  const getCallDisplay = () => {
-    const isVideo = callType === 'video';
-    const typeLabel = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
-    const typeIcon = isVideo ? '🎥' : '📞';
-
-    // Status: Rejected (One side declined)
-    if (callStatus === 'rejected') {
-      return {
-        title: isOutgoing ? 'Người nhận từ chối' : 'Bạn đã từ chối',
-        subtitle: `${typeIcon} ${typeLabel}`,
-        isMissed: !isOutgoing
-      };
-    }
-
-    // Status: Missed (No answer or Canceled)
-    if (callStatus === 'missed') {
-      return {
-        title: isOutgoing ? 'Không có câu trả lời' : 'Cuộc gọi nhỡ',
-        subtitle: `${typeIcon} ${typeLabel}`,
-        isMissed: !isOutgoing
-      };
-    }
-
-    // Status: Completed (Talked)
-    if (callStatus === 'completed') {
-      const durationLabel = duration > 0 ? formatCallDuration(duration) : 'Đã kết nối';
-      return {
-        title: isOutgoing ? (isVideo ? 'Cuộc gọi video đi' : 'Cuộc gọi thoại đi') : (isVideo ? 'Cuộc gọi video đến' : 'Cuộc gọi thoại đến'),
-        subtitle: `${typeIcon} ${durationLabel}`,
-        isMissed: false
-      };
-    }
-
-    return { title: 'Cuộc gọi', subtitle: '', isMissed: false };
+  const formatDuration = (seconds) => {
+    if (!seconds || seconds <= 0) return null;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
   };
 
-  const display = getCallDisplay();
+  const getTheme = (status, isFromMe) => {
+    switch (status) {
+      case 'completed':
+        return {
+          bg: '#E8EAF6',
+          border: '#C5CAE9',
+          text: '#3F51B5',
+          btnText: '#303F9F',
+        };
+      case 'missed':
+      case 'no_answer':
+        return isFromMe 
+          ? { bg: '#F5F5F5', border: '#E0E0E0', text: '#616161', btnText: '#424242' }
+          : { bg: '#FFEBEE', border: '#FFCDD2', text: '#C62828', btnText: '#D32F2F' };
+      case 'rejected':
+        return isFromMe
+          ? { bg: '#FFF3E0', border: '#FFE0B2', text: '#EF6C00', btnText: '#E65100' }
+          : { bg: '#F5F5F5', border: '#E0E0E0', text: '#616161', btnText: '#424242' };
+      case 'cancelled':
+        return isFromMe
+          ? { bg: '#F5F5F5', border: '#E0E0E0', text: '#616161', btnText: '#424242' }
+          : { bg: '#FFEBEE', border: '#FFCDD2', text: '#C62828', btnText: '#D32F2F' };
+      default:
+        return { bg: '#FAFAFA', border: '#F5F5F5', text: '#9E9E9E', btnText: '#757575' };
+    }
+  };
+
+  const getStatusText = (status, isFromMe) => {
+    const typeLabel = callType === 'video' ? 'video' : 'thoại';
+    switch (status) {
+      case 'completed':
+        return isFromMe ? `Cuộc gọi ${typeLabel} đi` : `Cuộc gọi ${typeLabel} đến`;
+      case 'missed':
+      case 'no_answer':
+        return isFromMe ? 'Không có câu trả lời' : 'Bạn bị lỡ';
+      case 'rejected':
+        return isFromMe ? 'Người nhận từ chối' : 'Bạn đã từ chối';
+      case 'cancelled':
+        return isFromMe ? 'Bạn đã hủy' : 'Bạn bị lỡ';
+      default:
+        return isFromMe ? 'Cuộc gọi đi' : 'Cuộc gọi đến';
+    }
+  };
+
+  const theme = getTheme(callStatus, isCaller);
+  const statusText = getStatusText(callStatus, isCaller);
+  const isVideo = callType === 'video';
+  const callLabel = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
+  const callIcon = isVideo ? '📹' : '📞';
+  const durationStr = formatDuration(duration);
 
   return (
-    <View style={[styles.wrapper, isOutgoing ? styles.wrapperOutgoing : styles.wrapperIncoming]}>
-      <View style={styles.card}>
-        <View style={styles.content}>
-          <Text style={[styles.title, display.isMissed && styles.textMissed]}>
-            {display.title}
-          </Text>
-          <Text style={styles.subtitle}>
-            {display.subtitle}
-          </Text>
+    <View style={[styles.wrapper, isCaller ? styles.wrapperRight : styles.wrapperLeft]}>
+      <View style={[styles.card, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+        <View style={styles.contentPadding}>
+          <Text style={[styles.statusText, { color: theme.text }]}>{statusText}</Text>
+          <View style={styles.typeRow}>
+            <Text style={styles.typeIcon}>{callIcon}</Text>
+            <Text style={[styles.typeLabel, { color: theme.text, opacity: 0.7 }]}>
+              {callLabel}
+              {durationStr ? ` (${durationStr})` : ''}
+            </Text>
+          </View>
         </View>
-
-        {onCallBack && (
-          <TouchableOpacity
-            style={styles.callBackBtn}
-            onPress={() => onCallBack(callType)}
-            activeOpacity={0.6}
-          >
-            <Text style={styles.callBackText}>GỌI LẠI</Text>
-          </TouchableOpacity>
-        )}
+        
+        <View style={[styles.divider, { backgroundColor: theme.border, opacity: 0.5 }]} />
+        
+        <TouchableOpacity
+          onPress={() => onCallBack?.(callType)}
+          style={styles.callBackBtn}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.callBackText, { color: theme.btnText }]}>GỌI LẠI</Text>
+        </TouchableOpacity>
       </View>
       <Text style={styles.timestamp}>
         {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -121,63 +110,67 @@ const SystemCallMessageItem = ({ message, currentUserEmail, onCallBack }) => {
 
 const styles = StyleSheet.create({
   wrapper: {
-    width: '100%',
+    marginVertical: 10,
     paddingHorizontal: 16,
-    marginVertical: 4,
+    width: '100%',
+  },
+  wrapperRight: {
     alignItems: 'flex-end',
-    flexDirection: 'row',
-    gap: 8,
   },
-  wrapperOutgoing: {
-    flexDirection: 'row-reverse',
-  },
-  wrapperIncoming: {
-    justifyContent: 'flex-start',
+  wrapperLeft: {
+    alignItems: 'flex-start',
   },
   card: {
-    backgroundColor: '#cfefff',
-    borderRadius: 12,
-    padding: 12,
-    maxWidth: '75%',
+    borderRadius: 16,
+    width: 220,
+    borderWidth: 1,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+    overflow: 'hidden',
   },
-  content: {
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.05)',
-    paddingBottom: 8,
-    minWidth: 140,
+  contentPadding: {
+    padding: 14,
   },
-  title: {
+  statusText: {
     fontSize: 15,
-    fontWeight: 'bold',
-    color: '#222',
+    fontWeight: '800',
+    marginBottom: 6,
+    letterSpacing: -0.3,
   },
-  subtitle: {
+  typeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  typeIcon: {
+    fontSize: 12,
+  },
+  typeLabel: {
     fontSize: 13,
-    color: '#555',
-    marginTop: 4,
+    fontWeight: '600',
   },
-  textMissed: {
-    color: '#ef4444',
+  divider: {
+    height: 1,
   },
   callBackBtn: {
-    marginTop: 8,
+    paddingVertical: 12,
     alignItems: 'center',
-    paddingVertical: 4,
+    justifyContent: 'center',
   },
   callBackText: {
-    color: '#007AFF',
-    fontWeight: 'bold',
     fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   timestamp: {
     fontSize: 10,
-    color: '#999',
-    marginBottom: 4,
+    color: '#bbb',
+    marginTop: 5,
+    marginHorizontal: 6,
+    fontWeight: '600',
   },
 });
 

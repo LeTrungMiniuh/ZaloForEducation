@@ -38,6 +38,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Modal } from 'react-native';
 import SystemCallMessageItem from '../../components/chat/SystemCallMessageItem';
 const REACTION_OPTIONS = ["❤️", "👍", "😂", "😮", "😢", "😡"];
+const DEFAULT_AVATAR = require('../../../assets/logo_blue.png');
 const MAX_ATTACHMENTS_PER_MESSAGE = 8;
 const TAB_ALIAS = {
   messages: "chat",
@@ -222,7 +223,9 @@ export default function HomeScreen({
     addMessage,
     updateMessage,
     setConversations,
-    upsertConversationLastMessage
+    upsertConversationLastMessage,
+    userProfiles,
+    upsertProfiles
   } = useChatStore();
 
   const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
@@ -243,7 +246,6 @@ export default function HomeScreen({
   const [messageReactions, setMessageReactions] = useState({});
   const [replyTarget, setReplyTarget] = useState(null);
   const [actionMessage, setActionMessage] = useState(null);
-  const [userProfiles, setUserProfiles] = useState({});
   const [typingUsers, setTypingUsers] = useState({});
   const [isFriendRequestsModalOpen, setIsFriendRequestsModalOpen] = useState(false);
   const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
@@ -293,30 +295,9 @@ export default function HomeScreen({
 
   const { conversationId: paramConvId, targetMessageId, highlightKeyword } = params || {};
 
-  // Deep link effect: Auto-open conversation from params
-  useEffect(() => {
-    if (paramConvId) {
-      handleSelectChat({ id: paramConvId });
-    }
-  }, [paramConvId]);
 
-  // Deep link effect: Scroll to message
-  useEffect(() => {
-    if (!targetMessageId || !messagesScrollRef.current || reversedMessages.length === 0) return;
 
-    const timeout = setTimeout(() => {
-      const index = reversedMessages.findIndex(msg => (msg.id === targetMessageId || msg.SK === targetMessageId));
-      if (index !== -1) {
-        messagesScrollRef.current.scrollToIndex({
-          index,
-          animated: true,
-          viewPosition: 0.5
-        });
-      }
-    }, 500);
 
-    return () => clearTimeout(timeout);
-  }, [targetMessageId, reversedMessages.length]);
 
   useEffect(() => {
     if (checkSessionStatus) checkSessionStatus();
@@ -349,17 +330,8 @@ export default function HomeScreen({
   };
 
   const getDisplayAvatar = (email) => {
-    if (!email)
-      return "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
-    if (email === user?.email)
-      return (
-        user?.avatarUrl ||
-        "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png"
-      );
-    return (
-      userProfiles[email]?.avatarUrl ||
-      "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png"
-    );
+    const avatarUri = email === user?.email ? user?.avatarUrl : userProfiles[email]?.avatarUrl;
+    return avatarUri ? { uri: avatarUri } : DEFAULT_AVATAR;
   };
 
   const normalizeAttachment = (item) => ({
@@ -373,11 +345,16 @@ export default function HomeScreen({
     if (!message) return "Tin nhắn";
     if (message.recalled) return "Tin nhắn đã được thu hồi";
 
-    // [SENIOR] Rich Preview for Calls
-    if (message.type === 'call' || message.type === 'system_call') {
-      const isVideo = message.callType === 'video';
+    // [SENIOR 10/10] Rich Preview for Calls
+    if (message.type === 'SYSTEM_CALL' || message.type === 'call') {
+      const callType = message.callType || message.metadata?.callType || 'audio';
+      const callStatus = (message.callStatus || message.metadata?.callStatus || '').toLowerCase();
+      const isVideo = callType === 'video';
       const label = isVideo ? 'Video' : 'Thoại';
-      if (message.callStatus === 'missed') return `[Cuộc gọi ${label} nhỡ]`;
+      
+      if (callStatus === 'missed' || callStatus === 'no_answer' || callStatus === 'cancelled') {
+        return `[Cuộc gọi ${label} nhỡ]`;
+      }
       return `[Cuộc gọi ${label}]`;
     }
 
@@ -417,7 +394,7 @@ export default function HomeScreen({
     try {
       const res = await chatGet("/friends/search", { email });
       if (res?.ok && res?.found && res?.user) {
-        setUserProfiles((prev) => ({ ...prev, [email]: res.user }));
+        upsertProfiles({ [email]: res.user });
       }
     } catch (err) {
       console.error("Load profile failed", err);
@@ -600,9 +577,6 @@ export default function HomeScreen({
     const normalizedChat = normalizeConversation(chat);
     if (!normalizedChat) return;
 
-    setActiveConversation(normalizedChat.id);
-    setActiveTab("chat");
-
     // Reset unread count locally
     setConversations(prev => prev.map(c =>
       c.id === normalizedChat.id ? { ...c, unreadCount: 0 } : c
@@ -614,16 +588,7 @@ export default function HomeScreen({
       return next;
     });
 
-    setReplyTarget(null);
-    closeMessageAction();
-
-    if (normalizedChat.type === "direct" && normalizedChat.partner) {
-      loadUserProfile(normalizedChat.partner);
-    }
-
-    if (SocketService.socket) {
-      SocketService.socket.emit("join_room", { convId: normalizedChat.id });
-    }
+    onNavigate('chat', { conversationId: normalizedChat.id });
   };
 
   const handleOpenDirectChat = async (friendEmail) => {
@@ -1171,7 +1136,7 @@ export default function HomeScreen({
     );
   };
 
-  const renderHeader = () => (
+  const memoizedHeader = useMemo(() => (
     <LinearGradient
       colors={["#0058bc", "#00418f"]}
       style={[styles.header, { paddingTop: insets.top }]}
@@ -1203,171 +1168,11 @@ export default function HomeScreen({
         </View>
       </View>
     </LinearGradient>
-  );
+  ), [insets.top, friendSearchEmail]);
 
   const renderConversationsView = () => {
-    if (selectedChat) {
-      const currentTypingSet = typingUsers[selectedChat.id];
-      const partnerProfile = selectedChat.type === "direct" ? userProfiles[selectedChat.partner] : null;
-      const isOnline = partnerProfile?.status === "online";
-
-      let displayStatus = selectedChat.type === "direct"
-        ? (isOnline ? "Đang hoạt động" : "Đang ngoại tuyến")
-        : "Đang trò chuyện";
-
-      if (currentTypingSet && currentTypingSet.size > 0) {
-        const firstEmail = Array.from(currentTypingSet)[0];
-        displayStatus = `${getDisplayName(firstEmail)} đang gõ...`;
-      }
-
-      return (
-        <KeyboardAvoidingView
-          style={styles.chatPane}
-          behavior={Platform.OS === "ios" ? "padding" : "padding"}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
-        >
-          <LinearGradient
-            colors={["#0058bc", "#00418f"]}
-            style={[styles.chatPaneHeader, { paddingTop: insets.top }]}
-          >
-            <TouchableOpacity onPress={() => setActiveConversation(null)}>
-              <Text style={styles.chatPaneBack}>arrow_back</Text>
-            </TouchableOpacity>
-            <View style={styles.avatarContainer}>
-              <Image
-                source={{
-                  uri:
-                    selectedChat.type === "direct"
-                      ? getDisplayAvatar(selectedChat.partner)
-                      : selectedChat.avatar,
-                }}
-                style={styles.chatPaneAvatar}
-              />
-              {selectedChat.type === "direct" && userProfiles[selectedChat.partner]?.status === "online" && (
-                <View style={[styles.onlineBadge, { borderColor: '#0058bc' }]} />
-              )}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.chatPaneName} numberOfLines={1}>
-                {selectedChat.type === "direct"
-                  ? getDisplayName(selectedChat.partner)
-                  : selectedChat.name}
-              </Text>
-              <Text style={[styles.chatPaneSub, displayStatus.includes("đang gõ...") && { color: "#fff", fontWeight: "700" }]}>
-                {displayStatus}
-              </Text>
-            </View>
-
-            <View style={styles.chatHeaderIcons}>
-              <TouchableOpacity
-                style={styles.chatHeaderIconButton}
-                onPress={() => handleStartCall('audio')}
-              >
-                <Text style={styles.chatHeaderIcon}>call</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.chatHeaderIconButton}
-                onPress={() => handleStartCall('video')}
-              >
-                <Text style={styles.chatHeaderIcon}>videocam</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.chatHeaderIconButton}>
-                <Text style={styles.chatHeaderIcon}>list</Text>
-              </TouchableOpacity>
-            </View>
-          </LinearGradient>
-
-          {activePinnedMessages.length > 0 && (
-            <View style={styles.pinStrip}>
-              {activePinnedMessages.map((message) => (
-                <View key={`pin-${message.id}`} style={styles.pinItem}>
-                  <Text style={styles.pinIcon}>push_pin</Text>
-                  <Text style={styles.pinText} numberOfLines={1}>
-                    {getMessagePreview(message)}
-                  </Text>
-                  <TouchableOpacity onPress={() => unpinMessage(message.id)}>
-                    <Text style={styles.pinUnpin}>Bỏ</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
-
-          <FlatList
-            key={`chat-list-${selectedChat.id}`}
-            ref={messagesScrollRef}
-            data={reversedMessages}
-            inverted={true}
-            keyExtractor={(item, index) => item.id || `msg-${index}`}
-            renderItem={({ item: message }) => {
-              const isMe = message.senderId === user?.email;
-
-              if (
-                message.type === 'call' ||
-                message.type === 'system_call' ||
-                message.type === 'SYSTEM_CALL' ||
-                (message.type === 'system' && message.content?.includes('Cuộc gọi'))
-              ) {
-                return (
-                  <SystemCallMessageItem
-                    message={message}
-                    currentUserEmail={user?.email}
-                    onCallBack={(type) => handleStartCall(type || 'audio')}
-                  />
-                );
-              }
-
-              return (
-                <MessageBubble
-                  message={message}
-                  isMe={isMe}
-                  userProfile={{ avatarUrl: getDisplayAvatar(message.senderId) }}
-                  onLongPress={setActionMessage}
-                  onReaction={toggleReaction}
-                  onReply={startReply}
-                  isHighlighted={message.id === targetMessageId || message.SK === targetMessageId}
-                  highlightKeyword={highlightKeyword}
-                />
-              );
-            }}
-            onScrollToIndexFailed={info => {
-              messagesScrollRef.current?.scrollToOffset({ 
-                offset: info.averageItemLength * info.index, 
-                animated: true 
-              });
-            }}
-            contentContainerStyle={{
-              paddingHorizontal: 12,
-              paddingTop: 50,
-              paddingBottom: 20
-            }}
-            showsVerticalScrollIndicator={false}
-            maintainVisibleContentPosition={{
-              minIndexForVisible: 0,
-            }}
-          />
-
-          <ChatInput
-            key={selectedChat.id} // Force remount on chat change to trigger autoFocus
-            onSendMessage={handleChatSend}
-            replyTarget={replyTarget}
-            onClearReply={() => setReplyTarget(null)}
-            onTyping={() => {
-              if (SocketService.socket && selectedChat.id) {
-                if (!typingTimeoutRef.current) {
-                  SocketService.socket.emit("typing", { convId: selectedChat.id, isTyping: true });
-                  typingTimeoutRef.current = setTimeout(() => {
-                    typingTimeoutRef.current = null;
-                  }, 2000);
-                }
-              }
-            }}
-          />
-        </KeyboardAvoidingView>
-      );
-    }
-
-    if (loadingConversations) {
+    // Only show full loading spinner if we have NO conversations at all
+    if (loadingConversations && safeConversations.length === 0) {
       return (
         <View style={styles.centeredView}>
           <ActivityIndicator color={Colors.primary} />
@@ -1408,7 +1213,7 @@ export default function HomeScreen({
                 onPress={() => handleSelectChat(chat)}
               >
                 <View style={styles.avatarContainer}>
-                  <Image source={{ uri: chatAvatar }} style={styles.avatar} />
+                  <Image source={chatAvatar} style={styles.avatar} />
                   {isOnline && <View style={styles.onlineBadge} />}
                   {chat.unreadCount > 0 && (
                     <View style={styles.unreadBadge}>
@@ -1462,11 +1267,7 @@ export default function HomeScreen({
         <View style={styles.searchResultCard}>
           <View style={styles.searchResultHeader}>
             <Image
-              source={{
-                uri:
-                  friendSearchResult?.user?.avatarUrl ||
-                  getDisplayAvatar(friendSearchResult?.email),
-              }}
+              source={friendSearchResult?.user?.avatarUrl ? { uri: friendSearchResult.user.avatarUrl } : getDisplayAvatar(friendSearchResult?.email)}
               style={styles.searchResultAvatar}
             />
             <View style={{ flex: 1 }}>
@@ -1591,7 +1392,7 @@ export default function HomeScreen({
             onPress={() => handleOpenDirectChat(friendEmail)}
           >
             <Image
-              source={{ uri: getDisplayAvatar(friendEmail) }}
+              source={getDisplayAvatar(friendEmail)}
               style={styles.friendAvatar}
             />
             <View style={styles.friendInfo}>
@@ -1623,17 +1424,11 @@ export default function HomeScreen({
     <ScrollView style={styles.scrollContainer}>
       <View style={styles.profileHeader}>
         <View style={styles.largeAvatarBox}>
-          {user?.avatarUrl ? (
-            <Image
-              key={`profile-tab-avatar-${profileVersion}`}
-              source={{ uri: `${user.avatarUrl}?v=${profileVersion}` }}
-              style={styles.largeAvatarImage}
-            />
-          ) : (
-            <Text style={styles.avatarInitial}>
-              {user?.fullName ? user.fullName[0].toUpperCase() : "U"}
-            </Text>
-          )}
+          <Image
+            key={`profile-tab-avatar-${profileVersion}`}
+            source={user?.avatarUrl ? { uri: `${user.avatarUrl}?v=${profileVersion}` } : DEFAULT_AVATAR}
+            style={styles.largeAvatarImage}
+          />
         </View>
         <Text style={styles.profileName}>{user?.fullName || "Người dùng"}</Text>
         <Text style={styles.profileEmail}>{user?.email}</Text>
@@ -1714,14 +1509,14 @@ export default function HomeScreen({
         backgroundColor="transparent"
         translucent={true}
       />
-      {activeTab !== "contacts" && !selectedChat && renderHeader()}
+      {activeTab !== "contacts" && memoizedHeader}
 
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingContainer}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
-        <View style={[styles.content, selectedChat && { paddingBottom: Platform.OS === 'ios' ? 8 : 4 }]}>
+        <View style={styles.content}>
           {activeTab === "chat" && renderConversationsView()}
           {activeTab === "contacts" && (
             <ContactsScreen
@@ -1736,12 +1531,12 @@ export default function HomeScreen({
           {activeTab === "profile" && renderProfileView()}
         </View>
 
-        {!selectedChat && (
+        {(
           <View style={[
             styles.floatingTabBar,
-            Platform.OS === 'ios' && {
+            {
               paddingBottom: Math.max(insets.bottom, 12),
-              height: 60 + Math.max(insets.bottom, 12)
+              height: 64 + Math.max(insets.bottom, 12)
             }
           ]}>
             <TouchableOpacity

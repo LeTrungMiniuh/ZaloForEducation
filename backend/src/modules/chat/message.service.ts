@@ -606,4 +606,87 @@ export class MessageService {
 
     console.log(`[DEEP CLEANUP] Successfully deleted ${messagesToDelete.length} messages and associated S3 files for ${convId}`);
   }
+
+  /**
+   * GET CONTEXT AROUND A MESSAGE (FOR SEARCH DEEP-LINKING)
+   * Fetches messages from targetId UP TO the latest, and provides nextCursor for OLDER.
+   */
+  async getMessagesContext(
+    convId: string,
+    messageId: string,
+    userEmail: string,
+    limit: number = 50
+  ) {
+    await this.ensureConversationMember(convId, userEmail);
+
+    // 1. Get user's lastClearedAt timestamp
+    const userMapping = await this.db.docClient.send(new GetCommand({
+      TableName: this.db.tableName,
+      Key: { PK: `USER#${userEmail}`, SK: convId }
+    }));
+    const lastClearedAt = userMapping.Item?.lastClearedAt || "";
+    const msgPrefix = `MSG#${lastClearedAt}`;
+
+    // 2. Fetch the target message
+    const targetRes = await this.db.docClient.send(new GetCommand({
+      TableName: this.db.tableName,
+      Key: { PK: convId, SK: messageId }
+    }));
+    const targetItem = targetRes.Item as Message;
+    if (!targetItem || (lastClearedAt && targetItem.SK <= msgPrefix)) {
+      throw new BadRequestException('Target message not found or cleared');
+    }
+
+    // 3. Query messages OLDER than target (for nextCursor)
+    const olderParams = {
+      TableName: this.db.tableName,
+      KeyConditionExpression: "PK = :pk AND SK BETWEEN :cleared AND :targetSk",
+      ExpressionAttributeValues: {
+        ":pk": convId,
+        ":cleared": msgPrefix,
+        ":targetSk": messageId,
+      },
+      ScanIndexForward: false,
+      Limit: limit,
+    };
+
+    // 4. Query messages NEWER than target (generous limit for "all messages" feel)
+    const newerParams = {
+      TableName: this.db.tableName,
+      KeyConditionExpression: "PK = :pk AND SK > :targetSk",
+      ExpressionAttributeValues: {
+        ":pk": convId,
+        ":targetSk": messageId,
+      },
+      ScanIndexForward: true, 
+      Limit: 2000, // Fetch up to 2000 newer messages (virtually all for most chats)
+    };
+
+    const [olderRes, newerRes] = await Promise.all([
+      this.db.docClient.send(new QueryCommand(olderParams)),
+      this.db.docClient.send(new QueryCommand(newerParams))
+    ]);
+
+    const olderItems = (olderRes.Items || []) as Message[];
+    const newerItems = (newerRes.Items || []) as Message[];
+
+    // Result: [Older (some)] + [Target] + [Newer (all to latest)]
+    const combined = [
+      ...olderItems.filter(m => m.SK !== messageId).reverse(),
+      targetItem,
+      ...newerItems
+    ];
+
+    let nextCursor = null;
+    if (olderRes.LastEvaluatedKey) {
+      nextCursor = Buffer.from(JSON.stringify(olderRes.LastEvaluatedKey)).toString('base64');
+    }
+
+    return {
+      messages: combined
+        .filter(msg => !msg.removed?.includes(userEmail))
+        .map(msg => ({ ...msg, id: msg.id || msg.SK })),
+      nextCursor,
+    };
+  }
 }

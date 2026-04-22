@@ -71,6 +71,20 @@ export const getDisplayAvatar = (email: string | undefined, currentUser: any, us
 export const getMessagePreview = (message: any): string => {
   if (!message) return 'Tin nhắn';
   if (message.recalled) return 'Tin nhắn đã được thu hồi';
+
+  // [SENIOR 10/10] Rich Preview for Calls
+  if (message.type === 'SYSTEM_CALL' || message.type === 'call') {
+    const callType = message.callType || message.metadata?.callType || 'audio';
+    const callStatus = (message.callStatus || message.metadata?.callStatus || '').toLowerCase();
+    const isVideo = callType === 'video';
+    const label = isVideo ? 'Video' : 'Thoại';
+    
+    if (callStatus === 'missed' || callStatus === 'no_answer' || callStatus === 'cancelled') {
+      return `[Cuộc gọi ${label} nhỡ]`;
+    }
+    return `[Cuộc gọi ${label}]`;
+  }
+
   if (Array.isArray(message.media) && message.media.length > 0) {
     const hasSticker = message.media.some((item: any) => {
       const mime = String(item?.mimeType || item?.fileType || '').toLowerCase();

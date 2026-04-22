@@ -28,7 +28,10 @@ const FLUENT_EMOJI_MAP = {
     '😡': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Enraged%20Face/3D/enraged_face_3d.png',
 };
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export default function ChatInput({ onSendMessage, replyTarget, onClearReply, onTyping }) {
+  const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -37,10 +40,7 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
   const inputRef = useRef(null);
 
   React.useEffect(() => {
-    const timer = setTimeout(() => {
-      inputRef.current?.focus();
-    }, 100);
-    return () => clearTimeout(timer);
+    // [REMOVED] Autofocus removed per user request to keep screen clear for reading.
   }, []);
 
   // TODO: typing timeout logic inside here
@@ -140,7 +140,7 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       {/* Reply Preview */}
       {replyTarget && (
         <View style={styles.replyPreview}>
@@ -221,7 +221,6 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
         <View style={styles.textInputWrapper}>
           <TextInput
             ref={inputRef}
-            autoFocus={true}
             value={text}
             onChangeText={handleTextChange}
             placeholder="Nhập tin nhắn..."

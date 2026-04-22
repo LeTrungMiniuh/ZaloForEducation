@@ -60,6 +60,12 @@ export const useChatStore = create((set, get) => ({
   isLoadingMessages: false,
   nextCursor: null,
   fetchToken: 0,
+  userProfiles: {}, // [NEW] Cache for user names/avatars
+
+  upsertProfiles: (newProfiles) => 
+    set((state) => ({ 
+      userProfiles: { ...state.userProfiles, ...newProfiles } 
+    })),
 
   getMessageConvId: (message) => {
     if (!message || typeof message !== "object") return null;
@@ -76,16 +82,26 @@ export const useChatStore = create((set, get) => ({
       return { conversations: Array.isArray(next) ? next : [] };
     }),
 
-  setActiveConversation: (convId) => {
-    if (get().activeConvId === convId) return;
+  setActiveConversation: (convId, targetId = null) => {
+    const currentActiveId = get().activeConvId;
+    const currentMessages = get().messages;
 
-    // Offline-first: Load từ cache trước
-    const cached = getCachedMessages(convId);
+    // If already in this conversation AND the target message is already loaded, 
+    // just let the UI handle scrolling without a fresh fetch.
+    if (currentActiveId === convId && targetId) {
+      const exists = currentMessages.some(m => m.id === targetId || m.SK === targetId);
+      if (exists) return;
+    }
+
+    if (currentActiveId === convId && !targetId) return;
+
+    // Offline-first: Load from cache first (if no targetId)
+    const cached = targetId ? [] : getCachedMessages(convId);
     const fetchToken = get().fetchToken + 1;
     set({ activeConvId: convId, messages: cached, nextCursor: null, fetchToken });
 
     if (convId) {
-      get().fetchMessages(convId, 30, fetchToken);
+      get().fetchMessages(convId, 50, fetchToken, targetId);
     }
   },
 
@@ -215,12 +231,17 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  fetchMessages: async (convId, limit = 30, requestToken = get().fetchToken) => {
+  fetchMessages: async (convId, limit = 30, requestToken = get().fetchToken, targetId = null) => {
     set({ isLoadingMessages: true });
     try {
+      const queryParams = { limit };
+      if (targetId) {
+        queryParams.targetId = targetId;
+      }
+
       const res = await chatGet(
         `/conversations/${encodeURIComponent(convId)}/messages`,
-        { limit },
+        queryParams,
       );
       const payload = res?.data || {};
       const newMessages = (Array.isArray(payload?.messages)

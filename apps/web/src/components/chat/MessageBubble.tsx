@@ -22,6 +22,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useCallStore } from '../../store/callStore';
 import { useChatStore } from '../../store/chatStore';
 import { formatFileSize, getDisplayAvatar, getDisplayName, normalizeAttachment, truncateFileName } from '../../utils/chatUtils';
+import SystemCallMessageItem from './SystemCallMessageItem';
 
 interface MessageBubbleProps {
   message: any;
@@ -164,7 +165,29 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
   };
 
   // 1. Handle System Messages separately
-  if (message.type === 'system') {
+  if (message.type === 'system' || message.type === 'SYSTEM_CALL' || message.type === 'call') {
+    if (message.type === 'SYSTEM_CALL' || message.type === 'call' || (message.type === 'system' && message.content?.includes('Cuộc gọi'))) {
+      return (
+        <SystemCallMessageItem 
+          message={message} 
+          currentUserEmail={user?.email || ''} 
+          onCallBack={(type) => {
+            const partnerEmail = message.metadata?.callerId === user?.email 
+              ? message.metadata?.receiverId 
+              : message.metadata?.callerId;
+            if (partnerEmail) {
+              // Note: Assuming startOutgoingCall or similar is available in callStore
+              // We can use navigate or a store action here.
+              // For web, usually it's handled via a central call handler
+              const callStore = useCallStore.getState();
+              const partnerProfile = userProfiles[partnerEmail] || { email: partnerEmail, fullName: partnerEmail };
+              (callStore as any).startOutgoingCall(partnerProfile, type, activeConvId);
+            }
+          }}
+        />
+      );
+    }
+
     const actorEmail = (message as any).systemActionBy;
     const isActorMe = actorEmail === user?.email;
     

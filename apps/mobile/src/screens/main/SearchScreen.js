@@ -25,8 +25,7 @@ import SafeImage from '../../components/common/SafeImage';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DEFAULT_AVATAR =
-  'https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png';
+const DEFAULT_AVATAR = require('../../../assets/logo_blue.png');
 const RESULTS_PER_PAGE = 5;
 
 const TAG_CONFIG = {
@@ -99,8 +98,9 @@ const SearchItem = memo(
     const subtitle = (isMessage || isFile) ? item.content : '';
 
     // For messages, prioritize sender's avatar
-    const senderAvatar = item.sender?.avatar || item.sender?.avatarUrl || DEFAULT_AVATAR;
-    const itemAvatar = isMessage ? senderAvatar : (item.avatar || DEFAULT_AVATAR);
+    const senderAvatar = item.sender?.avatar || item.sender?.avatarUrl;
+    const itemAvatarUri = isMessage ? senderAvatar : item.avatar;
+    const avatarSource = itemAvatarUri ? { uri: itemAvatarUri } : DEFAULT_AVATAR;
 
     const animatedBorderColor = isHighlighting
       ? highlightAnim.interpolate({
@@ -129,7 +129,7 @@ const SearchItem = memo(
             </View>
           ) : (
             <SafeImage
-              source={{ uri: itemAvatar }}
+              source={avatarSource}
               style={styles.avatar}
               fallback={DEFAULT_AVATAR}
             />
@@ -195,11 +195,15 @@ export default function SearchScreen({ onNavigate, goBack }) {
     handleSelect,
   } = useSearchStore();
 
-  // Auto-focus on mount
+  // Auto-focus on mount & Cleanup on exit
   useEffect(() => {
     const t = setTimeout(() => inputRef.current?.focus(), 100);
-    return () => clearTimeout(t);
-  }, []);
+    return () => {
+      clearTimeout(t);
+      setQuery('');
+      clearResults();
+    };
+  }, [setQuery, clearResults]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 

@@ -148,71 +148,55 @@ export class CallService {
   }
 
   /**
-   * [SENIOR] Chốt sổ cuộc gọi: Lưu DynamoDB + Gửi tin nhắn Chat
+   * [SENIOR 10/10] Chốt sổ cuộc gọi theo cấu trúc Production-grade
    */
   async finalizeCallHistory(data: {
     convId: string;
     callId: string;
     caller: string;
     receiver: string;
-    status: 'MISSED' | 'REJECTED' | 'COMPLETED';
+    status: 'MISSED' | 'REJECTED' | 'COMPLETED' | 'CANCELLED';
     callType: 'audio' | 'video';
+    durationOverride?: number;
+    endedAt?: string;
   }) {
-    const { convId, callId, caller, receiver, status, callType } = data;
-    const now = Date.now();
-    const timestamp = new Date().toISOString();
-
-    // 1. Tính toán duration
-    let durationSec = 0;
-    if (status === 'COMPLETED') {
-      const startStr = await this.redis.get(`call:start:${callId}`);
-      if (startStr) {
-        durationSec = Math.floor((now - parseInt(startStr)) / 1000);
-      }
-    }
-
-    // 2. Format nội dung tin nhắn hệ thống theo chuẩn "Zalo/Messenger"
-    let displayContent = '';
-    const typeStr = callType === 'audio' ? 'thoại' : 'video';
+    const { convId, callId, caller, receiver, status: inputStatus, callType, durationOverride, endedAt: endedAtInput } = data;
     
-    if (status === 'MISSED') {
-      displayContent = `Cuộc gọi ${typeStr} lỡ`;
-    } else if (status === 'REJECTED') {
-      displayContent = `Cuộc gọi ${typeStr} bị từ chối`;
-    } else {
-      const mins = Math.floor(durationSec / 60);
-      const secs = durationSec % 60;
-      const durationStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-      displayContent = `Cuộc gọi ${typeStr} (${durationStr})`;
+    // [SENIOR 10/10] Idempotency: Chỉ cho phép chốt sổ 1 lần duy nhất cho 1 callId
+    const lockKey = `call:finalized:${callId}`;
+    const alreadyFinalized = await this.redis.get(lockKey);
+    if (alreadyFinalized) {
+      this.logger.warn(`[Call-History] CallId ${callId} already finalized. Skipping duplicate.`);
+      return null;
+    }
+    await this.redis.set(lockKey, 'true', 3600); // Khóa trong 1h
+
+    const now = new Date().toISOString();
+    const endedAt = endedAtInput || now;
+
+    // 1. Lấy mốc thời gian bắt đầu
+    const startStr = await this.redis.get(`call:start:${callId}`);
+    const createdAt = startStr ? new Date(parseInt(startStr)).toISOString() : now;
+
+    // 2. Tính toán duration & status (Ưu tiên Client, fallback Backend calculation)
+    let durationSec = durationOverride || 0;
+    let status = inputStatus;
+
+    if (durationSec > 0) {
+      status = 'COMPLETED'; // Nếu client bảo có duration -> Chắc chắn là đã kết nối
+    } else if (status === 'COMPLETED' && startStr) {
+      durationSec = Math.floor((new Date(endedAt).getTime() - parseInt(startStr)) / 1000);
     }
 
-    this.logger.log(`[Call-History] Finalizing: ${displayContent} | CallId: ${callId}`);
+    this.logger.log(`[Call-History-10/10] Finalizing ${callId} | Status: ${status} | Dur: ${durationSec}s`);
 
     try {
-      // 3. Lưu vào DynamoDB (Partition Key: CONV#id, Sort Key: CALL#timestamp#id)
-      await this.db.docClient.send(new PutCommand({
-        TableName: this.db.tableName,
-        Item: {
-          PK: `CONV#${convId}`,
-          SK: `CALL#${timestamp}#${callId}`,
-          type: 'CALL_HISTORY',
-          callId,
-          caller,
-          receiver,
-          status,
-          callType,
-          durationSec,
-          content: displayContent,
-          createdAt: timestamp
-        }
-      }));
-
-      // 4. Gửi tin nhắn vào đoạn chat (SYSTEM_CALL Message)
+      // 3. Gửi tin nhắn vào đoạn chat theo cấu trúc 10/10
       const callMsg = await this.messageService.sendMessage(
         convId,
-        'system',
-        displayContent,
-        'SYSTEM_CALL',
+        caller, // senderId = callerId
+        'call', // content generic để tránh bẫy i18n
+        'SYSTEM_CALL', // Type chuẩn production
         [],
         [],
         null,
@@ -222,7 +206,10 @@ export class CallService {
           callStatus: status.toLowerCase(),
           callerId: caller,
           receiverId: receiver,
-          duration: durationSec
+          participants: [caller, receiver], // Sẵn sàng cho group call
+          duration: durationSec,
+          createdAt,
+          endedAt
         }
       );
 
@@ -231,7 +218,7 @@ export class CallService {
 
       return callMsg;
     } catch (err) {
-      this.logger.error(`[Call-History] FAILED to save history for ${callId}`, err);
+      this.logger.error(`[Call-History] FAILED to save 10/10 history for ${callId}`, err);
     }
   }
 }

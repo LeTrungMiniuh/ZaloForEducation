@@ -1,3 +1,4 @@
+import { Keyboard } from 'react-native';
 import { create } from 'zustand';
 import { apiRequest } from '../utils/api';
 
@@ -227,13 +228,14 @@ export const useSearchStore = create((set, get) => {
 
       get().setActiveId(resolvedId, item.type);
 
+      Keyboard.dismiss();
       // Delay for tap feedback animation
       setTimeout(() => {
         if (item.type === 'CONTACT') {
           // Signature: (screen, params, tab)
           onNavigate('profile', { userId: item.userId || item.id });
         } else if (item.type === 'MESSAGE' || item.type === 'FILE') {
-          onNavigate('home', {
+          onNavigate('chat', {
             conversationId: item.conversationId,
             targetMessageId: item.messageId || item.id,
             highlightKeyword: get().lastQuery,

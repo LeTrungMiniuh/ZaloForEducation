@@ -1,6 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, Pressable, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, StyleSheet, Image, Pressable, TouchableOpacity, Linking, ActivityIndicator } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Typography } from '../../constants/Theme';
+import { useAuth } from '../../context/AuthContext';
 
 const FLUENT_EMOJI_MAP = {
   '👍': 'https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Thumbs%20Up/3D/thumbs_up_3d.png',
@@ -16,8 +18,10 @@ Object.keys(FLUENT_EMOJI_MAP).forEach(key => {
   FLUENT_EMOJI_MAP[key] = FLUENT_EMOJI_MAP[key].replace(/ /g, '%20');
 });
 
+const DEFAULT_AVATAR = require('../../../assets/logo_blue.png');
+
 const getDisplayAvatar = (userId) => {
-  return "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png"; // Fallback, pass from props if available
+  return DEFAULT_AVATAR;
 };
 
 const normalizeAttachment = (attachment) => {
@@ -65,12 +69,12 @@ const isStickerMedia = (item) => {
   return mime.includes('sticker') || item?.isSticker === true;
 };
 
-const HighlightText = ({ text, keyword }) => {
-  if (!text || !keyword?.trim()) return <Text>{text}</Text>;
+const HighlightText = ({ text, keyword, style }) => {
+  if (!text || !keyword?.trim()) return <Text style={style}>{text}</Text>;
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const parts = String(text).split(new RegExp(`(${escaped})`, 'gi'));
   return (
-    <Text>
+    <Text style={style}>
       {parts.map((part, i) =>
         part.toLowerCase() === keyword.toLowerCase() ? (
           <Text key={i} style={{ backgroundColor: '#fff59d', fontWeight: 'bold' }}>
@@ -94,6 +98,7 @@ export default function MessageBubble({
   isHighlighted,
   highlightKeyword 
 }) {
+  const { user } = useAuth();
   const isRecalled = !!message.recalled;
   const isPinned = !!message.pinned;
 
@@ -122,10 +127,82 @@ export default function MessageBubble({
     );
   }
 
+  const RenderBubbleContent = () => (
+    <>
+      {message.replyTo && (
+        <View style={[styles.replyBox, isMe && styles.replyBoxMe]}>
+          <Text style={[styles.replyHeader, isMe && styles.replyHeaderTextMe]}>
+            {message.replyTo.senderId === user?.email ? "Bạn" : "Người dùng"}
+          </Text>
+          <Text style={[styles.replyContent, isMe && styles.replyContentTextMe]} numberOfLines={2}>
+            {message.replyTo.content || "Đính kèm"}
+          </Text>
+        </View>
+      )}
+
+      {isRecalled ? (
+        <Text style={[styles.messageText, styles.recalledText, isMe && styles.messageTextMe]}>
+          Tin nhắn đã được thu hồi
+        </Text>
+      ) : (
+        <>
+          {message.content ? (
+            <HighlightText 
+              text={message.content} 
+              keyword={highlightKeyword} 
+              style={[styles.messageText, isMe ? styles.messageTextMe : styles.messageTextOther]} 
+            />
+          ) : null}
+
+          {message.media && message.media.length > 0 && (
+            <View style={styles.mediaContainer}>
+              <View style={styles.imageGrid}>
+                {message.media.map((item, idx) => {
+                  const mediaSource = (item.url || item.dataUrl) ? { uri: item.url || item.dataUrl } : DEFAULT_AVATAR;
+                  return (
+                    <TouchableOpacity key={idx} style={styles.imageBox}>
+                      <Image 
+                        source={mediaSource} 
+                        style={[styles.mediaImage, isStickerMedia(item) && styles.stickerImage]} 
+                        resizeMode={isStickerMedia(item) ? "contain" : "cover"}
+                      />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {message.files && message.files.length > 0 && (
+            <View style={styles.fileList}>
+              {message.files.map((file, idx) => {
+                const f = normalizeAttachment(file);
+                return (
+                  <View key={idx} style={[styles.fileCard, isMe && styles.fileCardMe]}>
+                    <View style={styles.fileIconBox}>
+                      <Text style={styles.fileIcon}>{getFileIcon(f.mimeType, f.name)}</Text>
+                    </View>
+                    <View style={styles.fileInfo}>
+                      <Text style={[styles.fileName, isMe && styles.fileNameMe]} numberOfLines={1}>{f.name}</Text>
+                      <Text style={[styles.fileSize, isMe && styles.fileSizeMe]}>{formatFileSize(f.size)}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </>
+      )}
+    </>
+  );
+
   return (
     <View style={[styles.container, isMe ? styles.containerMe : styles.containerOther]}>
       {!isMe && (
-        <Image source={{ uri: userProfile?.avatarUrl || getDisplayAvatar(message.senderId) }} style={styles.avatar} />
+        <Image 
+          source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} 
+          style={styles.avatar} 
+        />
       )}
       
       <View style={[styles.bubbleWrapper, isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperOther]}>
@@ -139,110 +216,38 @@ export default function MessageBubble({
           )}
         </View>
 
-        <Pressable 
-          style={[
-            styles.bubble, 
-            isMe ? styles.bubbleMe : styles.bubbleOther,
-            isHighlighted && styles.bubbleHighlighted
-          ]} 
-          onLongPress={() => onLongPress(message)}
-        >
-          {message.replyTo && (
-            <View style={styles.replyBox}>
-              <Text style={styles.replyHeader}>ĐANG TRẢ LỜI</Text>
-              <Text style={styles.replyContent} numberOfLines={1}>{message.replyTo.content}</Text>
-            </View>
-          )}
-
-          <Text style={[styles.messageText, isRecalled && styles.recalledText, !isMe && styles.messageTextOther]}>
-            {isRecalled ? (
-              "Tin nhắn đã được thu hồi"
-            ) : highlightKeyword ? (
-              <HighlightText text={message.content} keyword={highlightKeyword} />
-            ) : (
-              message.content
-            )}
-          </Text>
-
-          {/* Media & Files */}
-          {!isRecalled && (Array.isArray(message.media) || Array.isArray(message.files)) && (
-            <View style={styles.mediaContainer}>
-              {/* Media (Images/Videos) */}
-              <View style={styles.imageGrid}>
-                {(Array.isArray(message.media) ? message.media : []).map((item, index) => {
-                  const file = normalizeAttachment(item);
-                  const isVideo = isVideoAttachment(item);
-                  const isSticker = isStickerMedia(item);
-                  const isHD = item?.isHD === true;
-                  
-                  if (isVideo) {
-                    return (
-                      <TouchableOpacity key={index} style={styles.videoBox} onPress={() => Linking.openURL(file.dataUrl)}>
-                        {file.dataUrl ? (
-                          <Image source={{ uri: file.dataUrl }} style={styles.mediaImage} blurRadius={10} />
-                        ) : (
-                          <View style={[styles.mediaImage, { backgroundColor: '#333' }]} />
-                        )}
-                        <View style={styles.videoOverlay}>
-                          <Text style={styles.videoIcon}>play_circle</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  }
-
-                  return (
-                    <View key={index} style={styles.imageBox}>
-                      {file.dataUrl ? (
-                        <Image 
-                          source={{ uri: file.dataUrl }} 
-                          style={[styles.mediaImage, isSticker && styles.stickerImage]} 
-                          resizeMode={isSticker ? "contain" : "cover"} 
-                        />
-                      ) : (
-                        <View style={styles.mediaImage} />
-                      )}
-                      {(isSticker || isHD) && (
-                        <View style={styles.mediaBadgeRow}>
-                          {isSticker && <View style={styles.stkBadge}><Text style={styles.badgeText}>STK</Text></View>}
-                          {isHD && <View style={styles.hdBadge}><Text style={styles.badgeText}>HD</Text></View>}
-                        </View>
-                      )}
-                    </View>
-                  );
-                })}
-              </View>
-
-              {/* Files */}
-              <View style={styles.fileList}>
-                {(Array.isArray(message.files) ? message.files : []).map((item, index) => {
-                  const file = normalizeAttachment(item);
-                  return (
-                    <TouchableOpacity key={index} style={styles.fileCard} onPress={() => Linking.openURL(file.dataUrl)}>
-                      <View style={styles.fileIconBox}>
-                        <Text style={styles.fileIcon}>{getFileIcon(file.mimeType, file.name)}</Text>
-                      </View>
-                      <View style={styles.fileInfo}>
-                        <Text numberOfLines={1} style={styles.fileName}>{file.name}</Text>
-                        <Text style={styles.fileSize}>{formatFileSize(file.size)}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+        <Pressable onLongPress={() => onLongPress(message)}>
+          {isMe ? (
+            <LinearGradient
+              colors={['#e3f2fd', '#bbdefb']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={[
+                styles.bubble,
+                styles.bubbleMe,
+                isHighlighted && styles.bubbleHighlighted
+              ]}
+            >
+              <RenderBubbleContent />
+            </LinearGradient>
+          ) : (
+            <View
+              style={[
+                styles.bubble,
+                styles.bubbleOther,
+                isHighlighted && styles.bubbleHighlighted
+              ]}
+            >
+              <RenderBubbleContent />
             </View>
           )}
         </Pressable>
 
-        {/* Reactions Summary */}
-        {reactionSummary.length > 0 && (
+        {message.reactions && reactionSummary.length > 0 && (
           <View style={[styles.reactionSummary, isMe ? styles.reactionSummaryMe : styles.reactionSummaryOther]}>
-            {reactionSummary.map(([emoji, users]) => (
-              <TouchableOpacity key={emoji} style={styles.reactionBadge} onPress={() => onReaction && onReaction(message, emoji)}>
-                {FLUENT_EMOJI_MAP[emoji] ? (
-                  <Image source={{ uri: FLUENT_EMOJI_MAP[emoji] }} style={styles.reactionEmojiIcon} />
-                ) : (
-                  <Text style={{ fontSize: 12 }}>{emoji}</Text>
-                )}
+            {reactionSummary.map(([emoji, users], idx) => (
+              <TouchableOpacity key={idx} style={styles.reactionBadge} onPress={() => onReaction(message, emoji)}>
+                <Image source={{ uri: FLUENT_EMOJI_MAP[emoji] }} style={styles.reactionEmojiIcon} />
                 <Text style={styles.reactionCount}>{users.length}</Text>
               </TouchableOpacity>
             ))}
@@ -254,9 +259,15 @@ export default function MessageBubble({
             {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
           </Text>
           {isMe && (
-            <Text style={styles.statusText}>
-              {message.status === 'sending' ? 'Đang gửi...' : message.status === 'error' ? 'Lỗi' : 'Đã gửi'}
-            </Text>
+            <View style={styles.statusWrapper}>
+              {message.status === 'sending' ? (
+                <ActivityIndicator size={8} color={Colors.primary} />
+              ) : message.status === 'error' ? (
+                <Text style={[styles.statusIcon, { color: '#ef4444' }]}>error</Text>
+              ) : (
+                <Text style={styles.statusIcon}>check_circle</Text>
+              )}
+            </View>
           )}
         </View>
       </View>
@@ -267,8 +278,9 @@ export default function MessageBubble({
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    marginBottom: 16,
+    marginBottom: 6,
     alignItems: 'flex-end',
+    paddingHorizontal: 12,
   },
   containerMe: {
     justifyContent: 'flex-end',
@@ -277,14 +289,14 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    marginRight: 8,
-    marginBottom: 4,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginRight: 6,
+    marginBottom: 2,
   },
   bubbleWrapper: {
-    maxWidth: '75%',
+    maxWidth: '85%',
   },
   bubbleWrapperMe: {
     alignItems: 'flex-end',
@@ -295,99 +307,87 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
-    gap: 6,
-  },
-  senderName: {
-    ...Typography.body,
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#7a8391',
-  },
-  pinBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fffbeb', // amber-50
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#fde68a', // amber-200
-  },
-  pinIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 10,
-    color: '#d97706',
-    marginRight: 2,
-  },
-  pinText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#d97706',
-    textTransform: 'uppercase',
+    marginBottom: 2,
+    gap: 4,
   },
   bubble: {
-    padding: 12,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.08,
     shadowRadius: 2,
     elevation: 1,
   },
   bubbleHighlighted: {
-    borderColor: '#FFD700',
+    backgroundColor: '#fff9c4',
+    borderColor: '#ffd600',
     borderWidth: 2,
+    elevation: 4,
+    shadowOpacity: 0.3,
   },
   bubbleMe: {
-    backgroundColor: '#e6f0fa', // Primary/10
-    borderBottomLeftRadius: 16,
     borderBottomRightRadius: 4,
   },
   bubbleOther: {
     backgroundColor: '#ffffff',
     borderBottomLeftRadius: 4,
-    borderBottomRightRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.05)',
   },
   messageText: {
     ...Typography.body,
-    fontSize: 15,
-    color: '#1f2631',
+    fontSize: 16,
     lineHeight: 22,
+    color: '#000000',
+    fontWeight: '500',
+  },
+  messageTextMe: {
+    color: '#000000',
   },
   messageTextOther: {
-    color: '#1f2631',
+    color: '#000000',
   },
   recalledText: {
     fontStyle: 'italic',
-    opacity: 0.5,
+    opacity: 0.6,
   },
   replyBox: {
-    backgroundColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: 'rgba(0,0,0,0.08)',
     borderLeftWidth: 3,
     borderLeftColor: Colors.primary,
-    padding: 8,
-    borderRadius: 6,
+    padding: 10,
+    borderRadius: 10,
     marginBottom: 8,
   },
+  replyBoxMe: {
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    borderLeftColor: Colors.primary,
+  },
   replyHeader: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
-    opacity: 0.6,
+    color: Colors.primary,
     marginBottom: 2,
+  },
+  replyHeaderTextMe: {
+    color: Colors.primary,
+    opacity: 0.9,
   },
   replyContent: {
     ...Typography.body,
     fontSize: 13,
+    color: '#333',
     fontStyle: 'italic',
+  },
+  replyContentTextMe: {
+    color: '#333',
     opacity: 0.8,
   },
   mediaContainer: {
-    marginTop: 8,
-    gap: 8,
+    marginTop: 4,
+    gap: 4,
   },
   imageGrid: {
     flexDirection: 'row',
@@ -395,11 +395,10 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   imageBox: {
-    width: 120,
-    height: 120,
+    width: 130,
+    height: 130,
     borderRadius: 12,
     overflow: 'hidden',
-    position: 'relative',
   },
   mediaImage: {
     width: '100%',
@@ -409,66 +408,25 @@ const styles = StyleSheet.create({
   stickerImage: {
     backgroundColor: 'transparent',
   },
-  videoBox: {
-    width: 120,
-    height: 120,
-    borderRadius: 12,
-    overflow: 'hidden',
-    position: 'relative',
-    backgroundColor: '#000',
-  },
-  videoOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  videoIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 32,
-    color: '#fff',
-  },
-  mediaBadgeRow: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    flexDirection: 'row',
-    gap: 4,
-  },
-  stkBadge: {
-    backgroundColor: '#059669',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  hdBadge: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  badgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#fff',
-  },
   fileList: {
     gap: 6,
+    marginTop: 4,
   },
   fileCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.7)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: 'rgba(0,0,0,0.04)',
     padding: 8,
     borderRadius: 12,
-    width: 240,
+    width: 220,
+  },
+  fileCardMe: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
   },
   fileIconBox: {
     width: 32,
     height: 32,
-    backgroundColor: 'rgba(0,65,143,0.1)',
+    backgroundColor: '#fff',
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
@@ -476,21 +434,26 @@ const styles = StyleSheet.create({
   },
   fileIcon: {
     fontFamily: 'Material Symbols Outlined',
-    fontSize: 20,
+    fontSize: 18,
     color: Colors.primary,
   },
   fileInfo: {
     flex: 1,
   },
   fileName: {
-    ...Typography.body,
     fontSize: 13,
     fontWeight: '700',
+    color: '#1f2631',
+  },
+  fileNameMe: {
+    color: '#1f2631',
   },
   fileSize: {
     fontSize: 10,
-    color: '#7a8391',
-    marginTop: 2,
+    color: '#6b7280',
+  },
+  fileSizeMe: {
+    color: '#6b7280',
   },
   reactionSummary: {
     flexDirection: 'row',
@@ -502,11 +465,11 @@ const styles = StyleSheet.create({
   },
   reactionSummaryMe: {
     alignSelf: 'flex-end',
-    marginRight: 10,
+    marginRight: 4,
   },
   reactionSummaryOther: {
     alignSelf: 'flex-start',
-    marginLeft: 10,
+    marginLeft: 4,
   },
   reactionBadge: {
     flexDirection: 'row',
@@ -516,13 +479,13 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0,0,0,0.08)',
     borderRadius: 12,
     paddingHorizontal: 6,
-    paddingVertical: 3,
-    gap: 4,
+    paddingVertical: 2,
+    gap: 3,
     elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowRadius: 1,
   },
   reactionEmojiIcon: {
     width: 14,
@@ -536,7 +499,7 @@ const styles = StyleSheet.create({
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     marginTop: 2,
     paddingHorizontal: 4,
   },
@@ -544,24 +507,28 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   timeText: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9,
+    fontWeight: '600',
     color: '#9ba3b2',
   },
-  statusText: {
-    fontSize: 10,
-    fontWeight: '600',
+  statusWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusIcon: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 11,
     color: Colors.primary,
   },
   systemContainer: {
     alignItems: 'center',
-    marginVertical: 16,
+    marginVertical: 12,
   },
   systemBadge: {
     backgroundColor: 'rgba(0,0,0,0.05)',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
   systemText: {
     fontSize: 11,
@@ -569,8 +536,8 @@ const styles = StyleSheet.create({
     color: '#5a6781',
   },
   systemTime: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#9ba3b2',
-    marginTop: 4,
+    marginTop: 2,
   }
 });

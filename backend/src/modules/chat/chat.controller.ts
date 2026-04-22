@@ -87,8 +87,15 @@ export class ChatController {
     @Req() req: any,
     @Query("limit", new ParseIntPipe({ optional: true })) limit?: number,
     @Query("cursor") cursor?: string,
+    @Query("targetId") targetId?: string,
   ) {
     const email = req.user.email;
+
+    if (targetId) {
+      // Use a larger limit for context fetch (100 older)
+      return await this.messageService.getMessagesContext(convId, targetId, email, 100);
+    }
+
     let lastEvaluatedKey = undefined;
     if (cursor) {
       try {
