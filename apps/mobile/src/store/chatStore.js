@@ -108,6 +108,15 @@ const chatPost = async (path, body) => {
   return normalizeApiResponse(res);
 };
 
+// Track IDs of messages recently sent by the current user to prevent
+// duplicates when the socket broadcasts the same message back.
+const recentlySentIds = new Set();
+const SENT_ID_TTL = 10000; // 10 seconds
+export const trackSentId = (id) => {
+  recentlySentIds.add(id);
+  setTimeout(() => recentlySentIds.delete(id), SENT_ID_TTL);
+};
+
 export const useChatStore = create((set, get) => ({
   conversations: [],
   activeConvId: null,
@@ -166,6 +175,9 @@ export const useChatStore = create((set, get) => ({
       if (!safeMessage) return state;
       const incomingConvId = get().getMessageConvId(safeMessage);
       if (!incomingConvId) return state;
+
+      // Skip if this message was recently sent by us (already in store via API response)
+      if (recentlySentIds.has(safeMessage.id)) return state;
 
       const cached = getCachedMessages(incomingConvId);
       if (!cached.some((m) => m.id === safeMessage.id)) {
@@ -272,6 +284,9 @@ export const useChatStore = create((set, get) => ({
       if (!savedMessage) {
         throw new Error("INVALID_MESSAGE_PAYLOAD");
       }
+
+      // Track the real ID so the socket broadcast is ignored
+      trackSentId(savedMessage.id);
 
       set((state) => ({
         messages:
