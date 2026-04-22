@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Ứng dụng cần quyền camera để thực hiện cuộc gọi video.",
-        "NSMicrophoneUsageDescription": "Ứng dụng cần quyền microphone để thực hiện cuộc gọi âm thanh và video."
+        "NSMicrophoneUsageDescription": "Ứng dụng cần quyền microphone để thực hiện cuộc gọi âm thanh và video.",
+        "NSLocationWhenInUseUsageDescription": "Ứng dụng cần quyền truy cập vị trí để bạn có thể chia sẻ vị trí của mình với bạn bè trong đoạn chat."
       },
       "bitcode": false
     },
@@ -30,6 +31,8 @@
         "CAMERA",
         "RECORD_AUDIO",
         "MODIFY_AUDIO_SETTINGS",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
         "ACCESS_NETWORK_STATE",
         "INTERNET",
         "WAKE_LOCK",
@@ -46,9 +49,11 @@
     },
     "plugins": [
       "expo-camera",
+      "expo-local-authentication",
+      "expo-location",
+      "expo-av",
       "expo-image-picker",
-      "expo-document-picker",
-      "expo-local-authentication"
+      "expo-document-picker"
     ]
   }
 }

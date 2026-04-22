@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { userService } from '../services/userService';
@@ -23,8 +23,8 @@ interface ProfileModalProps {
 const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const { user, refreshUser } = useAuth();
   const { isDark } = useTheme();
-  const [profile, setProfile] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
+  const [, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [uploading, setUploading] = useState<'avatar' | 'background' | null>(null);
   
@@ -40,32 +40,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
     bio: ''
   });
 
-  useEffect(() => {
-    if (isOpen) {
-      loadProfile();
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (user && isOpen) {
-      setProfile((prev: any) => ({ ...prev, ...user }));
-      
-      if (!isEditing) {
-        setFormData(prev => ({
-          ...prev,
-          fullName: user.fullName || prev.fullName,
-          gender: user.gender !== undefined ? user.gender : prev.gender,
-          dataOfBirth: user.dataOfBirth || prev.dataOfBirth,
-          phone: user.phone || prev.phone,
-          address: user.address || prev.address,
-          bio: user.bio || prev.bio
-        }));
-      }
-    }
-  }, [user, isOpen, isEditing]);
-
-  const loadProfile = async () => {
-    setLoading(true);
+  const loadProfile = useCallback(async () => {
     try {
       const data = await userService.getProfile();
       setProfile(data);
@@ -82,7 +57,43 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timeoutId = setTimeout(() => loadProfile(), 0);
+    return () => clearTimeout(timeoutId);
+  }, [isOpen, loadProfile]);
+
+  // Sync profile and formData when user/isOpen changes (store prev values as state)
+  const [prevUser, setPrevUser] = useState(user);
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+  if (isOpen && isOpen !== prevIsOpen) {
+    setPrevIsOpen(isOpen);
+    setLoading(true);
+  }
+  if (!isOpen && prevIsOpen) {
+    setPrevIsOpen(false);
+  }
+  if (user && isOpen && user !== prevUser) {
+    setPrevUser(user);
+    setProfile(prev => ({ ...prev, ...user }));
+    
+    if (!isEditing) {
+      setFormData(prev => ({
+        ...prev,
+        fullName: user.fullName || prev.fullName,
+        gender: user.gender !== undefined ? user.gender : prev.gender,
+        dataOfBirth: user.dataOfBirth || prev.dataOfBirth,
+        phone: user.phone || prev.phone,
+        address: user.address || prev.address,
+        bio: user.bio || prev.bio
+      }));
+    }
+  }
+  if (user !== prevUser && !isOpen) {
+    setPrevUser(user);
+  }
 
   const handleUpdate = async () => {
     try {
@@ -97,8 +108,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
         timer: 1500,
         showConfirmButton: false
       });
-    } catch (err: any) {
-      Swal.fire('Lỗi', err.response?.data?.message || 'Không thể cập nhật thông tin.', 'error');
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } };
+      Swal.fire('Lỗi', error.response?.data?.message || 'Không thể cập nhật thông tin.', 'error');
     }
   };
 
@@ -122,8 +134,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
         timer: 1500,
         showConfirmButton: false
       });
-    } catch (err: any) {
-      Swal.fire('Lỗi', err.response?.data?.message || 'Không thể upload ảnh.', 'error');
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } };
+      Swal.fire('Lỗi', error.response?.data?.message || 'Không thể upload ảnh.', 'error');
     } finally {
       setUploading(null);
     }
@@ -138,7 +151,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
         {/* Header - Transparent overlay on background */}
         <div className="relative h-48 shrink-0">
           <img 
-            src={profile?.backgroundUrl || 'https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=1000'} 
+            src={String(profile?.backgroundUrl || 'https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=1000')} 
             className="w-full h-full object-cover"
             alt="Cover"
           />
@@ -167,7 +180,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
           <div className="flex flex-col items-center mb-6">
             <div className="relative">
               <img 
-                src={profile?.avatarUrl || 'https://lh3.googleusercontent.com/aida-public/AB6AXuCFw8hQBOq4JKJazc3GAIcVjmlrrfkICsk9jcBPauM53xp43QRLa6DqnEMow0-o1mRGziDfptfm02FgIlDbYltgzrSJtsP-_9ZmmuU5a1HL7JGFMujo8aASzX0ctHu6vqLGHtPPfgD52k6jx6G96Ll7O72OmXDkjh4_ow9-Pm7zokfO_INwwFExRPgQJIjpqmh5hidvLzAXnfEYTg61gAUYlTRiSMH5ZUorMbj1-J4SuqKTeDZetL9hIls8Yq8wumlUwCODZQaS6A'} 
+                src={String(profile?.avatarUrl || 'https://lh3.googleusercontent.com/aida-public/AB6AXuCFw8hQBOq4JKJazc3GAIcVjmlrrfkICsk9jcBPauM53xp43QRLa6DqnEMow0-o1mRGziDfptfm02FgIlDbYltgzrSJtsP-_9ZmmuU5a1HL7JGFMujo8aASzX0ctHu6vqLGHtPPfgD52k6jx6G96Ll7O72OmXDkjh4_ow9-Pm7zokfO_INwwFExRPgQJIjpqmh5hidvLzAXnfEYTg61gAUYlTRiSMH5ZUorMbj1-J4SuqKTeDZetL9hIls8Yq8wumlUwCODZQaS6A')} 
                 className="w-32 h-32 rounded-full border-4 border-white shadow-xl object-cover bg-white"
                 alt="Avatar"
               />
@@ -189,7 +202,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
             
             {!isEditing ? (
               <>
-                <h2 className="text-2xl font-black mt-4 text-on-surface">{profile?.fullName || 'Người dùng'}</h2>
+                <h2 className="text-2xl font-black mt-4 text-on-surface">{String(profile?.fullName || 'Người dùng')}</h2>
                 <p className="text-on-surface-variant font-medium text-sm mt-1">{user?.email}</p>
                 {formData.bio && (
                   <p className="text-on-surface-variant text-sm mt-3 text-center px-4 italic leading-relaxed">"{formData.bio}"</p>

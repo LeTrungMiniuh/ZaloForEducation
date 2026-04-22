@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useChatStore } from '../../store/chatStore';
@@ -18,7 +18,6 @@ const Sidebar: React.FC = () => {
   const { user, logout } = useAuth();
   const { isDark } = useTheme();
   const navigate = useNavigate();
-  const location = useLocation();
   const { conversations, setIsSearching, setSearchQuery } = useChatStore();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);

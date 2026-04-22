@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
+import React, { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 // --- STYLED COMPONENTS ---
@@ -21,7 +21,7 @@ const Navbar: React.FC = () => {
         <a href="#features" className="text-sm font-bold text-primary hover:opacity-70 transition-opacity font-body uppercase tracking-widest">Tính năng</a>
         <a href="#about" className="text-sm font-bold text-secondary hover:text-primary transition-colors font-body uppercase tracking-widest">Giới thiệu</a>
         <a href="#" className="text-sm font-bold text-secondary hover:text-primary transition-colors font-body uppercase tracking-widest">Tài liệu</a>
-        <button 
+        <button
           onClick={() => navigate(user ? '/chat' : '/login')}
           className="px-8 py-3 bg-primary text-white rounded-full font-black text-sm hover:scale-105 active:scale-95 transition-all shadow-xl font-body"
         >
@@ -49,11 +49,11 @@ const HeroSection: React.FC = () => {
         // Fade in logic (first 0.5s)
         if (currentTime < 0.5) {
           setOpacity(currentTime / 0.5);
-        } 
+        }
         // Fade out logic (last 0.5s)
         else if (currentTime > duration - 0.5) {
           setOpacity((duration - currentTime) / 0.5);
-        } 
+        }
         // Steady state
         else {
           setOpacity(1);
@@ -98,10 +98,10 @@ const HeroSection: React.FC = () => {
 
       <div className="relative z-10 max-w-7xl pt-20 text-primary">
         <motion.div
-           initial={{ opacity: 0, y: 30, filter: 'blur(10px)' }}
-           whileInView={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-           transition={{ duration: 1, ease: 'easeOut' }}
-           viewport={{ once: true }}
+          initial={{ opacity: 0, y: 30, filter: 'blur(10px)' }}
+          whileInView={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+          transition={{ duration: 1, ease: 'easeOut' }}
+          viewport={{ once: true }}
         >
           <h1 className="text-6xl md:text-9xl font-normal tracking-tight font-heading leading-[0.9] mb-12">
             Invisible <span className="text-secondary italic">technology.</span><br />
@@ -111,13 +111,13 @@ const HeroSection: React.FC = () => {
             Học tập Không giới hạn hướng tới Tương lai. Zalo Education mang đến giải pháp OTT chuyên nghiệp, an toàn và bảo mật tuyệt đối cho mọi tâm hồn học thuật.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
-            <button 
+            <button
               onClick={() => navigate(user ? '/chat' : '/login')}
               className="bg-primary text-white px-14 py-5 rounded-full font-bold text-lg hover:scale-105 transition-all shadow-2xl active:scale-95"
             >
               {user ? 'Truy cập trò chuyện' : 'Sử dụng ngay'}
             </button>
-            <button 
+            <button
               onClick={() => navigate(user ? '/profile' : '/register')}
               className="text-primary font-bold text-lg hover:opacity-70 transition-opacity"
             >
@@ -151,12 +151,12 @@ const FeatureChess: React.FC = () => {
       <div className="max-w-7xl mx-auto space-y-40">
         {features.map((f, i) => (
           <div key={i} className={`flex flex-col ${i % 2 === 0 ? 'md:flex-row' : 'md:flex-row-reverse'} items-center gap-20`}>
-            <motion.div 
-               className="flex-1 space-y-8"
-               initial={{ opacity: 0, x: i % 2 === 0 ? -50 : 50 }}
-               whileInView={{ opacity: 1, x: 0 }}
-               transition={{ duration: 0.8 }}
-               viewport={{ once: true, margin: "-100px" }}
+            <motion.div
+              className="flex-1 space-y-8"
+              initial={{ opacity: 0, x: i % 2 === 0 ? -50 : 50 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.8 }}
+              viewport={{ once: true, margin: "-100px" }}
             >
               <h3 className="text-4xl md:text-6xl font-heading leading-tight text-primary">
                 {f.title}<br />
@@ -166,21 +166,21 @@ const FeatureChess: React.FC = () => {
                 {f.desc}
               </p>
             </motion.div>
-            <motion.div 
-               className="flex-1 w-full"
-               initial={{ opacity: 0, scale: 0.9 }}
-               whileInView={{ opacity: 1, scale: 1 }}
-               transition={{ duration: 0.8 }}
-               viewport={{ once: true }}
+            <motion.div
+              className="flex-1 w-full"
+              initial={{ opacity: 0, scale: 0.9 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.8 }}
+              viewport={{ once: true }}
             >
               <div className="liquid-glass-strong rounded-[3rem] p-4 overflow-hidden relative group">
-                <video 
-                  src={f.visual} 
+                <video
+                  src={f.visual}
                   autoPlay
                   loop
                   muted
                   playsInline
-                  className="w-full aspect-square md:aspect-video object-cover rounded-[2.5rem] shadow-2xl scale-[1.01]" 
+                  className="w-full aspect-square md:aspect-video object-cover rounded-[2.5rem] shadow-2xl scale-[1.01]"
                 />
               </div>
             </motion.div>
@@ -203,7 +203,7 @@ const StatsSection: React.FC = () => {
         src="/3160-166338886_medium.mp4"
       />
       <div className="absolute inset-0 bg-white/20" />
-      
+
       <div className="relative z-10 max-w-7xl mx-auto px-6 w-full text-center">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-12 md:gap-24">
           {[
@@ -212,7 +212,7 @@ const StatsSection: React.FC = () => {
             { label: "Auth", val: "QR Scan" },
             { label: "User", val: "100k+" }
           ].map((s, i) => (
-            <motion.div 
+            <motion.div
               key={i}
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -248,7 +248,7 @@ const CTASection: React.FC = () => {
           Giao diện tối giản, trải nghiệm tối ưu. Nơi kiến thức được truyền tải một cách thuần khiết nhất.
         </p>
         <div className="pt-8">
-           <button 
+          <button
             onClick={() => navigate('/register')}
             className="px-20 py-6 bg-primary text-white rounded-full font-black text-xl hover:scale-105 transition-all shadow-2xl active:scale-95 font-body"
           >
@@ -266,14 +266,14 @@ const LandingPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-white dark:bg-surface text-primary dark:text-on-surface font-body selection:bg-primary selection:text-white">
       <Navbar />
-      
+
       <main>
         <HeroSection />
-        
+
         <FeatureChess />
-        
+
         <StatsSection />
-        
+
         <CTASection />
       </main>
 
@@ -283,11 +283,11 @@ const LandingPage: React.FC = () => {
             <img src="/logo_blue.png" alt="Logo" className="w-8 h-8 object-contain" />
             <span className="font-heading italic text-xl text-primary">Zalo Education</span>
           </div>
-          
+
           <p className="text-secondary text-sm">
             © 2026 Zalo Education System. Luxury Editorial Refactor.
           </p>
-          
+
           <div className="flex gap-10 text-sm uppercase tracking-widest text-secondary font-bold">
             <a href="#" className="hover:text-primary transition-colors">Bảo mật</a>
             <a href="#" className="hover:text-primary transition-colors">Điều khoản</a>

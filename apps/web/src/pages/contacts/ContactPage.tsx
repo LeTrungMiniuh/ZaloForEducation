@@ -128,9 +128,14 @@ const ContactsPage: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const userProfilesRef = useRef(userProfiles);
+  useEffect(() => {
+    userProfilesRef.current = userProfiles;
+  }, [userProfiles]);
+
   const loadUserProfile = useCallback(
     async (email?: string) => {
-      if (!email || email === myEmail || userProfiles[email]) return;
+      if (!email || email === myEmail || userProfilesRef.current[email]) return;
       if (profileLoadingRef.current.has(email)) return;
 
       profileLoadingRef.current.add(email);
@@ -148,7 +153,7 @@ const ContactsPage: React.FC = () => {
         profileLoadingRef.current.delete(email);
       }
     },
-    [myEmail, userProfiles],
+    [myEmail],
   );
 
   const refreshContacts = useCallback(async () => {
@@ -205,7 +210,10 @@ const ContactsPage: React.FC = () => {
   }, [myEmail, loadUserProfile]);
 
   useEffect(() => {
-    refreshContacts().catch(() => null);
+    const timer = setTimeout(() => {
+      refreshContacts().catch(() => null);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [refreshContacts]);
 
   useEffect(() => {
@@ -282,7 +290,10 @@ const ContactsPage: React.FC = () => {
       });
 
       return Array.from(nextSuggestions.values())
-        .filter((suggestion) => !hiddenSuggestionEmails.includes(suggestion.email))
+        .filter((suggestion) => {
+          const isFriend = friendships.some(f => f.sender_id === suggestion.email || f.receiver_id === suggestion.email);
+          return !hiddenSuggestionEmails.includes(suggestion.email) && !isFriend;
+        })
         .sort((left, right) =>
           left.fullName.localeCompare(right.fullName, "vi"),
         );
@@ -292,21 +303,12 @@ const ContactsPage: React.FC = () => {
       hiddenSuggestionEmails,
       pendingSuggestionEmails,
       suggestionCache,
+      friendships,
     ],
   );
 
-  useEffect(() => {
-    setPendingSuggestionEmails((prev) =>
-      prev.filter((email) =>
-        friendships.some(
-          (item) =>
-            item.status === "pending" &&
-            item.sender_id === myEmail &&
-            item.receiver_id === email,
-        ),
-      ),
-    );
-  }, [friendships, myEmail]);
+  // Removed synchronous effect to resolve cascading renders.
+  // The pendingSuggestionEmails state is now implicitly cleaned up by filtering in useMemo.
 
   const outgoingPendingSuggestionEmails = useMemo(
     () =>

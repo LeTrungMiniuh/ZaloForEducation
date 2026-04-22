@@ -46,8 +46,8 @@ const ChatPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [isInfoOpen, setIsInfoOpen] = useState(true);
-  const [replyTarget, setReplyTarget] = useState<any | null>(null);
-  const [forwardMessage, setForwardMessage] = useState<any | null>(null);
+  const [replyTarget, setReplyTarget] = useState<{ id: string; content: string; senderId?: string; [key: string]: any } | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<{ id: string; content: string; senderId?: string; [key: string]: any } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevRoomRef = useRef<string | null>(null);
@@ -164,11 +164,18 @@ const ChatPage: React.FC = () => {
     };
   }, [activeConvId, fetchMessages, socket]);
 
+  // Reset typing users when room changes (store prev value as state)
+  const [prevActiveConvId, setPrevActiveConvId] = useState(activeConvId);
+  if (activeConvId !== prevActiveConvId) {
+    setPrevActiveConvId(activeConvId);
+    setTypingUsers(new Set());
+  }
+
   // Handle typing indicator via CustomEvent from useSocketListeners
   useEffect(() => {
     setTypingUsers(new Set()); // Reset when changing room
 
-    const handleTypingEvent = (e: any) => {
+    const handleTypingEvent = (e: CustomEvent) => {
       const data = e.detail;
       if (data.convId === activeConvId && data.email !== user?.email) {
         if (data.isTyping) {
@@ -195,8 +202,8 @@ const ChatPage: React.FC = () => {
       }
     };
 
-    document.addEventListener('chat_typing_update', handleTypingEvent);
-    return () => document.removeEventListener('chat_typing_update', handleTypingEvent);
+    document.addEventListener('chat_typing_update', handleTypingEvent as EventListener);
+    return () => document.removeEventListener('chat_typing_update', handleTypingEvent as EventListener);
   }, [activeConvId, user]);
 
   // Mark as read when messages change or room opens
@@ -263,7 +270,7 @@ const ChatPage: React.FC = () => {
     );
   };
 
-  const [contextMenu, setContextMenu] = useState<{ message: any; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ message: Record<string, unknown> & { id: string; content: string; senderId?: string; pinned?: boolean; recalled?: boolean; createdAt?: string; status?: string }; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const navState = (location.state || null) as {
@@ -438,12 +445,42 @@ const ChatPage: React.FC = () => {
             />
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
-            <div className="w-48 h-48 bg-primary/5 rounded-full flex items-center justify-center mb-8 animate-float">
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-gradient-to-br from-surface-container-lowest to-surface-container-low">
+            <div className="w-48 h-48 bg-primary/5 rounded-full flex items-center justify-center mb-8 animate-float relative">
               <img src="/logo_blue.png" className="w-24 grayscale opacity-20" alt="" />
+              <div className="absolute -top-2 -right-2 w-12 h-12 bg-white dark:bg-surface-container rounded-2xl shadow-xl flex items-center justify-center animate-bounce duration-3000">
+                <LayoutGrid size={24} className="text-primary/40" />
+              </div>
             </div>
-            <h2 className="text-2xl font-extrabold text-on-surface mb-2">Chào mừng đến với Zalo Edu</h2>
-            <p className="text-on-surface-variant max-w-sm">Chọn một cuộc trò chuyện để bắt đầu trao đổi công việc và học tập hiệu quả.</p>
+            
+            <h1 className="text-2xl font-extrabold text-on-surface mb-3">Chào mừng đến với ZaloEdu</h1>
+            <p className="text-on-surface-variant max-w-md mb-10 leading-relaxed font-medium">
+              Khám phá trải nghiệm làm việc và học tập hiện đại. Chọn một cuộc hội thoại bên trái để bắt đầu nhắn tin hoặc thực hiện cuộc gọi.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl w-full">
+              <div className="bg-white dark:bg-surface-container border border-outline-variant/10 p-4 rounded-3xl flex items-center gap-4 hover:shadow-lg transition-all group cursor-pointer active:scale-95">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center text-amber-600">
+                  <Star size={24} />
+                </div>
+                <div className="flex-1 text-left">
+                  <h3 className="font-bold text-[15px]">Tin nhắn ưu tiên</h3>
+                  <p className="text-[12px] text-on-surface-variant/70">Đánh dấu và theo dõi các tin nhắn quan trọng.</p>
+                </div>
+                <ChevronRight size={18} className="text-outline/30 group-hover:text-primary transition-colors" />
+              </div>
+
+              <div className="bg-white dark:bg-surface-container border border-outline-variant/10 p-4 rounded-3xl flex items-center gap-4 hover:shadow-lg transition-all group cursor-pointer active:scale-95">
+                <div className="w-12 h-12 rounded-2xl bg-primary/5 flex items-center justify-center text-primary">
+                  <LayoutGrid size={24} />
+                </div>
+                <div className="flex-1 text-left">
+                  <h3 className="font-bold text-[15px]">Tiện ích mở rộng</h3>
+                  <p className="text-[12px] text-on-surface-variant/70">Sử dụng các công cụ hỗ trợ giảng dạy và học tập.</p>
+                </div>
+                <ChevronRight size={18} className="text-outline/30 group-hover:text-primary transition-colors" />
+              </div>
+            </div>
           </div>
         )}
       </div>

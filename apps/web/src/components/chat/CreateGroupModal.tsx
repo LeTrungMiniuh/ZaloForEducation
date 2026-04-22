@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useChatStore } from '../../store/chatStore';
 import { getDisplayName, getDisplayAvatar } from '../../utils/chatUtils';
 import { X, Users, Search, CheckCircle2, UserPlus, Loader2 } from 'lucide-react';
 import Swal from 'sweetalert2';
-import api from '../../services/api';
 
 interface CreateGroupModalProps {
   isOpen: boolean;
@@ -16,26 +15,15 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose }) 
   const { createGroupConversation, setActiveConversation, conversations, userProfiles } = useChatStore();
   const [groupName, setGroupName] = useState('');
   const [search, setSearch] = useState('');
-  const [friends, setFriends] = useState<any[]>([]);
+  const [friends, setFriends] = useState<{ email: string; displayName: string; avatarUrl: string; fullName?: string }[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchFriends();
-      setGroupName('');
-      setSearch('');
-      setSelectedIds(new Set());
-    }
-  }, [isOpen]);
-
-  const fetchFriends = () => {
-    setIsLoading(true);
-    
+  const fetchFriends = useCallback(() => {
     setTimeout(() => {
       // Extract contacts from recent direct messages
-      const contactsMap = new Map<string, any>();
+      const contactsMap = new Map<string, { email: string; displayName: string; avatarUrl: string }>();
       
       conversations.forEach(c => {
         if (c.type === 'direct') {
@@ -64,7 +52,26 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose }) 
       setFriends(Array.from(contactsMap.values()));
       setIsLoading(false);
     }, 100);
-  };
+  }, [conversations, user, userProfiles]);
+
+  // Reset form state when modal opens (store prev value as state - React approved pattern)
+  const [prevIsOpen, setPrevIsOpen] = useState(false);
+  if (isOpen && !prevIsOpen) {
+    setPrevIsOpen(true);
+    setGroupName('');
+    setSearch('');
+    setSelectedIds(new Set());
+    setIsLoading(true);
+  }
+  if (!isOpen && prevIsOpen) {
+    setPrevIsOpen(false);
+  }
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchFriends();
+    }
+  }, [isOpen, fetchFriends]);
 
   if (!isOpen) return null;
 
@@ -104,7 +111,7 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose }) 
       if (newGroup && newGroup._id) {
          setActiveConversation(newGroup._id);
       }
-    } catch (err) {
+    } catch {
       Swal.fire('Thất bại', 'Không thể tạo nhóm. Vui lòng thử lại.', 'error');
     } finally {
       setIsCreating(false);
