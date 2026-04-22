@@ -1,7 +1,6 @@
-import type { Message } from '@zalo-edu/shared';
 import { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, type Message } from '../store/chatStore';
 import { useCallStore } from '../store/callStore';
 import { leaveCurrentSession, toggleCamera as toggleCameraChime } from './useChime';
 
@@ -114,7 +113,7 @@ export const useSocketListeners = () => {
       updateMessage(data.messageId, { 
         pinned: data.pinned, 
         pinnedBy: data.pinnedBy 
-      } as any);
+      });
     };
 
     const handlePinUpdate = (data: { conversationId: string, pinnedMessageIds: string[] }) => {
@@ -279,7 +278,7 @@ export const useSocketListeners = () => {
       ));
     };
 
-    const handleMuteUpdate = (data: { convId: string, mutedUntil: MuteSetting }) => {
+    const handleMuteUpdate = (_data: { convId: string, mutedUntil: MuteSetting }) => {
       // Syncing mute state if needed
     };
     socket.on('receiveMessage', handleReceiveMessage);

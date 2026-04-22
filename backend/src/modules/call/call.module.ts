@@ -13,14 +13,16 @@ import { ChatModule } from '../chat/chat.module';
   ],
   providers: [
     {
-      provide: 'CHIME_CLIENT',
+      provide: "CHIME_CLIENT",
       useFactory: () => {
-        const accessKeyId = process.env.AWS_ACCESS_KEY_ID || '';
-        const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY || '';
+        const accessKeyId = process.env.AWS_ACCESS_KEY_ID || "";
+        const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY || "";
         const sessionToken = process.env.AWS_SESSION_TOKEN;
-        const region = process.env.AWS_REGION || 'ap-southeast-1';
+        const region = process.env.AWS_REGION || "ap-southeast-1";
 
-        console.log(`[Chime] Initializing client — Region: ${region}, Key: ${accessKeyId.substring(0, 4)}****`);
+        console.log(
+          `[Chime] Initializing client — Region: ${region}, Key: ${accessKeyId.substring(0, 4)}****`,
+        );
 
         const config: any = {
           region,

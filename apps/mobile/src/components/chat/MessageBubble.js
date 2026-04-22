@@ -132,7 +132,7 @@ export default function MessageBubble({
       {message.replyTo && (
         <View style={[styles.replyBox, isMe && styles.replyBoxMe]}>
           <Text style={[styles.replyHeader, isMe && styles.replyHeaderTextMe]}>
-            {message.replyTo.senderId === user?.email ? "Bạn" : "Người dùng"}
+            {String(message.replyTo.senderId || "").trim().toLowerCase() === String(user?.email || "").trim().toLowerCase() ? "Bạn" : "Người dùng"}
           </Text>
           <Text style={[styles.replyContent, isMe && styles.replyContentTextMe]} numberOfLines={2}>
             {message.replyTo.content || "Đính kèm"}

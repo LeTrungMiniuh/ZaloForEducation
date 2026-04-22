@@ -106,12 +106,19 @@ export class ChatController {
     let lastEvaluatedKey = undefined;
     if (cursor) {
       try {
-        lastEvaluatedKey = JSON.parse(Buffer.from(cursor, 'base64').toString('utf-8'));
+        lastEvaluatedKey = JSON.parse(
+          Buffer.from(cursor, "base64").toString("utf-8"),
+        );
       } catch (e) {
-        throw new BadRequestException('Invalid pagination cursor');
+        throw new BadRequestException("Invalid pagination cursor");
       }
     }
-    return await this.messageService.getMessages(convId, email, limit || 50, lastEvaluatedKey);
+    return await this.messageService.getMessages(
+      convId,
+      email,
+      limit || 50,
+      lastEvaluatedKey,
+    );
   }
 
   @Post("conversations/:convId/messages")
@@ -160,7 +167,7 @@ export class ChatController {
     const normalizedConvId = convId.toLowerCase();
 
     // 1. BROADCAST REAL-TIME VIA SOCKET
-    this.chatGateway.server.to(normalizedConvId).emit('receiveMessage', res);
+    this.chatGateway.server.to(normalizedConvId).emit("receiveMessage", res);
     console.log(`[SOCKET] Broadcasted to room: ${normalizedConvId}`);
 
     // 2. BROADCAST REAL-TIME TO ALL MEMBERS' PERSONAL ROOMS (For conversation list updates)
@@ -169,19 +176,25 @@ export class ChatController {
       for (const member of convMetadata.members) {
         // Emit to user#email room so all their devices update the "tab" preview
         const userRoom = `user#${member.toLowerCase()}`;
-        this.chatGateway.server.to(userRoom).emit('receiveMessage', res);
+        this.chatGateway.server.to(userRoom).emit("receiveMessage", res);
         console.log(`[SOCKET] Broadcasted to user room: ${userRoom}`);
       }
     }
 
     // 3. SEND PUSH NOTIFICATION (FRAMEWORK READY)
     if (convMetadata) {
-      const recipients = convMetadata.members.filter(m => m !== email);
-      const hasSticker = Array.isArray(body.media) && body.media.some((item: any) => {
-        const mime = String(item?.mimeType || item?.fileType || '').toLowerCase();
-        return mime.includes('sticker') || item?.isSticker === true;
-      });
-      const hasHDImage = Array.isArray(body.media) && body.media.some((item: any) => item?.isHD === true);
+      const recipients = convMetadata.members.filter((m) => m !== email);
+      const hasSticker =
+        Array.isArray(body.media) &&
+        body.media.some((item: any) => {
+          const mime = String(
+            item?.mimeType || item?.fileType || "",
+          ).toLowerCase();
+          return mime.includes("sticker") || item?.isSticker === true;
+        });
+      const hasHDImage =
+        Array.isArray(body.media) &&
+        body.media.some((item: any) => item?.isHD === true);
 
       this.notificationService.broadcastNotification(recipients, {
         title: convMetadata.name || 'Tin nhắn mới',
@@ -218,7 +231,9 @@ export class ChatController {
     }
 
     // Fix encoding for Vietnamese filenames
-    const correctName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const correctName = Buffer.from(file.originalname, "latin1").toString(
+      "utf8",
+    );
     file.originalname = correctName;
 
     const folder = file.mimetype?.startsWith("image/")
@@ -267,16 +282,23 @@ export class ChatController {
         messageId, 
         reactions: res.reactions 
       });
-    } else if (body.action === 'recall') {
-      this.chatGateway.server.to(convId).emit('message_recalled', { 
-        messageId, 
+    } else if (body.action === "recall") {
+      this.chatGateway.server.to(convId).emit("message_recalled", {
+        messageId,
         conversationId: convId,
-        recalledBy: email 
+        recalledBy: email,
       });
-    } else if (body.action === 'pin' || body.action === "unpin") {
-      this.chatGateway.server.to(convId).emit('PIN_UPDATE', { 
+    } else if (body.action === "pin" || body.action === "unpin") {
+      this.chatGateway.server.to(convId).emit("PIN_UPDATE", {
         conversationId: convId,
-        pinnedMessageIds: res.pinnedMessageIds
+        pinnedMessageIds: res.pinnedMessageIds,
+      });
+      // Legacy support if needed
+      this.chatGateway.server.to(convId).emit("message_pinned", {
+        messageId,
+        conversationId: convId,
+        pinned: body.action === "pin",
+        pinnedBy: email,
       });
     }
 
@@ -345,7 +367,7 @@ export class ChatController {
   @Post("friends/request")
   async sendFriendRequest(
     @Body() body: { targetEmail: string },
-    @Req() req: any,
+    @Req() req: any
   ) {
     const email = req.user.email;
     return await this.friendshipService.sendRequest(email, body.targetEmail);
@@ -354,7 +376,7 @@ export class ChatController {
   @Post("friends/accept")
   async acceptFriendRequest(
     @Body() body: { senderEmail: string },
-    @Req() req: any,
+    @Req() req: any
   ) {
     const email = req.user.email;
     return await this.friendshipService.acceptRequest(email, body.senderEmail);
@@ -380,18 +402,24 @@ export class ChatController {
     @Req() req: any,
   ) {
     const email = req.user.email;
-    const result = await this.chatService.setConversationAutoDelete(id, email, body?.days ?? null);
+    const result = await this.chatService.setConversationAutoDelete(
+      id,
+      email,
+      body?.days ?? null,
+    );
 
     const metadata = await this.chatService.getConversationMetadata(id);
     if (metadata?.members?.length) {
       for (const member of metadata.members) {
         const userRoom = `user#${member.toLowerCase()}`;
-        this.chatGateway.server.to(userRoom).emit('conversation_auto_delete_updated', {
-          convId: id,
-          autoDeleteDays: result.autoDeleteDays,
-          autoDeleteUpdatedAt: result.autoDeleteUpdatedAt,
-          updatedBy: email,
-        });
+        this.chatGateway.server
+          .to(userRoom)
+          .emit("conversation_auto_delete_updated", {
+            convId: id,
+            autoDeleteDays: result.autoDeleteDays,
+            autoDeleteUpdatedAt: result.autoDeleteUpdatedAt,
+            updatedBy: email,
+          });
       }
     }
 
@@ -417,6 +445,12 @@ export class ChatController {
   async blockUser(@Body() body: { targetEmail: string }, @Req() req: any) {
     const email = req.user.email;
     return await this.friendshipService.blockUser(email, body.targetEmail);
+  }
+
+  @Post("friends/unblock")
+  async unblockUser(@Body() body: { targetEmail: string }, @Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.unblockUser(email, body.targetEmail);
   }
 
   @Patch("friends/nickname")
@@ -448,7 +482,12 @@ export class ChatController {
   // Backward-compatible alias route
   @Patch("friends/closeFriend")
   async setCloseFriendAlias(
-    @Body() body: { friendEmail: string; isCloseFriend?: boolean; closeFriend?: boolean },
+    @Body()
+    body: {
+      friendEmail: string;
+      isCloseFriend?: boolean;
+      closeFriend?: boolean;
+    },
     @Req() req: any,
   ) {
     const email = req.user.email;

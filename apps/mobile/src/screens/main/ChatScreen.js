@@ -107,6 +107,7 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
     sendMessageOptimistic,
     userProfiles,
     upsertProfiles,
+    loadUserProfile, // [ADDED]
     fetchMoreMessages,
     isLoadingMessages,
     nextCursor,
@@ -264,35 +265,28 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
   );
 
   // HELPERS
+  const normalizeEmail = useCallback((email) =>
+    String(email || "")
+      .trim()
+      .toLowerCase(), []);
+
   const getDisplayName = useCallback((email) => {
     if (!email) return "Người dùng";
-    if (email === user?.email) return "Bạn";
-    const p = userProfiles[email];
-    return p?.fullName || p?.fullname || email;
-  }, [userProfiles, user]);
+    const normalizedEmail = normalizeEmail(email);
+    if (normalizedEmail === normalizeEmail(user?.email)) return "Bạn";
+    const p = userProfiles[normalizedEmail];
+    return p?.nickname || p?.fullName || p?.fullname || normalizedEmail;
+  }, [userProfiles, user, normalizeEmail]);
 
   const getDisplayAvatar = useCallback((email) => {
     const defaultAvatar = "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
-    if (!email) return defaultAvatar;
-    if (email === user?.email) return user?.avatarUrl || defaultAvatar;
-    return userProfiles[email]?.avatarUrl || defaultAvatar;
-  }, [userProfiles, user]);
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) return defaultAvatar;
+    if (normalizedEmail === normalizeEmail(user?.email)) return user?.avatarUrl || defaultAvatar;
+    return userProfiles[normalizedEmail]?.avatarUrl || defaultAvatar;
+  }, [userProfiles, user, normalizeEmail]);
 
-  const loadUserProfile = async (email) => {
-    if (!email || email === user?.email || userProfiles[email]) return;
-    if (profileLoadingRef.current.has(email)) return;
-    profileLoadingRef.current.add(email);
-    try {
-      const res = await chatGet("/friends/search", { email });
-      if (res?.ok && res?.found && res?.user) {
-        upsertProfiles({ [email]: res.user });
-      }
-    } catch (err) {
-      console.error("Load profile failed", err);
-    } finally {
-      profileLoadingRef.current.delete(email);
-    }
-  };
+  // Local loadUserProfile removed in favor of Store implementation
 
   const fetchMetadata = async (id) => {
     if (!id || isLoadingMetadata) return;
@@ -630,8 +624,8 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
               return (
                 <MessageBubble
                   message={m}
-                  isMe={m.senderId === user?.email}
-                  userProfile={userProfiles[m.senderId]}
+                  isMe={normalizeEmail(m.senderId) === normalizeEmail(user?.email)}
+                  userProfile={userProfiles[normalizeEmail(m.senderId)]}
                   onLongPress={setActionMessage}
                   onReaction={toggleReaction}
                   onReply={setReplyTarget}

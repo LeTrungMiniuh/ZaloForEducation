@@ -119,6 +119,7 @@ export default function HomeScreen({
     fetchConversations, // [ADDED] Rely on store's reconciliation logic
     userProfiles,
     upsertProfiles,
+    loadUserProfile, // [ADDED]
     unreadNotificationCount, // [NEW: NOTIFICATION FEATURE]
   } = useChatStore();
 
@@ -200,15 +201,30 @@ export default function HomeScreen({
     return { source, target, status };
   };
 
+  const normalizeEmail = (email) =>
+    String(email || "")
+      .trim()
+      .toLowerCase();
+
   const getDisplayName = (email) => {
     if (!email) return "Người dùng";
-    if (email === user?.email) return user?.fullName || user?.fullname || "Bạn";
-    const p = userProfiles[email];
-    return p?.fullName || p?.fullname || email;
+    const normalizedEmail = normalizeEmail(email);
+    if (normalizedEmail === normalizeEmail(user?.email)) {
+      return user?.nickname || user?.fullName || user?.fullname || "Bạn";
+    }
+    const p = userProfiles[normalizedEmail] || {};
+    return p?.nickname || p?.fullName || p?.fullname || normalizedEmail;
   };
 
   const getDisplayAvatar = (email) => {
-    const avatarUri = email === user?.email ? user?.avatarUrl : userProfiles[email]?.avatarUrl;
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) return DEFAULT_AVATAR;
+    
+    if (normalizedEmail === normalizeEmail(user?.email)) {
+       return user?.avatarUrl ? { uri: user.avatarUrl } : DEFAULT_AVATAR;
+    }
+    
+    const avatarUri = userProfiles[normalizedEmail]?.avatarUrl;
     return avatarUri ? { uri: avatarUri } : DEFAULT_AVATAR;
   };
 
@@ -269,22 +285,16 @@ export default function HomeScreen({
     return `${prefix}${content}`;
   };
 
-  const loadUserProfile = async (email) => {
-    if (!email || email === user?.email || userProfiles[email]) return;
-    if (profileLoadingRef.current.has(email)) return;
-
-    profileLoadingRef.current.add(email);
-    try {
-      const res = await chatGet("/friends/search", { email });
-      if (res?.ok && res?.found && res?.user) {
-        upsertProfiles({ [email]: res.user });
-      }
-    } catch (err) {
-      console.error("Load profile failed", err);
-    } finally {
-      profileLoadingRef.current.delete(email);
+  // Priming profiles for conversations
+  useEffect(() => {
+    if (safeConversations.length > 0) {
+      safeConversations.forEach(conv => {
+        if (conv.type === 'direct' && conv.partner) {
+          loadUserProfile(conv.partner);
+        }
+      });
     }
-  };
+  }, [safeConversations, loadUserProfile]);
 
 
 

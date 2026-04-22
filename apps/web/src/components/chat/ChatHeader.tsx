@@ -28,7 +28,11 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({ onToggleInfo, isInfoOpen }) => 
   if (!activeChat) return null;
 
   const partnerEmail = activeChat.type === 'direct' 
-    ? (Array.isArray(activeChat.members) ? activeChat.members.find(m => m !== user?.email) : undefined)
+    ? (Array.isArray(activeChat.members) ? activeChat.members.find(m => {
+        const normalizedM = String(m || "").trim().toLowerCase();
+        const normalizedMe = String(user?.email || "").trim().toLowerCase();
+        return normalizedM !== normalizedMe;
+      }) : undefined)
     : undefined;
 
   React.useEffect(() => {
@@ -45,7 +49,8 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({ onToggleInfo, isInfoOpen }) => 
     ? getDisplayAvatar(partnerEmail, user, userProfiles)
     : (activeChat.avatar || '/logo_blue.png');
 
-  const isOnline = partnerEmail ? userProfiles[partnerEmail]?.status === 'online' : false;
+  const normalizedPartner = partnerEmail ? String(partnerEmail).trim().toLowerCase() : "";
+  const isOnline = normalizedPartner ? userProfiles[normalizedPartner]?.status === 'online' : false;
 
   const handleOpenProfile = () => {
     if (!partnerEmail) return;

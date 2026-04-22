@@ -125,6 +125,48 @@ export const useChatStore = create((set, get) => ({
       userProfiles: { ...state.userProfiles, ...newProfiles } 
     })),
 
+  loadUserProfile: async (email) => {
+    if (!email) return;
+    const normalizedEmail = email.trim().toLowerCase();
+    
+    // Skip if current user or already loaded with full info
+    const { currentUserEmail, userProfiles } = get();
+    if (normalizedEmail === currentUserEmail) return;
+    
+    const existing = userProfiles[normalizedEmail];
+    if (existing && (existing.fullName || existing.fullname)) return;
+
+    try {
+      let res = await chatGet("/friends/search", { email: normalizedEmail });
+      
+      // Fallback for different path structure if needed
+      if (!res?.ok || !res?.found) {
+        const fallbackRes = await apiRequest(`/api/chat/friends/search?email=${encodeURIComponent(normalizedEmail)}`);
+        if (fallbackRes?.ok) {
+          const data = fallbackRes.data || {};
+          if (data.found && data.user) {
+            res = { ok: true, found: true, user: data.user };
+          }
+        }
+      }
+
+      if (res?.ok && res?.found && res?.user) {
+        set((state) => ({
+          userProfiles: {
+            ...state.userProfiles,
+            [normalizedEmail]: {
+              ...state.userProfiles[normalizedEmail],
+              ...res.user,
+              email: normalizedEmail
+            }
+          }
+        }));
+      }
+    } catch (err) {
+      console.warn(`[ChatStore] Load profile failed for ${normalizedEmail}`, err);
+    }
+  },
+
   getMessageConvId: (message) => {
     if (!message || typeof message !== "object") return null;
     return String(message.conversationId || message.convId || "").trim() || null;

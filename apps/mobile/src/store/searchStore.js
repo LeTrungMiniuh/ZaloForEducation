@@ -60,9 +60,11 @@ const enrichMessage = (m) => ({
   ...m,
   type: 'MESSAGE',
   messageId: m.id || m._id,
-  conversationId: m.conversationId || m.convId,  // Ensure both are handled
-  displayName: m.sender?.name || m.senderId || 'Người dùng',
-  avatar: m.sender?.avatar || DEFAULT_AVATAR,
+  conversationId: m.conversationId || m.convId,
+  senderId: m.senderId || m.sender_id || m.sender?.email || '',
+  displayName: m.sender?.name || m.fullName || m.senderId || 'Người dùng',
+  avatar: m.sender?.avatar || m.sender?.avatarUrl || DEFAULT_AVATAR,
+  createdAt: m.createdAt || m.created_at || Date.now(),
 });
 
 const enrichFile = (f) => ({
@@ -70,8 +72,9 @@ const enrichFile = (f) => ({
   type: 'FILE',
   messageId: f.messageId || f.id,
   conversationId: f.conversationId || f.convId,
-  displayName: f.content || f.filename || f.name || 'Tệp tin',
+  displayName: f.name || f.filename || f.content || 'Tệp tin',
   avatar: DEFAULT_AVATAR,
+  createdAt: f.createdAt || f.created_at || Date.now(),
 });
 
 const buildSections = (contacts, messages, files) =>

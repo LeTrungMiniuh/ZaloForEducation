@@ -21,6 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import styles from './style/SearchScreen.styles';
 import { useSearchStore } from '../../store/searchStore';
+import { useChatStore } from '../../store/chatStore';
 import SafeImage from '../../components/common/SafeImage';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -77,29 +78,47 @@ const getFileIcon = (mimeType = "", fileName = "") => {
   return "draft";
 };
 
+const formatFileSize = (size) => {
+  const n = Number(size || 0);
+  if (!n) return "--";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const formatTime = (date) => {
+  if (!date) return "";
+  const d = new Date(date);
+  return d.toLocaleTimeString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
 // ─── SearchItem ───────────────────────────────────────────────────────────────
 /**
  * Fully memoized result row.
  * Each item owns its own Animated.Value so animations never conflict.
  */
 const SearchItem = memo(
-  ({ item, isActive, isHighlighting, highlightAnim, query, onPress }) => {
+  ({ item, isActive, isHighlighting, highlightAnim, query, onPress, userProfiles }) => {
     const tag = TAG_CONFIG[item.type];
     const isFile = item.type === 'FILE';
     const isMessage = item.type === 'MESSAGE';
     const isContact = item.type === 'CONTACT';
 
-    // Title: For messages/files, show sender name. For contacts, show display name.
-    const title = isContact 
-      ? (item.fullName || item.displayName || item.sender?.name || '')
-      : (item.sender?.name || item.displayName || '');
+    // Identity Resolution
+    const senderEmail = item.senderId || item.email;
+    const profile = senderEmail ? userProfiles[senderEmail.trim().toLowerCase()] : null;
     
-    // Subtitle: For messages, show content snippet. For files, show file name.
+    const title = isContact 
+      ? (profile?.nickname || profile?.fullName || profile?.fullname || item.fullName || item.displayName || item.sender?.name || '')
+      : (profile?.nickname || profile?.fullName || profile?.fullname || item.sender?.name || item.displayName || 'Người dùng');
+    
     const subtitle = (isMessage || isFile) ? item.content : '';
+    const fileMeta = isFile ? formatFileSize(item.size) : null;
 
-    // For messages, prioritize sender's avatar
-    const senderAvatar = item.sender?.avatar || item.sender?.avatarUrl;
-    const itemAvatarUri = isMessage ? senderAvatar : item.avatar;
+    const itemAvatarUri = profile?.avatarUrl || item.sender?.avatar || item.sender?.avatarUrl || item.avatar;
     const avatarSource = itemAvatarUri ? { uri: itemAvatarUri } : DEFAULT_AVATAR;
 
     const animatedBorderColor = isHighlighting
@@ -135,14 +154,26 @@ const SearchItem = memo(
             />
           )}
           <View style={styles.resultInfo}>
-            <Text style={styles.resultName} numberOfLines={1}>
-              {highlightKeyword(title, query)}
-            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={[styles.resultName, { flex: 1 }]} numberOfLines={1}>
+                {highlightKeyword(title, query)}
+              </Text>
+              {(isMessage || isFile) && (
+                <Text style={{ fontSize: 10, color: '#9ba3b2', marginLeft: 8 }}>
+                  {formatTime(item.createdAt)}
+                </Text>
+              )}
+            </View>
             {subtitle ? (
               <Text style={styles.resultSub} numberOfLines={1}>
                 {highlightKeyword(subtitle, query)}
               </Text>
             ) : null}
+            {fileMeta && (
+              <Text style={{ fontSize: 10, color: '#9ba3b2', marginTop: 2 }}>
+                {fileMeta}
+              </Text>
+            )}
           </View>
           {tag ? (
             <Text style={[styles.resultTypeTag, { color: tag.color }]}>
@@ -194,6 +225,8 @@ export default function SearchScreen({ onNavigate, goBack }) {
     clearRecentSearches,
     handleSelect,
   } = useSearchStore();
+
+  const { userProfiles } = useChatStore();
 
   // Auto-focus on mount & Cleanup on exit
   useEffect(() => {
@@ -327,6 +360,7 @@ export default function SearchScreen({ onNavigate, goBack }) {
           highlightAnim={getOrCreateAnim(id)}
           query={query}
           onPress={() => handleSelectResult(item)}
+          userProfiles={userProfiles}
         />
       );
     },

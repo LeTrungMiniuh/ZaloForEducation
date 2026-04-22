@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useChatStore } from '../../store/chatStore';
-import { useAuth } from '../../context/AuthContext';
-import InboxList from '../../components/chat/InboxList';
-import ChatHeader from '../../components/chat/ChatHeader';
-import ChatInput from '../../components/chat/ChatInput';
-import MessageBubble from '../../components/chat/MessageBubble';
-import ChatInfoSidebar from '../../components/chat/ChatInfoSidebar';
-import ImageModal from '../../components/chat/ImageModal';
-import ForwardModal from '../../components/chat/ForwardModal';
-import { getMessageTimeContext } from '../../utils/chatUtils';
-import type { Attachment } from '../../utils/chatUtils';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+import { useLocation, useNavigate } from "react-router-dom";
+import { useChatStore } from "../../store/chatStore";
+import { useAuth } from "../../context/AuthContext";
+import InboxList from "../../components/chat/InboxList";
+import ChatHeader from "../../components/chat/ChatHeader";
+import ChatInput from "../../components/chat/ChatInput";
+import MessageBubble from "../../components/chat/MessageBubble";
+import ChatInfoSidebar from "../../components/chat/ChatInfoSidebar";
+import ImageModal from "../../components/chat/ImageModal";
+import ForwardModal from "../../components/chat/ForwardModal";
+import TagManagerModal from "../../components/chat/TagManagerModal";
+import { getMessageTimeContext, getDisplayName } from "../../utils/chatUtils";
+import type { Attachment } from "../../utils/chatUtils";
+import type { Message } from "@zalo-edu/shared";
 
 import {
   Copy,
@@ -36,7 +38,10 @@ const ChatPage: React.FC = () => {
     startDirectChat,
     setActiveConversation,
     userProfiles,
+    loadUserProfile,
     markAsRead,
+    highlightedMessageId,
+    jumpToMessage,
     fetchMessages,
     loadMoreMessages,
     isLoadingMessages,
@@ -46,8 +51,8 @@ const ChatPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [isInfoOpen, setIsInfoOpen] = useState(true);
-  const [replyTarget, setReplyTarget] = useState<{ id: string; content: string; senderId?: string; [key: string]: any } | null>(null);
-  const [forwardMessage, setForwardMessage] = useState<{ id: string; content: string; senderId?: string; [key: string]: any } | null>(null);
+  const [replyTarget, setReplyTarget] = useState<any | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<any | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevRoomRef = useRef<string | null>(null);
@@ -102,12 +107,13 @@ const ChatPage: React.FC = () => {
     }
   };
 
-  // Adjust scroll position after loading more messages
-  useEffect(() => {
+  // Adjust scroll position after loading more messages (Prepend logic)
+  useLayoutEffect(() => {
     if (isPrependingRef.current && prevScrollHeightRef.current > 0 && scrollRef.current) {
       const newScrollHeight = scrollRef.current.scrollHeight;
       const heightDiff = newScrollHeight - prevScrollHeightRef.current;
       if (heightDiff > 0) {
+        // [SENIOR] Precise scroll restoration to avoid "jumps" when loading old messages
         scrollRef.current.scrollTop += heightDiff;
       }
       prevScrollHeightRef.current = 0;
@@ -125,13 +131,32 @@ const ChatPage: React.FC = () => {
   }, [activeConvId]);
 
   // Scroll to bottom when messages change
+  const IS_NEAR_BOTTOM_THRESHOLD = 150;
+
   useEffect(() => {
     if (messages.length > 0) {
-      // Only scroll if it's the initial load or a new message was added
-      if (prevMessagesLengthRef.current === 0 || messages.length > prevMessagesLengthRef.current) {
-        // Option: Check if user is near bottom to avoid force-scroll when reading old messages.
-        // For now, we fix the specific issue where *reactions* cause forced scroll down.
-        scrollToBottom();
+      // [SENIOR FIX] Không bao giờ tự cuộn khi đang tải lịch sử (prepending)
+      if (isPrependingRef.current) {
+        prevMessagesLengthRef.current = messages.length;
+        // Reset prepending flag AFTER the messages have been rendered and scroll adjusted
+        const timer = setTimeout(() => { isPrependingRef.current = false; }, 100);
+        return () => clearTimeout(timer);
+      }
+
+      const isInitialLoad = prevMessagesLengthRef.current === 0;
+      const isNewMessage = messages.length > prevMessagesLengthRef.current;
+
+      if (isInitialLoad) {
+        scrollToBottom(true); // Cuộn tức thì khi mới vào phòng
+      } else if (isNewMessage) {
+        // [SENIOR FIX] Chỉ tự động cuộn xuống nếu người dùng đang ở gần đáy
+        const el = scrollRef.current;
+        if (el) {
+          const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+          if (distanceToBottom < IS_NEAR_BOTTOM_THRESHOLD) {
+            scrollToBottom();
+          }
+        }
       }
       prevMessagesLengthRef.current = messages.length;
     } else {
@@ -148,7 +173,7 @@ const ChatPage: React.FC = () => {
       if (socket) {
         // Leave previous room if exists
         if (prevRoomRef.current && prevRoomRef.current !== activeConvId) {
-          socket.emit('leave_room', { convId: prevRoomRef.current });
+          socket.emit("leave_room", { convId: prevRoomRef.current });
         }
 
         socket.emit('join_room', { convId: activeConvId });
@@ -159,7 +184,7 @@ const ChatPage: React.FC = () => {
     return () => {
       // Cleanup: leave room on unmount
       if (activeConvId && socket) {
-        socket.emit('leave_room', { convId: activeConvId });
+        socket.emit("leave_room", { convId: activeConvId });
       }
     };
   }, [activeConvId, fetchMessages, socket]);
@@ -175,36 +200,56 @@ const ChatPage: React.FC = () => {
   useEffect(() => {
     setTypingUsers(new Set()); // Reset when changing room
 
-    const handleTypingEvent = (e: CustomEvent) => {
+    const handleTypingEvent = (e: any) => {
       const data = e.detail;
-      if (data.convId === activeConvId && data.email !== user?.email) {
+      if (!data?.email || !data?.convId) return;
+      const email = data.email;
+      const convId = data.convId;
+      if (convId === activeConvId && email !== user?.email) {
         if (data.isTyping) {
-          setTypingUsers(prev => {
+          setTypingUsers((prev) => {
             const next = new Set(prev);
-            next.add(data.email);
+            next.add(email);
             return next;
           });
           // Remove after 5 seconds to prevent stuck indicator
           setTimeout(() => {
-            setTypingUsers(prev => {
+            setTypingUsers((prev) => {
               const next = new Set(prev);
-              next.delete(data.email);
+              next.delete(email);
               return next;
             });
           }, 5000);
         } else {
-          setTypingUsers(prev => {
+          setTypingUsers((prev) => {
             const next = new Set(prev);
-            next.delete(data.email);
+            next.delete(email);
             return next;
           });
         }
       }
     };
 
-    document.addEventListener('chat_typing_update', handleTypingEvent as EventListener);
-    return () => document.removeEventListener('chat_typing_update', handleTypingEvent as EventListener);
+    document.addEventListener('chat_typing_update', handleTypingEvent);
+    return () => document.removeEventListener('chat_typing_update', handleTypingEvent);
   }, [activeConvId, user]);
+
+  // [SENIOR] Auto-load profiles for all message senders to ensure names/avatars display
+  useEffect(() => {
+    if (messages.length > 0) {
+      const uniqueSenders = new Set<string>();
+      messages.forEach(m => {
+        if (m.senderId) {
+          const normalizedSender = String(m.senderId).trim().toLowerCase();
+          const normalizedMe = String(user?.email || "").trim().toLowerCase();
+          if (normalizedSender !== normalizedMe) {
+            uniqueSenders.add(m.senderId);
+          }
+        }
+      });
+      uniqueSenders.forEach(email => loadUserProfile(email));
+    }
+  }, [messages, user?.email, loadUserProfile]);
 
   // Mark as read when messages change or room opens
   useEffect(() => {
@@ -212,6 +257,16 @@ const ChatPage: React.FC = () => {
       markAsRead(activeConvId);
     }
   }, [activeConvId, messages.length, markAsRead]);
+
+  // Jump to highlighted message if it exists
+  useEffect(() => {
+    if (highlightedMessageId && messages.length > 0) {
+      const el = document.getElementById(`msg-${highlightedMessageId}`);
+      if (el) {
+        jumpToMessage(highlightedMessageId);
+      }
+    }
+  }, [highlightedMessageId, messages, jumpToMessage]);
 
   const handleSendMessage = async (text: string, attachments: Attachment[]) => {
     if (!activeConvId || !user?.email) return;
@@ -221,9 +276,9 @@ const ChatPage: React.FC = () => {
       activeConvId,
       user.email,
       text,
-      'text',
+      "text",
       attachments,
-      replyTarget
+      replyTarget,
     );
     setReplyTarget(null);
   };
@@ -270,7 +325,20 @@ const ChatPage: React.FC = () => {
     );
   };
 
-  const [contextMenu, setContextMenu] = useState<{ message: Record<string, unknown> & { id: string; content: string; senderId?: string; pinned?: boolean; recalled?: boolean; createdAt?: string; status?: string }; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    message: Message;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+
+  useEffect(() => {
+    const openTagManager: EventListener = () => setIsTagManagerOpen(true);
+    window.addEventListener("open-chat-tag-manager", openTagManager);
+    return () => {
+      window.removeEventListener("open-chat-tag-manager", openTagManager);
+    };
+  }, []);
 
   useEffect(() => {
     const navState = (location.state || null) as {
@@ -278,8 +346,10 @@ const ChatPage: React.FC = () => {
       openDirectChatEmail?: string;
     } | null;
 
-    const requestedConvId = String(navState?.openConversationId || '').trim();
-    const requestedEmail = String(navState?.openDirectChatEmail || '').trim().toLowerCase();
+    const requestedConvId = String(navState?.openConversationId || "").trim();
+    const requestedEmail = String(navState?.openDirectChatEmail || "")
+      .trim()
+      .toLowerCase();
 
     if (!requestedConvId && !requestedEmail) return;
 
@@ -291,13 +361,19 @@ const ChatPage: React.FC = () => {
           return;
         }
 
-        const normalizedMe = String(user?.email || '').trim().toLowerCase();
+        const normalizedMe = String(user?.email || "")
+          .trim()
+          .toLowerCase();
         const existingDirect = conversations.find((conversation) => {
-          if (conversation?.type !== 'direct') return false;
+          if (conversation?.type !== "direct") return false;
           const members = Array.isArray(conversation.members)
-            ? conversation.members.map((item) => String(item || '').toLowerCase())
+            ? conversation.members.map((item) =>
+                String(item || "").toLowerCase(),
+              )
             : [];
-          return members.includes(normalizedMe) && members.includes(requestedEmail);
+          return (
+            members.includes(normalizedMe) && members.includes(requestedEmail)
+          );
         });
 
         if (existingDirect?.id) {
@@ -310,13 +386,13 @@ const ChatPage: React.FC = () => {
         }
       } finally {
         if (!cancelled) {
-          navigate('/chat', { replace: true, state: null });
+          navigate("/chat", { replace: true, state: null });
         }
       }
     };
 
     run().catch((error) => {
-      console.error('Failed to open chat from navigation state', error);
+      console.error("Failed to open chat from navigation state", error);
     });
 
     return () => {
@@ -370,20 +446,21 @@ const ChatPage: React.FC = () => {
                   <ArrowDown size={20} strokeWidth={2.5} className="text-primary" />
                 </button>
               )}
-
-
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center opacity-40 py-20">
-                  <p className="text-[14px]">Chưa có tin nhắn nào. Gửi lời chào ngay!</p>
+                  <p className="text-[14px]">
+                    Chưa có tin nhắn nào. Gửi lời chào ngay!
+                  </p>
                 </div>
               ) : (
                 <div className="flex flex-col">
                   {messages.map((m, index) => {
                     const prevMsg = index > 0 ? messages[index - 1] : undefined;
-                    const { dateHeader, showTimeHeader, formattedTime } = getMessageTimeContext(
-                      new Date(m.createdAt),
-                      prevMsg ? new Date(prevMsg.createdAt) : undefined
-                    );
+                    const { dateHeader, showTimeHeader, formattedTime } =
+                      getMessageTimeContext(
+                        new Date(m.createdAt),
+                        prevMsg ? new Date(prevMsg.createdAt) : undefined,
+                      );
 
                     return (
                       <React.Fragment key={m.id}>
@@ -401,12 +478,18 @@ const ChatPage: React.FC = () => {
                             </span>
                           </div>
                         )}
-                        <div className={!dateHeader && !showTimeHeader ? 'mt-1' : 'mt-4'}>
+                        <div
+                          className={
+                            !dateHeader && !showTimeHeader ? "mt-1" : "mt-4"
+                          }
+                        >
                           <MessageBubble
                             message={m}
                             userProfiles={userProfiles}
                             hideTime={!showTimeHeader}
-                            onContextMenu={(msg, x, y) => setContextMenu({ message: msg, x, y })}
+                            onContextMenu={(msg, x, y) =>
+                              setContextMenu({ message: msg, x, y })
+                            }
                             onReply={(msg) => setReplyTarget(msg)}
                             onForward={(msg) => setForwardMessage(msg)}
                           />
@@ -419,7 +502,7 @@ const ChatPage: React.FC = () => {
 
               {/* Typing Indicator */}
               {typingUsers.size > 0 && (
-                <div className="absolute bottom-[95px] left-8 z-[10] shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="absolute bottom-24 left-8 z-10 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <div className="bg-white dark:bg-surface-container-high rounded-full px-4 py-2 border border-outline-variant/10 flex items-center gap-3">
                     <div className="flex gap-1.5 items-center">
                       <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
@@ -427,7 +510,10 @@ const ChatPage: React.FC = () => {
                       <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce"></div>
                     </div>
                     <span className="text-[12px] font-bold text-on-surface-variant italic">
-                      {Array.from(typingUsers).map(email => userProfiles[email]?.fullName || email.split('@')[0]).join(', ')} đang soạn tin...
+                      {Array.from(typingUsers)
+                        .map((email) => getDisplayName(email, user, userProfiles))
+                        .join(", ")}{" "}
+                      đang soạn tin...
                     </span>
                   </div>
                 </div>
@@ -497,15 +583,18 @@ const ChatPage: React.FC = () => {
       {/* Context Menu Overlay (Zalo Style Redesign) */}
       {contextMenu && (
         <div
-          className="fixed inset-0 z-[110]"
+          className="fixed inset-0 z-110"
           onClick={() => setContextMenu(null)}
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu(null);
+          }}
         >
           <div
             className="absolute bg-white dark:bg-surface-container rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] border border-outline-variant/10 dark:border-outline-variant/30 py-1.5 w-64 animate-in fade-in zoom-in-95 duration-200"
             style={{
               left: Math.min(contextMenu.x, window.innerWidth - 270),
-              top: Math.min(contextMenu.y, window.innerHeight - 400)
+              top: Math.min(contextMenu.y, window.innerHeight - 400),
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -530,16 +619,18 @@ const ChatPage: React.FC = () => {
               className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors"
             >
               <Pin size={18} className="text-on-surface-variant" />
-              {contextMenu.message.pinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'}
+              {contextMenu.message.pinned
+                ? "Bỏ ghim tin nhắn"
+                : "Ghim tin nhắn"}
             </button>
             <button
               onClick={() => {
                 Swal.fire({
-                  title: 'Đánh dấu tin nhắn',
-                  text: 'Tin nhắn đã được đánh dấu và lưu vào Cloud của bạn!',
-                  icon: 'success',
+                  title: "Đánh dấu tin nhắn",
+                  text: "Tin nhắn đã được đánh dấu và lưu vào Cloud của bạn!",
+                  icon: "success",
                   timer: 2000,
-                  showConfirmButton: false
+                  showConfirmButton: false,
                 });
                 setContextMenu(null);
               }}
@@ -555,10 +646,10 @@ const ChatPage: React.FC = () => {
             <button
               onClick={() => {
                 Swal.fire({
-                  title: 'Chọn nhiều tin nhắn',
-                  text: 'Chức năng chọn nhiều tin nhắn đang được phát triển.',
-                  icon: 'info',
-                  confirmButtonColor: '#00418f'
+                  title: "Chọn nhiều tin nhắn",
+                  text: "Chức năng chọn nhiều tin nhắn đang được phát triển.",
+                  icon: "info",
+                  confirmButtonColor: "#00418f",
                 });
                 setContextMenu(null);
               }}
@@ -569,19 +660,21 @@ const ChatPage: React.FC = () => {
             </button>
             <button
               onClick={() => {
-                const date = new Date(contextMenu.message.createdAt).toLocaleString();
+                const date = new Date(
+                  contextMenu.message.createdAt,
+                ).toLocaleString();
                 Swal.fire({
-                  title: 'Chi tiết tin nhắn',
+                  title: "Chi tiết tin nhắn",
                   html: `
                     <div class="text-left space-y-2 mt-4 text-sm text-on-surface">
-                      <p><strong>Người gửi:</strong> ${contextMenu.message.senderId}</p>
+                      <p><strong>Người gửi:</strong> ${getDisplayName(contextMenu.message.senderId, user, userProfiles)}</p>
                       <p><strong>Đã gửi lúc:</strong> ${date}</p>
                       <p><strong>Trạng thái:</strong> ${contextMenu.message.status}</p>
                       <p><strong>Mã tin nhắn:</strong> <span class="text-xs text-outline font-mono">${contextMenu.message.id}</span></p>
                     </div>
                   `,
-                  icon: 'info',
-                  confirmButtonColor: '#00418f'
+                  icon: "info",
+                  confirmButtonColor: "#00418f",
                 });
                 setContextMenu(null);
               }}
@@ -621,6 +714,10 @@ const ChatPage: React.FC = () => {
       )}
       {/* Image Preview Modal (Lightbox) */}
       <ImageModal />
+      <TagManagerModal
+        isOpen={isTagManagerOpen}
+        onClose={() => setIsTagManagerOpen(false)}
+      />
     </div>
   );
 };

@@ -527,7 +527,9 @@ export class ChatService {
         type: 'MESSAGE',
         id: m.id,
         conversationId: m.convId,
+        senderId: m.senderId,
         content: m.content,
+        createdAt: m.createdAt,
         sender: senderProfiles[m.senderId] || { name: m.senderId, avatar: '' }
       })),
       files: searchFiles.slice(0, 50).map(f => ({
@@ -535,7 +537,10 @@ export class ChatService {
         id: f.messageId,
         messageId: f.messageId,
         conversationId: f.convId,
-        content: f.name,
+        senderId: f.senderId,
+        name: f.name,
+        size: f.size,
+        createdAt: f.createdAt,
         sender: senderProfiles[f.senderId] || { name: f.senderId, avatar: '' }
       }))
     };
