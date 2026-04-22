@@ -21,7 +21,7 @@ async function bootstrap() {
       `\x1b[32m[ZaloEdu] Backend is running on: http://localhost:${port}\x1b[0m`,
     );
     console.log(
-      `\x1b[33m[ZaloEdu] External access (Mobile): http://192.168.1.67:${port}\x1b[0m`,
+      `\x1b[33m[ZaloEdu] External access (Mobile): http://192.168.1.3:${port}\x1b[0m`,
     );
   } catch (err: any) {
     if (err.code === "EADDRINUSE") {

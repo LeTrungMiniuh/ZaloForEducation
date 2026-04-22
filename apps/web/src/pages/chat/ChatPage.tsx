@@ -1,29 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useChatStore } from '../../store/chatStore';
-import { useAuth } from '../../context/AuthContext';
-import InboxList from '../../components/chat/InboxList';
-import ChatHeader from '../../components/chat/ChatHeader';
-import ChatInput from '../../components/chat/ChatInput';
-import MessageBubble from '../../components/chat/MessageBubble';
-import ChatInfoSidebar from '../../components/chat/ChatInfoSidebar';
-import ImageModal from '../../components/chat/ImageModal';
-import ForwardModal from '../../components/chat/ForwardModal';
-import { getMessageTimeContext } from '../../utils/chatUtils';
-import type { Attachment } from '../../utils/chatUtils';
+import React, { useState, useEffect, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useChatStore } from "../../store/chatStore";
+import { useAuth } from "../../context/AuthContext";
+import InboxList from "../../components/chat/InboxList";
+import ChatHeader from "../../components/chat/ChatHeader";
+import ChatInput from "../../components/chat/ChatInput";
+import MessageBubble from "../../components/chat/MessageBubble";
+import ChatInfoSidebar from "../../components/chat/ChatInfoSidebar";
+import ImageModal from "../../components/chat/ImageModal";
+import ForwardModal from "../../components/chat/ForwardModal";
+import TagManagerModal from "../../components/chat/TagManagerModal";
+import { getMessageTimeContext, getDisplayName } from "../../utils/chatUtils";
+import type { Attachment } from "../../utils/chatUtils";
+import type { Message } from "@zalo-edu/shared";
 
-import { 
-  Copy, 
-  Pin, 
-  Star, 
-  ListChecks, 
-  Info, 
-  LayoutGrid, 
-  ChevronRight, 
-  RotateCcw, 
-  Trash2 
-} from 'lucide-react';
-import Swal from 'sweetalert2';
+import {
+  Copy,
+  Pin,
+  Star,
+  ListChecks,
+  Info,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
+import Swal from "sweetalert2";
 
 const ChatPage: React.FC = () => {
   const { user, socket } = useAuth();
@@ -36,14 +36,14 @@ const ChatPage: React.FC = () => {
     setActiveConversation,
     userProfiles,
     markAsRead,
-    fetchMessages
+    fetchMessages,
   } = useChatStore();
   const location = useLocation();
   const navigate = useNavigate();
 
   const [isInfoOpen, setIsInfoOpen] = useState(true);
-  const [replyTarget, setReplyTarget] = useState<any | null>(null);
-  const [forwardMessage, setForwardMessage] = useState<any | null>(null);
+  const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<Message | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevRoomRef = useRef<string | null>(null);
@@ -54,8 +54,8 @@ const ChatPage: React.FC = () => {
   const scrollToBottom = (instant = false) => {
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({
-        behavior: instant ? 'auto' : 'smooth',
-        block: 'end'
+        behavior: instant ? "auto" : "smooth",
+        block: "end",
       });
     }, 100);
   };
@@ -64,7 +64,10 @@ const ChatPage: React.FC = () => {
   useEffect(() => {
     if (messages.length > 0) {
       // Only scroll if it's the initial load or a new message was added
-      if (prevMessagesLengthRef.current === 0 || messages.length > prevMessagesLengthRef.current) {
+      if (
+        prevMessagesLengthRef.current === 0 ||
+        messages.length > prevMessagesLengthRef.current
+      ) {
         // Option: Check if user is near bottom to avoid force-scroll when reading old messages.
         // For now, we fix the specific issue where *reactions* cause forced scroll down.
         scrollToBottom();
@@ -79,60 +82,70 @@ const ChatPage: React.FC = () => {
   useEffect(() => {
     if (activeConvId) {
       fetchMessages(activeConvId);
-      
+
       // Join Socket Room for Real-time
       if (socket) {
         // Leave previous room if exists
         if (prevRoomRef.current && prevRoomRef.current !== activeConvId) {
-          socket.emit('leave_room', { convId: prevRoomRef.current });
+          socket.emit("leave_room", { convId: prevRoomRef.current });
         }
-        
-        socket.emit('join_room', { convId: activeConvId });
+
+        socket.emit("join_room", { convId: activeConvId });
         prevRoomRef.current = activeConvId;
       }
     }
-    
+
     return () => {
       // Cleanup: leave room on unmount
       if (activeConvId && socket) {
-        socket.emit('leave_room', { convId: activeConvId });
+        socket.emit("leave_room", { convId: activeConvId });
       }
     };
   }, [activeConvId, fetchMessages, socket]);
 
   // Handle typing indicator via CustomEvent from useSocketListeners
   useEffect(() => {
-    setTypingUsers(new Set()); // Reset when changing room
-    
-    const handleTypingEvent = (e: any) => {
-      const data = e.detail;
-      if (data.convId === activeConvId && data.email !== user?.email) {
+    queueMicrotask(() => setTypingUsers(new Set())); // Reset when changing room
+
+    const handleTypingEvent = (e: Event) => {
+      const data = (
+        e as CustomEvent<{
+          convId?: string;
+          email?: string;
+          isTyping?: boolean;
+        }>
+      ).detail;
+      if (!data?.email || !data?.convId) return;
+      const email = data.email;
+      const convId = data.convId;
+      if (convId === activeConvId && email !== user?.email) {
         if (data.isTyping) {
-          setTypingUsers(prev => {
+          setTypingUsers((prev) => {
             const next = new Set(prev);
-            next.add(data.email);
+            next.add(email);
             return next;
           });
           // Remove after 5 seconds to prevent stuck indicator
           setTimeout(() => {
-            setTypingUsers(prev => {
+            setTypingUsers((prev) => {
               const next = new Set(prev);
-              next.delete(data.email);
+              next.delete(email);
               return next;
             });
           }, 5000);
         } else {
-          setTypingUsers(prev => {
+          setTypingUsers((prev) => {
             const next = new Set(prev);
-            next.delete(data.email);
+            next.delete(email);
             return next;
           });
         }
       }
     };
 
-    document.addEventListener('chat_typing_update', handleTypingEvent);
-    return () => document.removeEventListener('chat_typing_update', handleTypingEvent);
+    document.addEventListener("chat_typing_update", handleTypingEvent);
+    return () =>
+      document.removeEventListener("chat_typing_update", handleTypingEvent);
   }, [activeConvId, user]);
 
   // Mark as read when messages change or room opens
@@ -150,14 +163,27 @@ const ChatPage: React.FC = () => {
       activeConvId,
       user.email,
       text,
-      'text',
+      "text",
       attachments,
-      replyTarget
+      replyTarget,
     );
     setReplyTarget(null);
   };
 
-  const [contextMenu, setContextMenu] = useState<{ message: any; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    message: Message;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+
+  useEffect(() => {
+    const openTagManager: EventListener = () => setIsTagManagerOpen(true);
+    window.addEventListener("open-chat-tag-manager", openTagManager);
+    return () => {
+      window.removeEventListener("open-chat-tag-manager", openTagManager);
+    };
+  }, []);
 
   useEffect(() => {
     const navState = (location.state || null) as {
@@ -165,8 +191,10 @@ const ChatPage: React.FC = () => {
       openDirectChatEmail?: string;
     } | null;
 
-    const requestedConvId = String(navState?.openConversationId || '').trim();
-    const requestedEmail = String(navState?.openDirectChatEmail || '').trim().toLowerCase();
+    const requestedConvId = String(navState?.openConversationId || "").trim();
+    const requestedEmail = String(navState?.openDirectChatEmail || "")
+      .trim()
+      .toLowerCase();
 
     if (!requestedConvId && !requestedEmail) return;
 
@@ -178,13 +206,19 @@ const ChatPage: React.FC = () => {
           return;
         }
 
-        const normalizedMe = String(user?.email || '').trim().toLowerCase();
+        const normalizedMe = String(user?.email || "")
+          .trim()
+          .toLowerCase();
         const existingDirect = conversations.find((conversation) => {
-          if (conversation?.type !== 'direct') return false;
+          if (conversation?.type !== "direct") return false;
           const members = Array.isArray(conversation.members)
-            ? conversation.members.map((item) => String(item || '').toLowerCase())
+            ? conversation.members.map((item) =>
+                String(item || "").toLowerCase(),
+              )
             : [];
-          return members.includes(normalizedMe) && members.includes(requestedEmail);
+          return (
+            members.includes(normalizedMe) && members.includes(requestedEmail)
+          );
         });
 
         if (existingDirect?.id) {
@@ -197,13 +231,13 @@ const ChatPage: React.FC = () => {
         }
       } finally {
         if (!cancelled) {
-          navigate('/chat', { replace: true, state: null });
+          navigate("/chat", { replace: true, state: null });
         }
       }
     };
 
     run().catch((error) => {
-      console.error('Failed to open chat from navigation state', error);
+      console.error("Failed to open chat from navigation state", error);
     });
 
     return () => {
@@ -239,19 +273,21 @@ const ChatPage: React.FC = () => {
               {/* Spacer để đẩy tin nhắn xuống dưới cùng */}
               <div className="flex-1" />
 
-
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center opacity-40 py-20">
-                  <p className="text-[14px]">Chưa có tin nhắn nào. Gửi lời chào ngay!</p>
+                  <p className="text-[14px]">
+                    Chưa có tin nhắn nào. Gửi lời chào ngay!
+                  </p>
                 </div>
               ) : (
                 <div className="flex flex-col">
                   {messages.map((m, index) => {
                     const prevMsg = index > 0 ? messages[index - 1] : undefined;
-                    const { dateHeader, showTimeHeader, formattedTime } = getMessageTimeContext(
-                      new Date(m.createdAt),
-                      prevMsg ? new Date(prevMsg.createdAt) : undefined
-                    );
+                    const { dateHeader, showTimeHeader, formattedTime } =
+                      getMessageTimeContext(
+                        new Date(m.createdAt),
+                        prevMsg ? new Date(prevMsg.createdAt) : undefined,
+                      );
 
                     return (
                       <React.Fragment key={m.id}>
@@ -269,12 +305,18 @@ const ChatPage: React.FC = () => {
                             </span>
                           </div>
                         )}
-                        <div className={!dateHeader && !showTimeHeader ? 'mt-1' : 'mt-4'}>
+                        <div
+                          className={
+                            !dateHeader && !showTimeHeader ? "mt-1" : "mt-4"
+                          }
+                        >
                           <MessageBubble
                             message={m}
                             userProfiles={userProfiles}
                             hideTime={!showTimeHeader}
-                            onContextMenu={(msg, x, y) => setContextMenu({ message: msg, x, y })}
+                            onContextMenu={(msg, x, y) =>
+                              setContextMenu({ message: msg, x, y })
+                            }
                             onReply={(msg) => setReplyTarget(msg)}
                             onForward={(msg) => setForwardMessage(msg)}
                           />
@@ -287,16 +329,19 @@ const ChatPage: React.FC = () => {
 
               {/* Typing Indicator */}
               {typingUsers.size > 0 && (
-                <div className="absolute bottom-[95px] left-8 z-[10] shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="absolute bottom-24 left-8 z-10 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <div className="bg-white dark:bg-surface-container-high rounded-full px-4 py-2 border border-outline-variant/10 flex items-center gap-3">
-                     <div className="flex gap-1.5 items-center">
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce"></div>
-                     </div>
-                     <span className="text-[12px] font-bold text-on-surface-variant italic">
-                       {Array.from(typingUsers).map(email => userProfiles[email]?.fullName || email.split('@')[0]).join(', ')} đang soạn tin...
-                     </span>
+                    <div className="flex gap-1.5 items-center">
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce"></div>
+                    </div>
+                    <span className="text-[12px] font-bold text-on-surface-variant italic">
+                      {Array.from(typingUsers)
+                        .map((email) => getDisplayName(email, user, userProfiles))
+                        .join(", ")}{" "}
+                      đang soạn tin...
+                    </span>
                   </div>
                 </div>
               )}
@@ -313,18 +358,27 @@ const ChatPage: React.FC = () => {
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
             <div className="w-48 h-48 bg-primary/5 rounded-full flex items-center justify-center mb-8 animate-float">
-              <img src="/logo_blue.png" className="w-24 grayscale opacity-20" alt="" />
+              <img
+                src="/logo_blue.png"
+                className="w-24 grayscale opacity-20"
+                alt=""
+              />
             </div>
-            <h2 className="text-2xl font-extrabold text-on-surface mb-2">Chào mừng đến với Zalo Edu</h2>
-            <p className="text-on-surface-variant max-w-sm">Chọn một cuộc trò chuyện để bắt đầu trao đổi công việc và học tập hiệu quả.</p>
+            <h2 className="text-2xl font-extrabold text-on-surface mb-2">
+              Chào mừng đến với Zalo Edu
+            </h2>
+            <p className="text-on-surface-variant max-w-sm">
+              Chọn một cuộc trò chuyện để bắt đầu trao đổi công việc và học tập
+              hiệu quả.
+            </p>
           </div>
         )}
       </div>
 
-      <ForwardModal 
-        isOpen={!!forwardMessage} 
-        onClose={() => setForwardMessage(null)} 
-        message={forwardMessage} 
+      <ForwardModal
+        isOpen={!!forwardMessage}
+        onClose={() => setForwardMessage(null)}
+        message={forwardMessage}
       />
 
       {/* 3. Info Sidebar */}
@@ -333,15 +387,18 @@ const ChatPage: React.FC = () => {
       {/* Context Menu Overlay (Zalo Style Redesign) */}
       {contextMenu && (
         <div
-          className="fixed inset-0 z-[110]"
+          className="fixed inset-0 z-110"
           onClick={() => setContextMenu(null)}
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu(null);
+          }}
         >
           <div
             className="absolute bg-white dark:bg-surface-container rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] border border-outline-variant/10 dark:border-outline-variant/30 py-1.5 w-64 animate-in fade-in zoom-in-95 duration-200"
-            style={{ 
-              left: Math.min(contextMenu.x, window.innerWidth - 270), 
-              top: Math.min(contextMenu.y, window.innerHeight - 400) 
+            style={{
+              left: Math.min(contextMenu.x, window.innerWidth - 270),
+              top: Math.min(contextMenu.y, window.innerHeight - 400),
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -358,24 +415,32 @@ const ChatPage: React.FC = () => {
             </button>
             <button
               onClick={() => {
-                useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, { 
-                  action: contextMenu.message.pinned ? 'unpin' : 'pin' 
-                });
+                useChatStore
+                  .getState()
+                  .patchMessageOptimistic(
+                    activeConvId!,
+                    contextMenu.message.id,
+                    {
+                      action: contextMenu.message.pinned ? "unpin" : "pin",
+                    },
+                  );
                 setContextMenu(null);
               }}
               className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors"
             >
               <Pin size={18} className="text-on-surface-variant" />
-              {contextMenu.message.pinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'}
+              {contextMenu.message.pinned
+                ? "Bỏ ghim tin nhắn"
+                : "Ghim tin nhắn"}
             </button>
-            <button 
+            <button
               onClick={() => {
                 Swal.fire({
-                  title: 'Đánh dấu tin nhắn',
-                  text: 'Tin nhắn đã được đánh dấu và lưu vào Cloud của bạn!',
-                  icon: 'success',
+                  title: "Đánh dấu tin nhắn",
+                  text: "Tin nhắn đã được đánh dấu và lưu vào Cloud của bạn!",
+                  icon: "success",
                   timer: 2000,
-                  showConfirmButton: false
+                  showConfirmButton: false,
                 });
                 setContextMenu(null);
               }}
@@ -388,13 +453,13 @@ const ChatPage: React.FC = () => {
             <div className="h-px bg-outline-variant/10 my-1 mx-2" />
 
             {/* Group 2: Advanced Actions */}
-            <button 
+            <button
               onClick={() => {
                 Swal.fire({
-                  title: 'Chọn nhiều tin nhắn',
-                  text: 'Chức năng chọn nhiều tin nhắn đang được phát triển.',
-                  icon: 'info',
-                  confirmButtonColor: '#00418f'
+                  title: "Chọn nhiều tin nhắn",
+                  text: "Chức năng chọn nhiều tin nhắn đang được phát triển.",
+                  icon: "info",
+                  confirmButtonColor: "#00418f",
                 });
                 setContextMenu(null);
               }}
@@ -403,21 +468,23 @@ const ChatPage: React.FC = () => {
               <ListChecks size={18} className="text-on-surface-variant" />
               Chọn nhiều tin nhắn
             </button>
-            <button 
+            <button
               onClick={() => {
-                const date = new Date(contextMenu.message.createdAt).toLocaleString();
+                const date = new Date(
+                  contextMenu.message.createdAt,
+                ).toLocaleString();
                 Swal.fire({
-                  title: 'Chi tiết tin nhắn',
+                  title: "Chi tiết tin nhắn",
                   html: `
                     <div class="text-left space-y-2 mt-4 text-sm text-on-surface">
-                      <p><strong>Người gửi:</strong> ${contextMenu.message.senderId}</p>
+                      <p><strong>Người gửi:</strong> ${getDisplayName(contextMenu.message.senderId, user, userProfiles)}</p>
                       <p><strong>Đã gửi lúc:</strong> ${date}</p>
                       <p><strong>Trạng thái:</strong> ${contextMenu.message.status}</p>
                       <p><strong>Mã tin nhắn:</strong> <span class="text-xs text-outline font-mono">${contextMenu.message.id}</span></p>
                     </div>
                   `,
-                  icon: 'info',
-                  confirmButtonColor: '#00418f'
+                  icon: "info",
+                  confirmButtonColor: "#00418f",
                 });
                 setContextMenu(null);
               }}
@@ -430,24 +497,36 @@ const ChatPage: React.FC = () => {
             <div className="h-px bg-outline-variant/10 my-1 mx-2" />
 
             {/* Group 3: Destructive Actions */}
-            {contextMenu.message.senderId === user?.email && !contextMenu.message.recalled && (
-               <button
-                 onClick={() => {
-                   useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, { action: 'recall' });
-                   setContextMenu(null);
-                 }}
-                 className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
-               >
-                 <RotateCcw size={18} />
-                 Thu hồi
-               </button>
-            )}
+            {contextMenu.message.senderId === user?.email &&
+              !contextMenu.message.recalled && (
+                <button
+                  onClick={() => {
+                    useChatStore
+                      .getState()
+                      .patchMessageOptimistic(
+                        activeConvId!,
+                        contextMenu.message.id,
+                        { action: "recall" },
+                      );
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
+                >
+                  <RotateCcw size={18} />
+                  Thu hồi
+                </button>
+              )}
             <button
-               onClick={() => {
-                 useChatStore.getState().deleteMessageOptimistic(activeConvId!, contextMenu.message.id);
-                 setContextMenu(null);
-               }}
-               className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
+              onClick={() => {
+                useChatStore
+                  .getState()
+                  .deleteMessageOptimistic(
+                    activeConvId!,
+                    contextMenu.message.id,
+                  );
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
             >
               <Trash2 size={18} />
               Xóa chỉ ở phía tôi
@@ -457,6 +536,10 @@ const ChatPage: React.FC = () => {
       )}
       {/* Image Preview Modal (Lightbox) */}
       <ImageModal />
+      <TagManagerModal
+        isOpen={isTagManagerOpen}
+        onClose={() => setIsTagManagerOpen(false)}
+      />
     </div>
   );
 };

@@ -54,6 +54,28 @@ export class FriendshipService {
     return result.Item as Friendship | undefined;
   }
 
+  // Public helper: check if `userEmail` is blocked BY `otherEmail` (i.e., otherEmail blocked userEmail)
+  async isBlockedBy(userEmail: string, otherEmail: string) {
+    const record = await this.getFriendshipRecord(otherEmail, userEmail);
+    if (!record) return false;
+    return (
+      String(record.status || "").toLowerCase() === "blocked" &&
+      String(record.blockedBy || "").toLowerCase() ===
+        this.normalizeEmail(otherEmail)
+    );
+  }
+
+  // Check if either side has a blocked record between two users
+  async isAnyBlocked(emailA: string, emailB: string) {
+    const aRes = await this.getFriendshipRecord(emailA, emailB);
+    const bRes = await this.getFriendshipRecord(emailB, emailA);
+    const aBlocked =
+      aRes && String(aRes.status || "").toLowerCase() === "blocked";
+    const bBlocked =
+      bRes && String(bRes.status || "").toLowerCase() === "blocked";
+    return aBlocked || bBlocked;
+  }
+
   private async emitFriendshipUpdate(email: string, payload: any) {
     this.chatGateway.notifyFriendshipUpdate(email, payload);
   }
@@ -387,6 +409,10 @@ export class FriendshipService {
     }
 
     const timestamp = new Date().toISOString();
+    console.debug("[FriendshipService] blockUser normalized:", {
+      normalizedUser,
+      normalizedBlocked,
+    });
     const userRecord = await this.getFriendshipRecord(
       normalizedUser,
       normalizedBlocked,
@@ -421,8 +447,8 @@ export class FriendshipService {
               Item: {
                 PK: `USER#${normalizedBlocked}`,
                 SK: `FRIEND#${normalizedUser}`,
-                sender_id: blockedRecord?.sender_id || normalizedUser,
-                receiver_id: blockedRecord?.receiver_id || normalizedBlocked,
+                sender_id: blockedRecord?.sender_id || normalizedBlocked,
+                receiver_id: blockedRecord?.receiver_id || normalizedUser,
                 status: "blocked",
                 blockedBy: normalizedUser,
                 createdAt: blockedRecord?.createdAt || timestamp,
@@ -441,6 +467,71 @@ export class FriendshipService {
     });
 
     return { message: "User blocked successfully" };
+  }
+
+  async unblockUser(userEmail: string, blockedEmail: string) {
+    const normalizedUser = this.normalizeEmail(userEmail);
+    const normalizedBlocked = this.normalizeEmail(blockedEmail);
+
+    const currentRecord = await this.getFriendshipRecord(
+      normalizedUser,
+      normalizedBlocked,
+    );
+
+    if (
+      !currentRecord ||
+      String(currentRecord.status || "").toLowerCase() !== "blocked"
+    ) {
+      throw new NotFoundException("Blocked friendship not found");
+    }
+
+    const timestamp = new Date().toISOString();
+
+    // Restore to accepted so messaging is re-enabled. If needed, this can be
+    // adjusted to restore previous status instead of forcing "accepted".
+    await this.db.docClient.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: this.db.tableName,
+              Item: {
+                PK: `USER#${normalizedUser}`,
+                SK: `FRIEND#${normalizedBlocked}`,
+                sender_id: currentRecord.sender_id || normalizedUser,
+                receiver_id: currentRecord.receiver_id || normalizedBlocked,
+                status: "accepted",
+                nickname: currentRecord.nickname,
+                createdAt: currentRecord.createdAt || timestamp,
+                updatedAt: timestamp,
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: this.db.tableName,
+              Item: {
+                PK: `USER#${normalizedBlocked}`,
+                SK: `FRIEND#${normalizedUser}`,
+                sender_id: currentRecord.sender_id || normalizedBlocked,
+                receiver_id: currentRecord.receiver_id || normalizedUser,
+                status: "accepted",
+                createdAt: currentRecord.createdAt || timestamp,
+                updatedAt: timestamp,
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    await this.emitFriendshipUpdate(normalizedUser, {
+      action: "unblocked",
+      otherEmail: normalizedBlocked,
+      updatedAt: timestamp,
+    });
+
+    return { message: "User unblocked successfully" };
   }
 
   async setNickname(userEmail: string, friendEmail: string, nickname: string) {
@@ -537,7 +628,9 @@ export class FriendshipService {
 
     const currentStatus = String(currentRecord.status || "").toLowerCase();
     if (currentStatus !== "accepted") {
-      throw new BadRequestException("Only accepted friends can be close friends");
+      throw new BadRequestException(
+        "Only accepted friends can be close friends",
+      );
     }
 
     const timestamp = new Date().toISOString();

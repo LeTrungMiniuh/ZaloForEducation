@@ -79,6 +79,12 @@ const ContactsPage: React.FC = () => {
   const [search, setSearch] = useState("");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [filter, setFilter] = useState<ContactsFilter>("all");
+  const FILTER_LABELS: Record<ContactsFilter, string> = {
+    all: "Tất cả",
+    "with-nickname": "Có biệt danh",
+    "without-nickname": "Không có biệt danh",
+    blocked: "Đã chặn",
+  };
   const [hiddenSuggestionEmails, setHiddenSuggestionEmails] = useState<
     string[]
   >([]);
@@ -110,6 +116,15 @@ const ContactsPage: React.FC = () => {
     x: number;
     y: number;
   } | null>(null);
+  const selectedFriendship = useMemo(() => {
+    if (!actionMenu) return undefined;
+    return friendships.find((item) => {
+      return (
+        item.sender_id === actionMenu.email ||
+        item.receiver_id === actionMenu.email
+      );
+    });
+  }, [actionMenu, friendships]);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
 
   const myEmail = user?.email || "";
@@ -130,22 +145,25 @@ const ContactsPage: React.FC = () => {
 
   const loadUserProfile = useCallback(
     async (email?: string) => {
-      if (!email || email === myEmail || userProfiles[email]) return;
-      if (profileLoadingRef.current.has(email)) return;
+      if (!email || email === myEmail) return;
+      const normalized = String(email).trim().toLowerCase();
+      if (userProfiles[normalized]) return;
+      if (profileLoadingRef.current.has(normalized)) return;
 
-      profileLoadingRef.current.add(email);
+      profileLoadingRef.current.add(normalized);
       try {
         const res = await chatGet("/friends/search", { email });
         if (res.data?.found && res.data?.user) {
+          const user = res.data.user;
           setUserProfiles((prev) => ({
             ...prev,
-            [email]: res.data.user,
+            [normalized]: { ...user, email: normalized },
           }));
         }
       } catch (error) {
         console.error("Failed to load user profile", error);
       } finally {
-        profileLoadingRef.current.delete(email);
+        profileLoadingRef.current.delete(normalized);
       }
     },
     [myEmail, userProfiles],
@@ -266,34 +284,31 @@ const ContactsPage: React.FC = () => {
 
   const pendingRequestCount = incomingRequests.length;
 
-  const visibleSuggestions = useMemo(
-    () => {
-      const nextSuggestions = new Map<string, FriendSuggestion>();
+  const visibleSuggestions = useMemo(() => {
+    const nextSuggestions = new Map<string, FriendSuggestion>();
 
-      suggestions.forEach((suggestion) => {
-        nextSuggestions.set(suggestion.email, suggestion);
-      });
+    suggestions.forEach((suggestion) => {
+      nextSuggestions.set(suggestion.email, suggestion);
+    });
 
-      pendingSuggestionEmails.forEach((email) => {
-        const cachedSuggestion = suggestionCache[email];
-        if (cachedSuggestion) {
-          nextSuggestions.set(email, cachedSuggestion);
-        }
-      });
+    pendingSuggestionEmails.forEach((email) => {
+      const cachedSuggestion = suggestionCache[email];
+      if (cachedSuggestion) {
+        nextSuggestions.set(email, cachedSuggestion);
+      }
+    });
 
-      return Array.from(nextSuggestions.values())
-        .filter((suggestion) => !hiddenSuggestionEmails.includes(suggestion.email))
-        .sort((left, right) =>
-          left.fullName.localeCompare(right.fullName, "vi"),
-        );
-    },
-    [
-      suggestions,
-      hiddenSuggestionEmails,
-      pendingSuggestionEmails,
-      suggestionCache,
-    ],
-  );
+    return Array.from(nextSuggestions.values())
+      .filter(
+        (suggestion) => !hiddenSuggestionEmails.includes(suggestion.email),
+      )
+      .sort((left, right) => left.fullName.localeCompare(right.fullName, "vi"));
+  }, [
+    suggestions,
+    hiddenSuggestionEmails,
+    pendingSuggestionEmails,
+    suggestionCache,
+  ]);
 
   useEffect(() => {
     setPendingSuggestionEmails((prev) =>
@@ -312,8 +327,7 @@ const ContactsPage: React.FC = () => {
     () =>
       friendships
         .filter(
-          (item) =>
-            item.status === "pending" && item.sender_id === myEmail,
+          (item) => item.status === "pending" && item.sender_id === myEmail,
         )
         .map((item) => item.receiver_id),
     [friendships, myEmail],
@@ -521,6 +535,25 @@ const ContactsPage: React.FC = () => {
     }
   };
 
+  const handleUnblockUser = async (email: string) => {
+    const result = await Swal.fire({
+      title: "Bỏ chặn người dùng?",
+      text: "Người này sẽ có thể nhắn tin lại với bạn.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Bỏ chặn",
+    });
+
+    if (!result.isConfirmed) return;
+
+    try {
+      await chatPost("/friends/unblock", { targetEmail: email });
+      await refreshContacts();
+    } catch (error) {
+      console.error("Failed to unblock user", error);
+    }
+  };
+
   const handleUnfriend = async (email: string) => {
     const result = await Swal.fire({
       title: "Xóa bạn bè?",
@@ -615,8 +648,12 @@ const ContactsPage: React.FC = () => {
   };
 
   const handleOpenFriendChat = (email: string) => {
-    const normalizedTarget = String(email || "").trim().toLowerCase();
-    const normalizedMe = String(myEmail || "").trim().toLowerCase();
+    const normalizedTarget = String(email || "")
+      .trim()
+      .toLowerCase();
+    const normalizedMe = String(myEmail || "")
+      .trim()
+      .toLowerCase();
     const existingDirect = conversations.find((conversation) => {
       if (conversation?.type !== "direct") return false;
       const members = Array.isArray(conversation.members)
@@ -671,14 +708,12 @@ const ContactsPage: React.FC = () => {
         typeof error === "object" &&
         error !== null &&
         "response" in error &&
-        typeof (error as { response?: { data?: { message?: string } } }).response?.data
-          ?.message === "string"
-          ? (error as { response?: { data?: { message?: string } } }).response?.data
-              ?.message
+        typeof (error as { response?: { data?: { message?: string } } })
+          .response?.data?.message === "string"
+          ? (error as { response?: { data?: { message?: string } } }).response
+              ?.data?.message
           : null;
-      setGmailSearchMessage(
-        responseMessage || "Tìm kiếm thất bại.",
-      );
+      setGmailSearchMessage(responseMessage || "Tìm kiếm thất bại.");
     } finally {
       setGmailSearchLoading(false);
     }
@@ -699,21 +734,25 @@ const ContactsPage: React.FC = () => {
         typeof error === "object" &&
         error !== null &&
         "response" in error &&
-        typeof (error as { response?: { data?: { message?: string } } }).response?.data
-          ?.message === "string"
-          ? (error as { response?: { data?: { message?: string } } }).response?.data
-              ?.message
+        typeof (error as { response?: { data?: { message?: string } } })
+          .response?.data?.message === "string"
+          ? (error as { response?: { data?: { message?: string } } }).response
+              ?.data?.message
           : null;
-      setGmailSearchMessage(
-        responseMessage || "Gửi lời mời thất bại.",
-      );
+      setGmailSearchMessage(responseMessage || "Gửi lời mời thất bại.");
     } finally {
       setGmailSearchLoading(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen bg-[#f7f9fb] text-on-surface antialiased font-['Plus_Jakarta_Sans']">
+    <div
+      className="flex min-h-screen bg-[#f7f9fb] text-on-surface antialiased"
+      style={{
+        fontFamily:
+          "'Plus Jakarta Sans', 'Noto Sans', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial",
+      }}
+    >
       <aside className="fixed left-0 top-0 h-full z-50 w-20 flex flex-col items-center py-6 bg-linear-to-br from-[#0058bc] to-[#00418f] shadow-[0px_20px_40px_rgba(0,65,143,0.06)] shrink-0">
         <div className="mb-8">
           <img
@@ -766,14 +805,14 @@ const ContactsPage: React.FC = () => {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search"
+                placeholder="Tìm kiếm"
                 className="w-full bg-transparent text-[13px] outline-none placeholder:text-outline"
               />
             </div>
             <button
               onClick={handleOpenGmailSearch}
               className="rounded-2xl p-2.5 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-primary"
-              title="Add friend"
+              title="Thêm bạn"
             >
               <span className="material-symbols-outlined text-[20px]">
                 person_add
@@ -784,21 +823,21 @@ const ContactsPage: React.FC = () => {
 
         <div className="p-4 space-y-3">
           <div className="space-y-2">
-            {renderSidebarItem("Friends list", "friends", "group")}
+            {renderSidebarItem("Danh bạ", "friends", "group")}
             {renderSidebarItem(
-              "Joined groups and communities",
+              "Nhóm đã tham gia",
               "groups",
               "groups",
               activeGroupCount,
             )}
             {renderSidebarItem(
-              "Friend requests",
+              "Lời mời kết bạn",
               "requests",
               "person_add",
               activeRequestCount,
             )}
             {renderSidebarItem(
-              "Group/community invitations",
+              "Lời mời nhóm/cộng đồng",
               "invitations",
               "mail",
               0,
@@ -812,14 +851,14 @@ const ContactsPage: React.FC = () => {
           <header className="flex h-16 items-center justify-between border-b border-outline-variant/20 bg-white px-6">
             <div className="flex items-center gap-3 text-on-surface">
               <span className="material-symbols-outlined">group</span>
-              <h1 className="text-[18px] font-bold">Friends list</h1>
+              <h1 className="text-[18px] font-bold">Danh bạ</h1>
             </div>
             <div className="flex items-center gap-2 text-[12px] text-on-surface-variant">
               <span className="rounded-full bg-surface-container-high px-3 py-1 font-semibold">
-                Contacts ({activeFriendCount})
+                Danh bạ ({activeFriendCount})
               </span>
               <span className="rounded-full bg-surface-container-high px-3 py-1 font-semibold">
-                Requests ({activeRequestCount})
+                Yêu cầu ({activeRequestCount})
               </span>
             </div>
           </header>
@@ -830,10 +869,11 @@ const ContactsPage: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-[22px] font-black text-on-surface">
-                      Contacts ({activeFriendCount})
+                      Danh bạ ({activeFriendCount})
                     </h2>
                     <p className="mt-1 text-[13px] text-on-surface-variant">
-                      Search, sort, filter, and manage your friend list.
+                      Tìm kiếm, sắp xếp, lọc và quản lý danh sách bạn bè của
+                      bạn.
                     </p>
                   </div>
                 </div>
@@ -847,7 +887,7 @@ const ContactsPage: React.FC = () => {
                       <input
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
-                        placeholder="Search friends"
+                        placeholder="Tìm bạn bè"
                         className="w-full rounded-2xl border border-outline-variant/20 bg-surface-container-lowest py-2.5 pl-10 pr-4 text-[13px] text-on-surface outline-none placeholder:text-outline focus:border-primary/30"
                       />
                     </div>
@@ -858,7 +898,7 @@ const ContactsPage: React.FC = () => {
                       }
                       className="rounded-2xl border border-outline-variant/25 bg-white px-4 py-2.5 text-[12px] font-bold text-on-surface transition-colors hover:border-primary/30"
                     >
-                      Name ({sortOrder === "asc" ? "A-Z" : "Z-A"})
+                      Tên ({sortOrder === "asc" ? "A-Z" : "Z-A"})
                     </button>
 
                     <div className="relative" ref={dropdownRef}>
@@ -866,7 +906,7 @@ const ContactsPage: React.FC = () => {
                         onClick={() => setFilterMenuOpen((prev) => !prev)}
                         className="flex min-w-45 items-center justify-between rounded-2xl border border-outline-variant/25 bg-white px-4 py-2.5 text-[12px] font-bold text-on-surface transition-colors hover:border-primary/30"
                       >
-                        <span>Filter: {filter.replace("-", " ")}</span>
+                        <span>Bộ lọc: {FILTER_LABELS[filter] || filter}</span>
                         <span className="material-symbols-outlined text-[18px]">
                           expand_more
                         </span>
@@ -874,10 +914,10 @@ const ContactsPage: React.FC = () => {
                       {filterMenuOpen && (
                         <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-52 overflow-hidden rounded-2xl border border-outline-variant/20 bg-white shadow-xl">
                           {[
-                            ["all", "All"],
-                            ["with-nickname", "With nickname"],
-                            ["without-nickname", "Without nickname"],
-                            ["blocked", "Blocked"],
+                            ["all", "Tất cả"],
+                            ["with-nickname", "Có biệt danh"],
+                            ["without-nickname", "Không có biệt danh"],
+                            ["blocked", "Đã chặn"],
                           ].map(([value, label]) => (
                             <button
                               key={value}
@@ -903,11 +943,11 @@ const ContactsPage: React.FC = () => {
 
                 {loading ? (
                   <div className="rounded-[24px] border border-outline-variant/20 bg-white p-8 text-center text-on-surface-variant">
-                    Loading contacts...
+                    Đang tải danh bạ...
                   </div>
                 ) : groupedContacts.length === 0 ? (
                   <div className="rounded-[24px] border border-outline-variant/20 bg-white p-8 text-center text-on-surface-variant">
-                    No contacts match your search.
+                    Không có liên hệ phù hợp.
                   </div>
                 ) : (
                   <div className="space-y-8">
@@ -920,7 +960,9 @@ const ContactsPage: React.FC = () => {
                           {group.contacts.map((contact) => (
                             <div
                               key={contact.email}
-                              onClick={() => handleOpenFriendChat(contact.email)}
+                              onClick={() =>
+                                handleOpenFriendChat(contact.email)
+                              }
                               className="group flex items-center justify-between rounded-2xl border border-outline-variant/20 bg-white px-4 py-3 transition-colors hover:bg-surface-container cursor-pointer"
                             >
                               <div className="flex min-w-0 items-center gap-3">
@@ -933,9 +975,11 @@ const ContactsPage: React.FC = () => {
                                   <p className="truncate text-[14px] font-bold text-on-surface">
                                     {contact.displayName}
                                   </p>
-                                  <p className="truncate text-[12px] text-on-surface-variant">
-                                    {contact.nickname || contact.email}
-                                  </p>
+                                  {contact.blocked && (
+                                    <span className="mt-1 inline-block text-[11px] font-bold text-white bg-error px-2 py-0.5 rounded">
+                                      Đã chặn
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
@@ -1022,7 +1066,7 @@ const ContactsPage: React.FC = () => {
                               }
                               className="rounded-2xl bg-primary px-4 py-2 text-[12px] font-bold text-white"
                             >
-                              Accept
+                              Chấp nhận
                             </button>
                             <button
                               onClick={() =>
@@ -1030,7 +1074,7 @@ const ContactsPage: React.FC = () => {
                               }
                               className="rounded-2xl bg-surface-container-high px-4 py-2 text-[12px] font-bold text-on-surface"
                             >
-                              Reject
+                              Từ chối
                             </button>
                           </div>
                         </div>
@@ -1041,12 +1085,12 @@ const ContactsPage: React.FC = () => {
 
                 <div className="rounded-[24px] border border-outline-variant/20 bg-white p-4">
                   <h3 className="mb-4 text-[14px] font-black text-on-surface">
-                    Suggested Friends
+                    Gợi ý kết bạn
                   </h3>
                   <div className="space-y-3">
                     {visibleSuggestions.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-outline-variant/30 p-6 text-center text-on-surface-variant">
-                        No suggestions available.
+                        Không có gợi ý.
                       </div>
                     ) : (
                       visibleSuggestions.map((suggestion) => {
@@ -1074,16 +1118,18 @@ const ContactsPage: React.FC = () => {
                                 </p>
                                 <p className="truncate text-[12px] text-on-surface-variant">
                                   {suggestion.reasons.join(" • ") ||
-                                    "Suggested from your network"}
+                                    "Gợi ý từ mạng lưới của bạn"}
                                 </p>
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
                               <button
-                                onClick={() => handleSkipSuggestion(suggestion.email)}
+                                onClick={() =>
+                                  handleSkipSuggestion(suggestion.email)
+                                }
                                 className="rounded-2xl bg-surface-container-high px-4 py-2 text-[12px] font-bold text-on-surface transition-colors hover:bg-surface-container"
                               >
-                                Skip
+                                Bỏ qua
                               </button>
                               <button
                                 onClick={() =>
@@ -1092,11 +1138,13 @@ const ContactsPage: React.FC = () => {
                                 disabled={isPending}
                                 className="rounded-2xl bg-primary px-4 py-2 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                {sendingSuggestionEmails.includes(suggestion.email)
-                                  ? "Sending..."
+                                {sendingSuggestionEmails.includes(
+                                  suggestion.email,
+                                )
+                                  ? "Đang gửi..."
                                   : isPending
-                                    ? "Request Sent"
-                                    : "Add friend"}
+                                    ? "Đã gửi"
+                                    : "Thêm bạn"}
                               </button>
                             </div>
                           </div>
@@ -1112,16 +1160,16 @@ const ContactsPage: React.FC = () => {
               <section className="space-y-4">
                 <div>
                   <h2 className="text-[22px] font-black text-on-surface">
-                    Joined groups and communities
+                    Nhóm đã tham gia
                   </h2>
                   <p className="mt-1 text-[13px] text-on-surface-variant">
-                    Groups you are already part of.
+                    Những nhóm bạn đã tham gia.
                   </p>
                 </div>
                 <div className="space-y-3">
                   {groupConversations.length === 0 ? (
                     <div className="rounded-[24px] border border-outline-variant/20 bg-white p-6 text-center text-on-surface-variant">
-                      No joined groups yet.
+                      Chưa tham gia nhóm nào.
                     </div>
                   ) : (
                     groupConversations.map((conversation) => (
@@ -1140,8 +1188,8 @@ const ContactsPage: React.FC = () => {
                           </p>
                           <p className="truncate text-[12px] text-on-surface-variant">
                             {Array.isArray(conversation.members)
-                              ? `${conversation.members.length} members`
-                              : "Group conversation"}
+                              ? `${conversation.members.length} thành viên`
+                              : "Cuộc trò chuyện nhóm"}
                           </p>
                         </div>
                       </div>
@@ -1155,14 +1203,14 @@ const ContactsPage: React.FC = () => {
               <section className="space-y-4">
                 <div>
                   <h2 className="text-[22px] font-black text-on-surface">
-                    Group/community invitations
+                    Lời mời nhóm/cộng đồng
                   </h2>
                   <p className="mt-1 text-[13px] text-on-surface-variant">
-                    This section is ready for future invitation data.
+                    Phần này sẵn sàng cho dữ liệu lời mời trong tương lai.
                   </p>
                 </div>
                 <div className="rounded-[24px] border border-outline-variant/20 bg-white p-8 text-center text-on-surface-variant">
-                  No invitations available.
+                  Không có lời mời.
                 </div>
               </section>
             )}
@@ -1175,7 +1223,7 @@ const ContactsPage: React.FC = () => {
           <div className="w-full max-w-md overflow-hidden rounded-[18px] bg-white shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <h3 className="text-[16px] font-semibold text-slate-900">
-                Add friend
+                Thêm bạn
               </h3>
               <button
                 onClick={handleCloseGmailSearch}
@@ -1202,7 +1250,7 @@ const ContactsPage: React.FC = () => {
                       void handleSearchGmail();
                     }
                   }}
-                  placeholder="Enter Gmail address"
+                  placeholder="Nhập địa chỉ Gmail"
                   className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-slate-400"
                 />
               </div>
@@ -1225,8 +1273,13 @@ const ContactsPage: React.FC = () => {
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <img
-                          src={gmailSearchResult.user.avatarUrl || "/logo_blue.png"}
-                          alt={gmailSearchResult.user.fullName || gmailSearchResult.user.email}
+                          src={
+                            gmailSearchResult.user.avatarUrl || "/logo_blue.png"
+                          }
+                          alt={
+                            gmailSearchResult.user.fullName ||
+                            gmailSearchResult.user.email
+                          }
                           className="h-12 w-12 rounded-full object-cover bg-slate-100"
                         />
                         <div className="min-w-0">
@@ -1257,12 +1310,14 @@ const ContactsPage: React.FC = () => {
                       ) : (
                         <button
                           onClick={() =>
-                            handleSendGmailRequest(gmailSearchResult.user!.email)
+                            handleSendGmailRequest(
+                              gmailSearchResult.user!.email,
+                            )
                           }
                           disabled={gmailSearchLoading}
                           className="rounded-xl border border-blue-500 px-4 py-2 text-[13px] font-semibold text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          {gmailSearchLoading ? "Sending..." : "Add friend"}
+                          {gmailSearchLoading ? "Đang gửi..." : "Thêm bạn"}
                         </button>
                       )}
                     </div>
@@ -1275,14 +1330,14 @@ const ContactsPage: React.FC = () => {
                   onClick={handleCloseGmailSearch}
                   className="rounded-xl bg-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-700 transition-colors hover:bg-slate-300"
                 >
-                  Cancel
+                  Huỷ
                 </button>
                 <button
                   onClick={() => void handleSearchGmail()}
                   disabled={gmailSearchLoading}
                   className="rounded-xl bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {gmailSearchLoading ? "Searching..." : "Search"}
+                  {gmailSearchLoading ? "Đang tìm..." : "Tìm"}
                 </button>
               </div>
             </div>
@@ -1303,7 +1358,7 @@ const ContactsPage: React.FC = () => {
             }}
             className="block w-full rounded-xl px-3 py-2 text-left text-[13px] font-medium text-on-surface hover:bg-surface-container"
           >
-            View profile
+            Xem hồ sơ
           </button>
           <button
             onClick={() => {
@@ -1322,17 +1377,29 @@ const ContactsPage: React.FC = () => {
             }}
             className="block w-full rounded-xl px-3 py-2 text-left text-[13px] font-medium text-on-surface hover:bg-surface-container"
           >
-            Set nickname
+            Đặt biệt danh
           </button>
-          <button
-            onClick={() => {
-              handleBlockUser(actionMenu.email);
-              setActionMenu(null);
-            }}
-            className="block w-full rounded-xl px-3 py-2 text-left text-[13px] font-medium text-on-surface hover:bg-surface-container"
-          >
-            Block user
-          </button>
+          {selectedFriendship?.status === "blocked" ? (
+            <button
+              onClick={() => {
+                handleUnblockUser(actionMenu.email);
+                setActionMenu(null);
+              }}
+              className="block w-full rounded-xl px-3 py-2 text-left text-[13px] font-medium text-on-surface hover:bg-surface-container"
+            >
+              Bỏ chặn
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                handleBlockUser(actionMenu.email);
+                setActionMenu(null);
+              }}
+              className="block w-full rounded-xl px-3 py-2 text-left text-[13px] font-medium text-on-surface hover:bg-surface-container"
+            >
+              Chặn người dùng
+            </button>
+          )}
           <button
             onClick={() => {
               handleUnfriend(actionMenu.email);
@@ -1340,7 +1407,7 @@ const ContactsPage: React.FC = () => {
             }}
             className="block w-full rounded-xl px-3 py-2 text-left text-[13px] font-medium text-error hover:bg-red-50"
           >
-            Unfriend
+            Xóa bạn
           </button>
         </div>
       )}

@@ -18,10 +18,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { Colors, Typography } from '../../constants/Theme';
-import Alert from '../../utils/Alert';
-import { apiRequest } from '../../utils/api';
-import SocketService from '../../utils/socket';
+import { Colors, Typography } from "../../constants/Theme";
+import Alert from "../../utils/Alert";
+import { apiRequest } from "../../utils/api";
+import SocketService from "../../utils/socket";
 
 const DEFAULT_AVATAR =
   "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
@@ -192,9 +192,9 @@ const daysUntilNextBirthday = (value, now = new Date()) => {
 };
 
 const birthdayReminderLabel = (days) => {
-  if (days === 0) return "Today";
-  if (days === 1) return "Tomorrow";
-  return `${days} days left`;
+  if (days === 0) return "Hôm nay";
+  if (days === 1) return "Ngày mai";
+  return `${days} ngày còn lại`;
 };
 
 const birthdayHint = (friends) => {
@@ -203,14 +203,14 @@ const birthdayHint = (friends) => {
   );
 
   if (withBirthday.length === 0) {
-    return "Chua co du lieu ngay sinh";
+    return "Chưa có dữ liệu ngày sinh";
   }
 
   const first = withBirthday[0];
-  const firstName = first?.displayName || "Ban be";
+  const firstName = first?.displayName || "Bạn bè";
   const firstBirthday = formatBirthDate(pickBirthDateRaw(first?.profile));
   if (withBirthday.length === 1) return `${firstName}: ${firstBirthday}`;
-  return `${firstName}: ${firstBirthday} va ${withBirthday.length - 1} nguoi khac`;
+  return `${firstName}: ${firstBirthday} và ${withBirthday.length - 1} người khác`;
 };
 
 export default function ContactsScreen({
@@ -228,6 +228,7 @@ export default function ContactsScreen({
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [profileMap, setProfileMap] = useState({});
+  const [blockedUsers, setBlockedUsers] = useState([]);
 
   const [searchText, setSearchText] = useState("");
   const [sortMode, setSortMode] = useState("asc");
@@ -308,9 +309,22 @@ export default function ContactsScreen({
         ? suggestionRes.data
         : [];
 
+      // Extract blocked users from friendships array (status === "blocked")
+      const nextBlocked = nextFriendships.filter(
+        (item) => item?.status === "blocked",
+      );
+
       setFriendships(nextFriendships);
       setIncomingRequests(nextRequests);
       setSuggestions(nextSuggestions);
+      setBlockedUsers(nextBlocked);
+
+      console.log("Contacts loaded:", {
+        friendships: nextFriendships.length,
+        requests: nextRequests.length,
+        suggestions: nextSuggestions.length,
+        blocked: nextBlocked.length,
+      });
 
       const friendEmails = nextFriendships.map((item) =>
         friendEmailOf(item, user.email),
@@ -318,7 +332,14 @@ export default function ContactsScreen({
       const requestEmails = nextRequests.map(
         (item) => item?.sender_id || item?.senderEmail,
       );
-      await ensureProfiles([...friendEmails, ...requestEmails]);
+      const blockedEmails = nextBlocked.map((item) =>
+        String(item.friend_email || item.blockedEmail || "").toLowerCase(),
+      );
+      await ensureProfiles([
+        ...friendEmails,
+        ...requestEmails,
+        ...blockedEmails,
+      ]);
     } catch (error) {
       console.error("Load contacts failed", error);
       Alert.alert("Loi", "Khong the tai danh ba. Vui long thu lai.");
@@ -546,10 +567,36 @@ export default function ContactsScreen({
       const res = await chatPost("/friends/block", { targetEmail });
       if (!res?.ok) throw new Error("BLOCK_FAILED");
       setActionFriend(null);
+      Alert.alert("Thành công", "Đã chặn người dùng này.");
+      // Reload all contacts data to properly load blocked users with profiles
       await loadContactsData();
     } catch (error) {
       console.error("Block failed", error);
       Alert.alert("Loi", "Khong the chan nguoi dung nay.");
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleUnblock = async (targetEmail) => {
+    if (!targetEmail || busyAction) return;
+    setBusyAction(true);
+    try {
+      const res = await chatPost("/friends/unblock", { targetEmail });
+      if (!res?.ok) throw new Error("UNBLOCK_FAILED");
+      // Remove from blocked users and reload data
+      setBlockedUsers((prev) =>
+        (prev || []).filter(
+          (item) =>
+            String(item.email || "").toLowerCase() !==
+            targetEmail.toLowerCase(),
+        ),
+      );
+      Alert.alert("Thành công", "Đã bỏ chặn người dùng này.");
+      await loadContactsData();
+    } catch (error) {
+      console.error("Unblock failed", error);
+      Alert.alert("Loi", "Khong the bo chan nguoi dung nay.");
     } finally {
       setBusyAction(false);
     }
@@ -582,6 +629,9 @@ export default function ContactsScreen({
 
       setNicknameFriend(null);
       setNicknameDraft("");
+
+      // Always reload to keep every section in sync after nickname changes.
+      await loadContactsData();
     } catch (error) {
       console.error("Set nickname failed", error);
       Alert.alert("Loi", "Khong the dat biet danh.");
@@ -593,7 +643,9 @@ export default function ContactsScreen({
   };
 
   const setCloseFriendStatus = async (friendEmail, isCloseFriend) => {
-    const normalizedFriendEmail = String(friendEmail || "").trim().toLowerCase();
+    const normalizedFriendEmail = String(friendEmail || "")
+      .trim()
+      .toLowerCase();
     if (!normalizedFriendEmail || busyAction) return;
     setBusyAction(true);
     try {
@@ -719,7 +771,7 @@ export default function ContactsScreen({
         <TextInput
           value={searchText}
           onChangeText={setSearchText}
-          placeholder="Search"
+          placeholder="Tìm kiếm"
           placeholderTextColor="rgba(255,255,255,0.8)"
           style={styles.headerSearchInput}
         />
@@ -736,8 +788,9 @@ export default function ContactsScreen({
   const renderSectionTabs = () => (
     <View style={styles.sectionTabs}>
       {[
-        { key: "friends", label: "Friends" },
-        { key: "groups", label: "Groups" },
+        { key: "friends", label: "Bạn bè" },
+        { key: "groups", label: "Nhóm" },
+        { key: "blocked", label: "Đã chặn" },
         { key: "oa", label: "OA" },
       ].map((item) => (
         <TouchableOpacity
@@ -771,7 +824,7 @@ export default function ContactsScreen({
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.quickTitle}>
-          Friend request ({incomingRequests.length})
+          Lời mời kết bạn ({incomingRequests.length})
         </Text>
       </View>
     </TouchableOpacity>
@@ -788,10 +841,10 @@ export default function ContactsScreen({
         <Text style={styles.quickIcon}>cake</Text>
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.quickTitle}>Birthdays</Text>
+        <Text style={styles.quickTitle}>Ngày sinh nhật</Text>
         <Text style={styles.quickSubtitle}>
           {upcomingBirthdays.length > 0
-            ? `${upcomingBirthdays.length} upcoming birthday reminders`
+            ? `${upcomingBirthdays.length} nhắc nhở ngày sinh nhật sắp tới`
             : birthdayHint(acceptedFriends)}
         </Text>
       </View>
@@ -800,9 +853,11 @@ export default function ContactsScreen({
 
   const renderBirthdayRemindersPanel = () => (
     <View style={styles.panel}>
-      <Text style={styles.panelTitle}>Birthday reminders</Text>
+      <Text style={styles.panelTitle}>Nhắc nhở ngày sinh nhật</Text>
       {upcomingBirthdays.length === 0 ? (
-        <Text style={styles.emptyLabel}>No upcoming birthdays in the next 7 days</Text>
+        <Text style={styles.emptyLabel}>
+          Không có ngày sinh nhật nào trong 7 ngày tới
+        </Text>
       ) : (
         upcomingBirthdays.map((item) => (
           <View key={`birthday-${item.email}`} style={styles.requestItem}>
@@ -812,7 +867,7 @@ export default function ContactsScreen({
             />
             <View style={{ flex: 1 }}>
               <Text style={styles.requestName}>
-                {`${item.displayName}'s birthday is coming soon`}
+                {`Ngày sinh nhật của ${item.displayName} sắp đến rồi`}
               </Text>
               <Text style={styles.requestEmail}>
                 {`${item.birthFormatted} • ${birthdayReminderLabel(item.daysLeft)}`}
@@ -836,7 +891,7 @@ export default function ContactsScreen({
             filterMode === "all" && styles.chipTextActive,
           ]}
         >
-          All {acceptedFriends.length}
+          Tất cả {acceptedFriends.length}
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
@@ -849,44 +904,7 @@ export default function ContactsScreen({
             filterMode === "online" && styles.chipTextActive,
           ]}
         >
-          Recently online {recentlyOnlineCount}
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.chip, filterMode === "nickname" && styles.chipActive]}
-        onPress={() => setFilterMode("nickname")}
-      >
-        <Text
-          style={[
-            styles.chipText,
-            filterMode === "nickname" && styles.chipTextActive,
-          ]}
-        >
-          Nickname
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.chip, filterMode === "close" && styles.chipActive]}
-        onPress={() => setFilterMode("close")}
-      >
-        <Text
-          style={[
-            styles.chipText,
-            filterMode === "close" && styles.chipTextActive,
-          ]}
-        >
-          Close friends {closeFriends.length}
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.sortButton}
-        onPress={() => setSortMode((prev) => (prev === "asc" ? "desc" : "asc"))}
-      >
-        <Text style={styles.sortButtonText}>
-          {sortMode === "asc" ? "A-Z" : "Z-A"}
+          Vừa mới online {recentlyOnlineCount}
         </Text>
       </TouchableOpacity>
     </View>
@@ -909,7 +927,7 @@ export default function ContactsScreen({
           {friend.isCloseFriend && (
             <View style={styles.closeBadge}>
               <Text style={styles.closeBadgeIcon}>star</Text>
-              <Text style={styles.closeBadgeText}>Close Friend</Text>
+              <Text style={styles.closeBadgeText}>Bạn thân</Text>
             </View>
           )}
         </View>
@@ -917,14 +935,14 @@ export default function ContactsScreen({
 
       <TouchableOpacity
         style={styles.iconAction}
-        onPress={() => Alert.alert("Call", `Goi ${friend.displayName}`)}
+        onPress={() => Alert.alert("Gọi", `Gọi ${friend.displayName}`)}
       >
         <Text style={styles.iconActionText}>call</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.iconAction}
-        onPress={() => Alert.alert("Video", `Video voi ${friend.displayName}`)}
+        onPress={() => Alert.alert("Video", `Video với ${friend.displayName}`)}
       >
         <Text style={styles.iconActionText}>videocam</Text>
       </TouchableOpacity>
@@ -942,7 +960,10 @@ export default function ContactsScreen({
     const senderEmail = item?.sender_id || item?.senderEmail;
     const senderProfile = item?.senderProfile || profileMap[senderEmail] || {};
     const name =
-      senderProfile.fullName || senderProfile.fullname || senderEmail;
+      senderProfile.nickname ||
+      senderProfile.fullName ||
+      senderProfile.fullname ||
+      senderEmail;
 
     return (
       <View key={`request-${senderEmail}`} style={styles.requestItem}>
@@ -959,14 +980,14 @@ export default function ContactsScreen({
           onPress={() => handleReject(senderEmail)}
           disabled={busyAction}
         >
-          <Text style={styles.rejectText}>Reject</Text>
+          <Text style={styles.rejectText}>Từ chối</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.acceptButton}
           onPress={() => handleAccept(senderEmail)}
           disabled={busyAction}
         >
-          <Text style={styles.acceptText}>Accept</Text>
+          <Text style={styles.acceptText}>Chấp nhận</Text>
         </TouchableOpacity>
       </View>
     );
@@ -978,10 +999,17 @@ export default function ContactsScreen({
     const isPending =
       pendingOutgoingSet.has(email) || relation?.status === "pending";
     const isAccepted = relation?.status === "accepted";
+    const profile = profileMap[email] || {};
+    const displayName =
+      profile.nickname ||
+      item?.fullName ||
+      profile.fullName ||
+      profile.fullname ||
+      email;
 
-    let actionLabel = "Add Friend";
-    if (isAccepted) actionLabel = "Friends";
-    else if (isPending) actionLabel = "Request Sent";
+    let actionLabel = "Thêm bạn";
+    if (isAccepted) actionLabel = "Đã là bạn";
+    else if (isPending) actionLabel = "Đã gửi lời mời";
 
     return (
       <View key={`suggest-${email}`} style={styles.suggestItem}>
@@ -993,7 +1021,7 @@ export default function ContactsScreen({
           style={styles.requestAvatar}
         />
         <View style={{ flex: 1 }}>
-          <Text style={styles.requestName}>{item?.fullName || email}</Text>
+          <Text style={styles.requestName}>{displayName}</Text>
           <Text style={styles.requestEmail} numberOfLines={1}>
             {(item?.reasons || []).join(" • ") || email}
           </Text>
@@ -1002,7 +1030,7 @@ export default function ContactsScreen({
           style={styles.skipBtn}
           onPress={() => skipSuggestion(email)}
         >
-          <Text style={styles.skipText}>Skip</Text>
+          <Text style={styles.skipText}>Bỏ qua</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[
@@ -1015,7 +1043,7 @@ export default function ContactsScreen({
           disabled={isPending || isAccepted || sendingRequestMap[email]}
         >
           <Text style={styles.addText}>
-            {sendingRequestMap[email] ? "Sending..." : actionLabel}
+            {sendingRequestMap[email] ? "Đang gửi..." : actionLabel}
           </Text>
         </TouchableOpacity>
       </View>
@@ -1038,12 +1066,12 @@ export default function ContactsScreen({
 
       <View style={styles.closeFriendHeader}>
         <Text style={styles.closeFriendStar}>star</Text>
-        <Text style={styles.closeFriendTitle}>Close friends</Text>
+        <Text style={styles.closeFriendTitle}>Bạn thân</Text>
         <Text style={styles.closeFriendAdd}>{closeFriends.length}</Text>
       </View>
 
       {closeFriends.length === 0 ? (
-        <Text style={styles.closeFriendEmpty}>No close friends yet</Text>
+        <Text style={styles.closeFriendEmpty}>Chưa có bạn thân</Text>
       ) : (
         closeFriends.map((friend) => renderFriendRow(friend))
       )}
@@ -1058,23 +1086,23 @@ export default function ContactsScreen({
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Friend requests</Text>
+        <Text style={styles.panelTitle}>Lời mời kết bạn</Text>
         {incomingRequests.length === 0 ? (
-          <Text style={styles.emptyLabel}>No incoming requests</Text>
+          <Text style={styles.emptyLabel}>Không có lời mời nào</Text>
         ) : (
           incomingRequests.map(renderRequestItem)
         )}
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Group/community invitations</Text>
-        <Text style={styles.emptyLabel}>No invitations yet</Text>
+        <Text style={styles.panelTitle}>Lời mời nhóm/cộng đồng</Text>
+        <Text style={styles.emptyLabel}>Chưa có lời mời nào</Text>
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Suggested friends</Text>
+        <Text style={styles.panelTitle}>Gợi ý bạn bè</Text>
         {visibleSuggestions.length === 0 ? (
-          <Text style={styles.emptyLabel}>No suggestions right now</Text>
+          <Text style={styles.emptyLabel}>Hiện không có gợi ý nào</Text>
         ) : (
           visibleSuggestions.map(renderSuggestionItem)
         )}
@@ -1088,9 +1116,9 @@ export default function ContactsScreen({
       contentContainerStyle={{ paddingBottom: 120 }}
     >
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Joined groups and communities</Text>
+        <Text style={styles.panelTitle}>Các nhóm và cộng đồng đã tham gia</Text>
         {joinedGroups.length === 0 ? (
-          <Text style={styles.emptyLabel}>You have not joined any groups</Text>
+          <Text style={styles.emptyLabel}>Bạn chưa tham gia nhóm nào</Text>
         ) : (
           joinedGroups.map((group) => (
             <TouchableOpacity
@@ -1104,10 +1132,10 @@ export default function ContactsScreen({
               />
               <View style={{ flex: 1 }}>
                 <Text style={styles.requestName}>
-                  {group.name || "Group chat"}
+                  {group.name || "Nhóm chat"}
                 </Text>
                 <Text style={styles.requestEmail}>
-                  {(group.members || []).length} members
+                  {(group.members || []).length} thành viên
                 </Text>
               </View>
               <Text style={styles.groupOpenIcon}>chat</Text>
@@ -1118,9 +1146,49 @@ export default function ContactsScreen({
     </ScrollView>
   );
 
+  const renderBlockedContent = () => (
+    <ScrollView
+      style={styles.content}
+      contentContainerStyle={{ paddingBottom: 120 }}
+    >
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Danh sách những người đã chặn</Text>
+        {blockedUsers.length === 0 ? (
+          <Text style={styles.emptyLabel}>Chưa chặn ai</Text>
+        ) : (
+          blockedUsers.map((item) => {
+            const email = friendEmailOf(item, user?.email);
+            const profile = profileMap[email] || {};
+            const name =
+              profile.nickname || profile.fullName || profile.fullname || email;
+            return (
+              <View key={`blocked-${email}`} style={styles.blockedItem}>
+                <Image
+                  source={{ uri: profile.avatarUrl || DEFAULT_AVATAR }}
+                  style={styles.requestAvatar}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.requestName}>{name}</Text>
+                  <Text style={styles.requestEmail}>{email}</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.acceptButton, { flexShrink: 0 }]}
+                  onPress={() => handleUnblock(email)}
+                  disabled={busyAction}
+                >
+                  <Text style={styles.acceptText}>Bỏ chặn</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })
+        )}
+      </View>
+    </ScrollView>
+  );
+
   const renderOaContent = () => (
     <View style={styles.centeredWrap}>
-      <Text style={styles.emptyLabel}>OA contacts will appear here</Text>
+      <Text style={styles.emptyLabel}>Các liên hệ OA sẽ xuất hiện ở đây</Text>
     </View>
   );
 
@@ -1133,13 +1201,14 @@ export default function ContactsScreen({
         <View style={styles.centeredWrap}>
           <ActivityIndicator color={Colors.primary} />
           <Text style={[styles.emptyLabel, { marginTop: 10 }]}>
-            Loading contacts...
+            Đang tải danh bạ...
           </Text>
         </View>
       ) : (
         <>
           {activeSection === "friends" && renderFriendsContent()}
           {activeSection === "groups" && renderGroupsContent()}
+          {activeSection === "blocked" && renderBlockedContent()}
           {activeSection === "oa" && renderOaContent()}
         </>
       )}
@@ -1151,13 +1220,13 @@ export default function ContactsScreen({
               style={styles.sheetItem}
               onPress={() => openProfile(actionFriend)}
             >
-              <Text style={styles.sheetText}>View profile</Text>
+              <Text style={styles.sheetText}>Xem hồ sơ</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.sheetItem}
               onPress={() => openNicknameEditor(actionFriend)}
             >
-              <Text style={styles.sheetText}>Set nickname</Text>
+              <Text style={styles.sheetText}>Đặt biệt danh</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.sheetItem}
@@ -1170,22 +1239,22 @@ export default function ContactsScreen({
             >
               <Text style={styles.sheetText}>
                 {actionFriend.isCloseFriend
-                  ? "Unmark Close Friend"
-                  : "Mark as Close Friend"}
+                  ? "Bỏ đánh dấu bạn thân"
+                  : "Đánh dấu bạn thân"}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.sheetItem}
               onPress={() => handleUnfriend(actionFriend.email)}
             >
-              <Text style={styles.sheetText}>Unfriend</Text>
+              <Text style={styles.sheetText}>Hủy kết bạn</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.sheetItem}
               onPress={() => handleBlock(actionFriend.email)}
             >
               <Text style={[styles.sheetText, { color: "#e53935" }]}>
-                Block user
+                Chặn người dùng
               </Text>
             </TouchableOpacity>
           </Pressable>
@@ -1204,13 +1273,13 @@ export default function ContactsScreen({
             style={styles.nicknameModal}
             onPress={(e) => e.stopPropagation()}
           >
-            <Text style={styles.nickTitle}>Set nickname</Text>
+            <Text style={styles.nickTitle}>Đặt biệt danh</Text>
             <Text style={styles.nickHint}>{nicknameFriend.email}</Text>
             <TextInput
               value={nicknameDraft}
               onChangeText={setNicknameDraft}
               style={styles.nickInput}
-              placeholder="Enter nickname"
+              placeholder="Nhập biệt danh"
               placeholderTextColor="#8b96a8"
             />
             <View style={styles.nickActions}>
@@ -1221,14 +1290,14 @@ export default function ContactsScreen({
                   setNicknameFriend(null);
                 }}
               >
-                <Text style={styles.cancelText}>Cancel</Text>
+                <Text style={styles.cancelText}>Hủy</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.saveBtn, nicknameSaving && styles.disabledBtn]}
                 onPress={saveNickname}
                 disabled={nicknameSaving}
               >
-                <Text style={styles.saveText}>Save</Text>
+                <Text style={styles.saveText}>Lưu</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -1267,40 +1336,38 @@ export default function ContactsScreen({
             {profileLoading && (
               <View style={styles.profileLoadingRow}>
                 <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={styles.profileLoadingText}>
-                  Loading profile...
-                </Text>
+                <Text style={styles.profileLoadingText}>Đang tải hồ sơ...</Text>
               </View>
             )}
 
             <View style={styles.profileInfoWrap}>
               <Text style={styles.profileInfoRow}>
-                Full name:{" "}
+                Họ tên:{" "}
                 {profileFriend?.profile?.fullName ||
                   profileFriend?.profile?.fullname ||
                   "--"}
               </Text>
               <Text style={styles.profileInfoRow}>
-                Birthday:{" "}
+                Ngày sinh:{" "}
                 {formatBirthDate(pickBirthDateRaw(profileFriend?.profile)) ||
                   "--"}
               </Text>
               <Text style={styles.profileInfoRow}>
-                Phone: {profileFriend?.profile?.phone || "--"}
+                Điện thoại: {profileFriend?.profile?.phone || "--"}
               </Text>
               <Text style={styles.profileInfoRow}>
-                Gender:{" "}
+                Giới tính:{" "}
                 {typeof profileFriend?.profile?.gender === "boolean"
                   ? profileFriend.profile.gender
-                    ? "Male"
-                    : "Female"
+                    ? "Nam"
+                    : "Nữ"
                   : "--"}
               </Text>
               <Text style={styles.profileInfoRow}>
-                Address: {profileFriend?.profile?.address || "--"}
+                Địa chỉ: {profileFriend?.profile?.address || "--"}
               </Text>
               <Text style={styles.profileInfoRow}>
-                Bio: {profileFriend?.profile?.bio || "--"}
+                Tiểu sử: {profileFriend?.profile?.bio || "--"}
               </Text>
             </View>
 
@@ -1309,7 +1376,7 @@ export default function ContactsScreen({
                 style={styles.cancelBtn}
                 onPress={() => setProfileFriend(null)}
               >
-                <Text style={styles.cancelText}>Close</Text>
+                <Text style={styles.cancelText}>Đóng</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.saveBtn}
@@ -1319,7 +1386,7 @@ export default function ContactsScreen({
                   if (targetEmail) onOpenDirectChat(targetEmail);
                 }}
               >
-                <Text style={styles.saveText}>Message</Text>
+                <Text style={styles.saveText}>Nhắn tin</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -1603,6 +1670,15 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#edf1f7",
+  },
+  blockedItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: "#edf1f7",
   },
