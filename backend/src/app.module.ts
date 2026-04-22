@@ -7,11 +7,13 @@ import { UserModule } from './modules/user/user.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { OtpModule } from './modules/otp/otp.module';
 import { CallModule } from './modules/call/call.module';
+import { BotModule } from './modules/bot/bot.module';
 import { InfrastructureModule } from './infrastructure/infrastructure.module';
+import { AiModule } from './infrastructure/ai/ai.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ 
+    ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: fs.existsSync('.env') ? '.env' : 'backend/.env',
     }),
@@ -21,6 +23,13 @@ import { InfrastructureModule } from './infrastructure/infrastructure.module';
     ChatModule,
     OtpModule,
     CallModule,
+    InfrastructureModule,
+    AiModule,
+    AuthModule,
+    UserModule,
+    ChatModule,
+    BotModule,
+    OtpModule
   ],
   controllers: [],
   providers: [],

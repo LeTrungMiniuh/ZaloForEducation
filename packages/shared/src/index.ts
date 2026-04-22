@@ -144,3 +144,16 @@ export interface ApiResponse<T = any> {
   message: string;
   data?: T;
 }
+
+
+// Bot types
+export interface BotConversationResponse {
+  convId: string;
+  botEmail: string;
+  botName: string;
+}
+
+// Bot constants — single source of truth
+export const BOT_EMAIL = 'bot@zaloedu.system';
+export const BOT_NAME = 'ZaloEdu AI';
+export const BOT_AVATAR = 'https://img.freepik.com/free-vector/graident-ai-robot-vectorart_78370-4114.jpg?semt=ais_hybrid&w=740&q=80';
