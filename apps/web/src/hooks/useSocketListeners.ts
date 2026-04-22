@@ -2,7 +2,6 @@ import type { Message } from '@zalo-edu/shared';
 import { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useChatStore } from '../store/chatStore';
-import { getMessagePreview } from '../utils/chatUtils';
 import { leaveCurrentSession, toggleCamera as toggleCameraChime } from './useChime';
 import { useCallStore } from '../store/callStore';
 
@@ -31,8 +30,20 @@ type SocketMessage = Message & {
   convId?: string;
 };
 
+type CallEventData = {
+  callId: string;
+  convId: string;
+  fromEmail?: string;
+  callerProfile?: unknown;
+  callType?: 'audio' | 'video';
+  engine?: 'webrtc' | 'chime';
+  meetingInfo?: unknown;
+  fromProfile?: { email?: string };
+  toEmail?: string;
+};
+
 export const useSocketListeners = () => {
-  const { socket } = useAuth();
+  const { socket, user } = useAuth();
   const addMessage = useChatStore((state) => state.addMessage);
   const markAsRead = useChatStore((state) => state.markAsRead);
   const setLocalRead = useChatStore((state) => state.setLocalRead);
@@ -92,47 +103,8 @@ export const useSocketListeners = () => {
       document.dispatchEvent(new CustomEvent('chat_typing_update', { detail: data }));
     };
 
-    const handleMessagePinned = (data: { messageId: string, pinned: boolean, pinnedBy: string }) => {
-      updateMessage(data.messageId, { 
-        pinned: data.pinned, 
-        pinnedBy: data.pinnedBy 
-      } as any);
-    };
-
-    const handlePinUpdate = (data: { conversationId: string, pinnedMessageIds: string[] }) => {
-      console.log('[SOCKET] PIN_UPDATE received:', data);
-      setConversations((prev) => prev.map(c => 
-        c.id === data.conversationId ? { ...c, pinnedMessageIds: data.pinnedMessageIds } : c
-      ));
-    };
-
-    const handleParticipantRead = (data: { convId: string, email: string, timestamp: number }) => {
-      // If someone else read the conversation I am currently in,
-      // I should update my sent messages to "read".
-      if (data.email !== user.email && data.convId === activeConvId) {
-        const state = useChatStore.getState();
-        const updatedMessages = state.messages.map((m): typeof m => {
-          const shouldMarkRead =
-            m.senderId === user.email && (!m.status || m.status === 'sent' || m.status === 'delivered');
-
-          return shouldMarkRead ? { ...m, status: 'seen' } : m;
-        });
-
-        setMessages(
-          updatedMessages,
-          state.nextCursor
-        );
-      }
-    };
-
-    const handleTypingUpdate = (data: { convId: string, email: string, isTyping: boolean }) => {
-      // Dispatch typing event to document so ChatPage can listen without deep store rerenders
-      const event = new CustomEvent('chat_typing_update', { detail: data });
-      document.dispatchEvent(event);
-    };
-
     // ── Call Events ──────────────────────────────────────────────────────────
-    const handleCallIncoming = (data: any) => {
+    const handleCallIncoming = (data: CallEventData) => {
       console.log('[Socket] call:incoming', data);
       const { callState, activeCallId } = useCallStore.getState();
       
@@ -143,7 +115,7 @@ export const useSocketListeners = () => {
         socket.emit('call:reject', {
           convId: data.convId,
           callId: data.callId,
-          fromEmail: user.email,
+          fromEmail: user?.email,
           toEmail: data.fromEmail,
           reason: 'BUSY'
         });
@@ -160,7 +132,7 @@ export const useSocketListeners = () => {
       );
     };
 
-    const handleCallAccept = (data: any) => {
+    const handleCallAccept = (data: CallEventData) => {
       const { activeCallId, acceptCall } = useCallStore.getState();
       if (data.callId === activeCallId) {
         console.log('[Socket] call:accept — Peer accepted. Starting media.');
@@ -168,7 +140,7 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleCallDismiss = (data: any) => {
+    const handleCallDismiss = (data: CallEventData) => {
       const { activeCallId, resetCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
         // [SENIOR] Protect active call from accidental dismiss signals
@@ -181,7 +153,7 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleCallHandledElsewhere = (data: any) => {
+    const handleCallHandledElsewhere = (data: CallEventData) => {
       const { activeCallId, resetCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
         // [SENIOR] Protect active call from syncing state when this device IS the handler
@@ -194,7 +166,7 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleCallHangup = async (data: any) => {
+    const handleCallHangup = async (data: CallEventData) => {
       const { activeCallId, hangupCall } = useCallStore.getState();
       if (!data?.callId || data.callId === activeCallId) {
         console.log('[Socket] call:hangup — cleaning up Chime');
@@ -203,7 +175,7 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleCallReject = async (data: any) => {
+    const handleCallReject = async (data: CallEventData) => {
       const { activeCallId, rejectCall } = useCallStore.getState();
       if (!data?.callId || data.callId === activeCallId) {
         console.log('[Socket] call:reject — cleaning up Chime');
@@ -213,7 +185,7 @@ export const useSocketListeners = () => {
     };
 
 
-    const handleCallTimeout = (data: any) => {
+    const handleCallTimeout = (data: CallEventData) => {
       const { activeCallId, rejectCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
         // [SENIOR] Protect active call from accidental timeout signals
@@ -226,7 +198,7 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleUpgradeRequest = (data: any) => {
+    const handleUpgradeRequest = (data: CallEventData) => {
       const { activeCallId, setIncomingUpgradeRequest, setUpgradeRequesterEmail, conversationId, toEmail } = useCallStore.getState();
       if (data.callId === activeCallId) {
         console.log('[Socket] call:upgrade_request — Peer requesting video');
@@ -251,7 +223,7 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleUpgradeAccepted = async (data: any) => {
+    const handleUpgradeAccepted = async (data: CallEventData) => {
       const { activeCallId, setCallType, setCameraOn, setUpgradeRequestPending } = useCallStore.getState();
       if (data.callId === activeCallId) {
         console.log('[Socket] call:upgrade_accepted — Peer accepted. Switching to video.');
@@ -263,7 +235,7 @@ export const useSocketListeners = () => {
       }
     };
 
-    const handleUpgradeDeclined = (data: any) => {
+    const handleUpgradeDeclined = (data: CallEventData) => {
       const { activeCallId, setUpgradeRequestPending } = useCallStore.getState();
       if (data.callId === activeCallId) {
         console.log('[Socket] call:upgrade_declined — Peer declined.');
@@ -314,5 +286,6 @@ export const useSocketListeners = () => {
     setLocalRead,
     localClearHistory,
     setUserProfiles,
+    user,
   ]);
 };
