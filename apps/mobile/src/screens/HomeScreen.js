@@ -13,6 +13,8 @@ import {
   ActivityIndicator,
   Linking,
   KeyboardAvoidingView,
+  Modal,
+  FlatList,
 } from "react-native";
 import {
   SafeAreaView,
@@ -20,6 +22,8 @@ import {
 } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
+import { Audio } from "expo-av";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Colors, Typography } from "../constants/Theme";
 import Alert from "../utils/Alert";
@@ -218,6 +222,41 @@ export default function HomeScreen({
   const [showContactPicker, setShowContactPicker] = useState(false);
   const [userProfiles, setUserProfiles] = useState({});
 
+  // === VOICE RECORDING ===
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [pendingVoice, setPendingVoice] = useState(null); // { uri, durationSec }
+  const recordingRef = useRef(null);
+  const recordingTimerRef = useRef(null);
+
+  // === LOCATION ===
+  const [isLiveSharing, setIsLiveSharing] = useState(false);
+  const [showLocationMenu, setShowLocationMenu] = useState(false);
+  const liveLocationTimerRef = useRef(null);
+  const liveLocationStopRef = useRef(null);
+  const liveLocationUpdatesRef = useRef(0);
+
+  // === GIF / STICKER ===
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [gifSearchQuery, setGifSearchQuery] = useState('');
+  const [gifResults, setGifResults] = useState([]);
+  const [gifLoading, setGifLoading] = useState(false);
+
+  // === STICKER PACKS (static) ===
+  const STICKER_PACKS = [
+    { id: 'zalo_edu', name: 'ZaloEdu', stickers: [
+      'https://stickershop.line-scdn.net/stickershop/v1/sticker/52002734/iPhone/sticker@2x.png',
+      'https://stickershop.line-scdn.net/stickershop/v1/sticker/52002735/iPhone/sticker@2x.png',
+      'https://stickershop.line-scdn.net/stickershop/v1/sticker/52002736/iPhone/sticker@2x.png',
+      'https://stickershop.line-scdn.net/stickershop/v1/sticker/52002737/iPhone/sticker@2x.png',
+      'https://stickershop.line-scdn.net/stickershop/v1/sticker/52002738/iPhone/sticker@2x.png',
+      'https://stickershop.line-scdn.net/stickershop/v1/sticker/52002739/iPhone/sticker@2x.png',
+      'https://stickershop.line-scdn.net/stickershop/v1/sticker/52002740/iPhone/sticker@2x.png',
+      'https://stickershop.line-scdn.net/stickershop/v1/sticker/52002741/iPhone/sticker@2x.png',
+    ]},
+  ];
+
   const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
   const scrollStateRef = useRef({
@@ -298,10 +337,17 @@ export default function HomeScreen({
     if (message.recalled) return "Tin nhắn đã được thu hồi";
     if (message.type === "contact_card" || message.contactCard?.email)
       return "[Danh thiếp]";
-    if (Array.isArray(message.media) && message.media.length > 0)
+    if (message.location) return message.location.isLive ? "[Vị trí trực tiếp]" : "[Vị trí hiện tại]";
+    const allMedia = [...(Array.isArray(message.media) ? message.media : []), ...(Array.isArray(message.files) ? message.files : [])];
+    if (allMedia.length > 0) {
+      const hasGif = allMedia.some(m => String(m?.mimeType || '').includes('gif'));
+      const hasSticker = allMedia.some(m => String(m?.mimeType || '').includes('sticker'));
+      const hasAudio = allMedia.some(m => String(m?.mimeType || '').startsWith('audio/'));
+      if (hasGif) return "[GIF]";
+      if (hasSticker) return "[Sticker]";
+      if (hasAudio) return "[Ghi âm]";
       return "[Ảnh/Video]";
-    if (Array.isArray(message.files) && message.files.length > 0)
-      return "[Tệp đính kèm]";
+    }
     return String(message.content || "Tin nhắn");
   };
 
@@ -844,6 +890,231 @@ export default function HomeScreen({
     }
   };
 
+  // ===================== VOICE RECORDING =====================
+  const startRecording = async () => {
+    if (isRecording) return;
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Quyền micro', 'Bạn cần cấp quyền microphone để ghi âm.');
+        return;
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+      );
+      recordingRef.current = recording;
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Start recording failed', err);
+      Alert.alert('Lỗi', 'Không thể ghi âm. Vui lòng thử lại.');
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!isRecording || !recordingRef.current) return;
+    try {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+      setIsRecording(false);
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      const durationSec = recordingSeconds;
+      recordingRef.current = null;
+      setRecordingSeconds(0);
+      if (uri) {
+        setPendingVoice({ uri, durationSec });
+      }
+    } catch (err) {
+      console.error('Stop recording failed', err);
+    }
+  };
+
+  const cancelPendingVoice = () => setPendingVoice(null);
+
+  const sendPendingVoice = async () => {
+    if (!pendingVoice || !selectedChat?.id || sending) return;
+    setSending(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const formData = new FormData();
+      formData.append('file', {
+        uri: pendingVoice.uri,
+        name: `voice-${Date.now()}.m4a`,
+        type: 'audio/mp4',
+      });
+      const upload = async (basePath) => {
+        const response = await fetch(`${API_URL}${basePath}`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+        });
+        const data = await response.json().catch(() => ({}));
+        return { ok: response.ok, data };
+      };
+      let result = await upload('/chat/uploads');
+      if (!result.ok) result = await upload('/api/chat/uploads');
+      if (!result.ok) throw new Error('UPLOAD_FAILED');
+
+      const fileData = result.data;
+      const res = await chatPost(`/conversations/${selectedChat.id}/messages`, {
+        content: '[Ghi âm]',
+        files: [{
+          name: fileData.name || `voice-${pendingVoice.durationSec}s.m4a`,
+          mimeType: fileData.mimeType || 'audio/mp4',
+          size: fileData.size || 0,
+          dataUrl: fileData.fileUrl || fileData.url,
+        }],
+        replyTo: replyTarget || undefined,
+      });
+      const sentMessage = res?.ok && res?.data ? res.data : null;
+      if (sentMessage?.id) {
+        addMessage(sentMessage);
+        setReplyTarget(null);
+        upsertConversationLastMessage(selectedChat.id, '[Ghi âm]');
+      }
+      cancelPendingVoice();
+    } catch (err) {
+      console.error('Send voice failed', err);
+      Alert.alert('Lỗi', 'Không gửi được tin nhắn thoại.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // ===================== LOCATION =====================
+  const stopLiveLocation = () => {
+    if (liveLocationTimerRef.current) clearInterval(liveLocationTimerRef.current);
+    if (liveLocationStopRef.current) clearTimeout(liveLocationStopRef.current);
+    liveLocationTimerRef.current = null;
+    liveLocationStopRef.current = null;
+    liveLocationUpdatesRef.current = 0;
+    setIsLiveSharing(false);
+  };
+
+  const sendLocationMessage = async (latitude, longitude, label, isLive, liveSessionId, sentAt, expiresAt) => {
+    if (!selectedChat?.id) return;
+    const res = await chatPost(`/conversations/${selectedChat.id}/messages`, {
+      content: isLive ? '[Vị trí trực tiếp]' : '[Vị trí hiện tại]',
+      location: { latitude, longitude, label, isLive: !!isLive, liveSessionId, sentAt, expiresAt },
+      replyTo: replyTarget || undefined,
+    });
+    const sentMessage = res?.ok && res?.data ? res.data : null;
+    if (sentMessage?.id) {
+      addMessage(sentMessage);
+      setReplyTarget(null);
+      upsertConversationLastMessage(selectedChat.id, isLive ? '[Vị trí trực tiếp]' : '[Vị trí hiện tại]');
+    }
+  };
+
+  const sendCurrentLocation = async () => {
+    setShowLocationMenu(false);
+    stopLiveLocation();
+    if (!selectedChat?.id) { Alert.alert('', 'Hãy mở một cuộc trò chuyện trước.'); return; }
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') { Alert.alert('Quyền vị trí', 'Bạn cần cấp quyền vị trí.'); return; }
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      await sendLocationMessage(
+        loc.coords.latitude, loc.coords.longitude,
+        'Vị trí hiện tại', false, undefined, new Date().toISOString(), undefined
+      );
+    } catch (err) {
+      Alert.alert('Lỗi', 'Không lấy được vị trí. Vui lòng thử lại.');
+    }
+  };
+
+  const startLiveLocation = async () => {
+    setShowLocationMenu(false);
+    if (!selectedChat?.id) { Alert.alert('', 'Hãy mở một cuộc trò chuyện trước.'); return; }
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') { Alert.alert('Quyền vị trí', 'Bạn cần cấp quyền vị trí.'); return; }
+    stopLiveLocation();
+    const liveSessionId = `live-${Date.now()}`;
+    const LIVE_DURATION_MS = 5 * 60 * 1000;
+    const LIVE_INTERVAL_MS = 60 * 1000;
+    const MAX_LIVE_UPDATES = 5;
+    const expiresAt = new Date(Date.now() + LIVE_DURATION_MS).toISOString();
+    liveLocationUpdatesRef.current = 0;
+
+    const pushLocation = async () => {
+      if (liveLocationUpdatesRef.current >= MAX_LIVE_UPDATES) { stopLiveLocation(); return; }
+      try {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        await sendLocationMessage(
+          loc.coords.latitude, loc.coords.longitude,
+          'Vị trí trực tiếp', true, liveSessionId, new Date().toISOString(), expiresAt
+        );
+        liveLocationUpdatesRef.current += 1;
+        if (liveLocationUpdatesRef.current >= MAX_LIVE_UPDATES) stopLiveLocation();
+      } catch (_) {}
+    };
+
+    pushLocation();
+    setIsLiveSharing(true);
+    Alert.alert('Đã bật', 'Đang chia sẻ vị trí trực tiếp (tối đa 5 lần / 5 phút).');
+    liveLocationTimerRef.current = setInterval(pushLocation, LIVE_INTERVAL_MS);
+    liveLocationStopRef.current = setTimeout(stopLiveLocation, LIVE_DURATION_MS);
+  };
+
+  // ===================== GIF =====================
+  const TENOR_API_KEY = 'AIzaSyAhV9xFj7BtTwnkD91LKOE00k3kSfPoxE0'; // demo key
+  const searchGif = async (query) => {
+    setGifLoading(true);
+    try {
+      const q = encodeURIComponent(query || 'funny');
+      const url = `https://tenor.googleapis.com/v2/search?q=${q}&key=${TENOR_API_KEY}&limit=20&media_filter=gif`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setGifResults((data.results || []).map(r => ({
+        id: r.id,
+        url: r.media_formats?.gif?.url || r.media_formats?.tinygif?.url || '',
+        preview: r.media_formats?.tinygif?.url || r.media_formats?.gif?.url || '',
+      })));
+    } catch (err) {
+      console.error('GIF search failed', err);
+    } finally {
+      setGifLoading(false);
+    }
+  };
+
+  const sendGif = async (gifUrl) => {
+    setShowGifPicker(false);
+    if (!selectedChat?.id || !gifUrl) return;
+    const res = await chatPost(`/conversations/${selectedChat.id}/messages`, {
+      content: '[GIF]',
+      media: [{ name: `gif-${Date.now()}.gif`, mimeType: 'image/gif', size: 1024, dataUrl: gifUrl }],
+      replyTo: replyTarget || undefined,
+    });
+    const sentMessage = res?.ok && res?.data ? res.data : null;
+    if (sentMessage?.id) {
+      addMessage(sentMessage);
+      setReplyTarget(null);
+      upsertConversationLastMessage(selectedChat.id, '[GIF]');
+    }
+  };
+
+  // ===================== STICKER =====================
+  const sendSticker = async (stickerUrl) => {
+    setShowStickerPicker(false);
+    if (!selectedChat?.id || !stickerUrl) return;
+    const res = await chatPost(`/conversations/${selectedChat.id}/messages`, {
+      content: '[Sticker]',
+      media: [{ name: `sticker-${Date.now()}.png`, mimeType: 'image/sticker', size: 1024, dataUrl: stickerUrl, isSticker: true }],
+      replyTo: replyTarget || undefined,
+    });
+    const sentMessage = res?.ok && res?.data ? res.data : null;
+    if (sentMessage?.id) {
+      addMessage(sentMessage);
+      setReplyTarget(null);
+      upsertConversationLastMessage(selectedChat.id, '[Sticker]');
+    }
+  };
+
   const acceptedFriends = useMemo(
     () =>
       friendships
@@ -1048,7 +1319,7 @@ export default function HomeScreen({
     </LinearGradient>
   );
 
-  const ConversationsView = () => {
+  const renderConversationsView = () => {
     if (selectedChat) {
       return (
         <View style={styles.chatPane}>
@@ -1140,9 +1411,9 @@ export default function HomeScreen({
                       {message.content}
                     </Text>
 
-                    {!message.recalled && contactCard && (
+                    {(!message.recalled && contactCard) && (
                       <View style={styles.contactCardBox}>
-                        <Text style={styles.contactCardLabel}>Danh thiếp liên hệ</Text>
+                        <Text style={styles.contactCardLabel}>Danh thiếp</Text>
                         <View style={styles.contactCardHeader}>
                           <Image
                             source={{ uri: contactCard.avatarUrl || getDisplayAvatar(contactCard.email) }}
@@ -1173,11 +1444,41 @@ export default function HomeScreen({
                       </View>
                     )}
 
+                    {/* Location render */}
+                    {!message.recalled && message.location && (
+                      <View style={styles.locationCard}>
+                        <Text style={styles.locationCardLabel}>
+                          {message.location.isLive ? '📡 Vị trí trực tiếp' : '📍 Vị trí hiện tại'}
+                        </Text>
+                        <Text style={styles.locationCardCoords}>
+                          {Number(message.location.latitude).toFixed(5)}, {Number(message.location.longitude).toFixed(5)}
+                        </Text>
+                        {message.location.label ? (
+                          <Text style={styles.locationCardText}>{message.location.label}</Text>
+                        ) : null}
+                        <TouchableOpacity
+                          style={styles.locationCardBtn}
+                          onPress={() => Linking.openURL(`https://www.google.com/maps?q=${message.location.latitude},${message.location.longitude}`)}
+                        >
+                          <Text style={styles.locationCardBtnText}>Mở bản đồ</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
                     {(Array.isArray(message.media) ||
                       Array.isArray(message.files)) && (
                       <View style={{ marginTop: 8, gap: 6 }}>
                         {(Array.isArray(message.media) ? message.media : []).map((item, index) => {
                           const file = normalizeAttachment(item);
+                          const mimeStr = String(file.mimeType || '').toLowerCase();
+                          // Sticker
+                          if (mimeStr.includes('sticker') || item?.isSticker) {
+                            return <Image key={`m-${message.id}-${index}`} source={{ uri: file.dataUrl }} style={{ width: 100, height: 100 }} resizeMode="contain" />;
+                          }
+                          // GIF
+                          if (mimeStr === 'image/gif' || String(file.name || '').endsWith('.gif')) {
+                            return <Image key={`m-${message.id}-${index}`} source={{ uri: file.dataUrl }} style={[styles.messageImage, { borderRadius: 8 }]} resizeMode="contain" />;
+                          }
                           if (isVideoAttachment(item)) {
                             return (
                               <TouchableOpacity
@@ -1197,19 +1498,23 @@ export default function HomeScreen({
                         })}
                         {(Array.isArray(message.files) ? message.files : []).map((item, index) => {
                           const file = normalizeAttachment(item);
-                          return (
-                            <Image
-                              key={`m-${message.id}-${index}`}
-                              source={{ uri: file.dataUrl }}
-                              style={styles.messageImage}
-                            />
-                          );
-                        })}
-                        {(Array.isArray(message.files)
-                          ? message.files
-                          : []
-                        ).map((item, index) => {
-                          const file = normalizeAttachment(item);
+                          const mimeStr = String(file.mimeType || '').toLowerCase();
+                          // Audio file
+                          if (mimeStr.startsWith('audio/')) {
+                            return (
+                              <TouchableOpacity
+                                key={`f-${message.id}-${index}`}
+                                style={[styles.messageFile, { backgroundColor: '#e8f4ff' }]}
+                                onPress={() => file.dataUrl && Linking.openURL(file.dataUrl)}
+                              >
+                                <Text style={styles.messageFileIcon}>mic</Text>
+                                <View style={{ flex: 1 }}>
+                                  <Text numberOfLines={1} style={styles.messageFileName}>{file.name || 'Ghi âm'}</Text>
+                                  <Text style={styles.messageFileSize}>Nhấn để nghe</Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          }
                           return (
                             <TouchableOpacity
                               key={`f-${message.id}-${index}`}
@@ -1220,10 +1525,7 @@ export default function HomeScreen({
                                 {getFileIcon(file.mimeType, file.name)}
                               </Text>
                               <View style={{ flex: 1 }}>
-                                <Text
-                                  numberOfLines={1}
-                                  style={styles.messageFileName}
-                                >
+                                <Text numberOfLines={1} style={styles.messageFileName}>
                                   {file.name}
                                 </Text>
                                 <Text style={styles.messageFileSize}>
@@ -1316,17 +1618,52 @@ export default function HomeScreen({
             </ScrollView>
           )}
 
+          {/* Pending voice preview */}
+          {pendingVoice && !isRecording && (
+            <View style={styles.pendingVoiceBar}>
+              <Text style={styles.pendingVoiceText}>🎤 {Math.floor(pendingVoice.durationSec / 60).toString().padStart(2,'0')}:{(pendingVoice.durationSec % 60).toString().padStart(2,'0')}</Text>
+              <TouchableOpacity onPress={cancelPendingVoice} style={styles.pendingVoiceBtn}>
+                <Text style={{ color: '#e53935', fontWeight: 'bold' }}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={sendPendingVoice} disabled={sending} style={[styles.pendingVoiceBtn, { backgroundColor: '#0058bc' }]}>
+                {sending ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: 'bold' }}>Gửi</Text>}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Feature toolbar: sticker, GIF, location, voice */}
+          <View style={styles.featureToolbar}>
+            <TouchableOpacity onPress={() => { setShowStickerPicker(true); setShowGifPicker(false); setShowLocationMenu(false); }} style={styles.featureBtn}>
+              <Text style={styles.featureBtnIcon}>emoji_emotions</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { setShowGifPicker(true); setShowStickerPicker(false); setShowLocationMenu(false); searchGif('funny'); }} style={styles.featureBtn}>
+              <Text style={styles.featureBtnIcon}>gif_box</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { setShowLocationMenu(v => !v); setShowStickerPicker(false); setShowGifPicker(false); }} style={[styles.featureBtn, isLiveSharing && { backgroundColor: '#fce4e4' }]}>
+              <Text style={[styles.featureBtnIcon, isLiveSharing && { color: '#e53935' }]}>location_on</Text>
+            </TouchableOpacity>
+            {showLocationMenu && (
+              <View style={styles.locationMenu}>
+                <TouchableOpacity onPress={sendCurrentLocation} style={styles.locationMenuItem}>
+                  <Text style={styles.locationMenuText}>📍 Gửi vị trí hiện tại</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={startLiveLocation} style={styles.locationMenuItem}>
+                  <Text style={styles.locationMenuText}>📡 Chia sẻ trực tiếp (5 phút)</Text>
+                </TouchableOpacity>
+                {isLiveSharing && (
+                  <TouchableOpacity onPress={stopLiveLocation} style={styles.locationMenuItem}>
+                    <Text style={[styles.locationMenuText, { color: '#e53935' }]}>⏹ Dừng chia sẻ</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+
           <View style={styles.composer}>
-            <TouchableOpacity
-              onPress={pickImages}
-              style={styles.composerAction}
-            >
+            <TouchableOpacity onPress={pickImages} style={styles.composerAction}>
               <Text style={styles.composerActionIcon}>image</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={openContactPicker}
-              style={styles.composerAction}
-            >
+            <TouchableOpacity onPress={openContactPicker} style={styles.composerAction}>
               <Text style={styles.composerActionIcon}>contact_page</Text>
             </TouchableOpacity>
             <TextInput
@@ -1337,6 +1674,22 @@ export default function HomeScreen({
               style={styles.composerInput}
               multiline
             />
+            {/* Voice record button */}
+            <TouchableOpacity
+              onPress={isRecording ? stopRecording : startRecording}
+              style={[styles.composerAction, isRecording && { backgroundColor: '#fce4e4', borderRadius: 16 }]}
+            >
+              <Text style={[styles.composerActionIcon, isRecording && { color: '#e53935' }]}>
+                {isRecording ? 'stop_circle' : 'mic'}
+              </Text>
+            </TouchableOpacity>
+            {isRecording && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 }}>
+                <Text style={{ color: '#e53935', fontWeight: 'bold', fontSize: 12 }}>
+                  {Math.floor(recordingSeconds / 60).toString().padStart(2,'0')}:{(recordingSeconds % 60).toString().padStart(2,'0')}
+                </Text>
+              </View>
+            )}
             <TouchableOpacity
               onPress={sendMessage}
               style={[styles.sendButton, sending && { opacity: 0.6 }]}
@@ -1419,7 +1772,7 @@ export default function HomeScreen({
     );
   };
 
-  const FriendsView = () => (
+  const renderFriendsView = () => (
     <ScrollView style={styles.scrollContainer}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Danh sách bạn bè</Text>
@@ -1577,7 +1930,7 @@ export default function HomeScreen({
     </ScrollView>
   );
 
-  const AIView = () => (
+  const renderAIView = () => (
     <View style={styles.centeredView}>
       <Text style={styles.aiIcon}>notifications</Text>
       <Text style={styles.aiTitle}>Notifications</Text>
@@ -1674,21 +2027,22 @@ export default function HomeScreen({
   );
 
   return (
+    <>
     <SafeAreaView style={styles.safeArea}>
       <StatusBar
         barStyle="light-content"
         backgroundColor="#0058bc"
         translucent={false}
       />
-      {activeTab !== "contacts" && renderHeader()}
+      {activeTab !== "contacts" && !selectedChat && renderHeader()}
 
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingContainer}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? insets.top + 12 : 0}
       >
-        <View style={styles.content}>
-          {activeTab === "chat" && <ConversationsView />}
+        <View style={[styles.content, selectedChat && { paddingBottom: 0 }]}>
+          {activeTab === "chat" && renderConversationsView()}
           {activeTab === "contacts" && (
             <ContactsScreen
               user={user}
@@ -1698,10 +2052,11 @@ export default function HomeScreen({
               onOpenGroupConversation={handleOpenGroupConversation}
             />
           )}
-          {activeTab === "notifications" && <AIView />}
+          {activeTab === "notifications" && renderAIView()}
           {activeTab === "profile" && renderProfileView()}
         </View>
 
+        {!selectedChat && (
         <View style={styles.floatingTabBar}>
           <TouchableOpacity
             style={styles.tabItem}
@@ -1791,6 +2146,7 @@ export default function HomeScreen({
             </Text>
           </TouchableOpacity>
         </View>
+        )}
       </KeyboardAvoidingView>
 
       {showContactPicker && (
@@ -1825,17 +2181,19 @@ export default function HomeScreen({
         </Pressable>
       )}
 
-      {actionMessage && (
+      <Modal visible={!!actionMessage} transparent animationType="fade" onRequestClose={closeMessageAction}>
         <Pressable style={styles.overlay} onPress={closeMessageAction}>
-          <Pressable
+          <View
             style={styles.actionSheet}
-            onPress={(e) => e.stopPropagation()}
+            onStartShouldSetResponder={() => true}
+            onResponderRelease={(e) => e.stopPropagation()}
           >
             <View style={styles.reactionRow}>
               {REACTION_OPTIONS.map((emoji) => (
                 <TouchableOpacity
                   key={`react-${emoji}`}
                   onPress={() => toggleReaction(actionMessage, emoji)}
+                  style={{ padding: 6 }}
                 >
                   <Text style={styles.reactionEmoji}>{emoji}</Text>
                 </TouchableOpacity>
@@ -1853,8 +2211,8 @@ export default function HomeScreen({
             >
               <Text style={styles.actionText}>Trả lời</Text>
             </TouchableOpacity>
-            {actionMessage.senderId === user?.email &&
-              !actionMessage.recalled && (
+            {actionMessage?.senderId === user?.email &&
+              !actionMessage?.recalled && (
                 <TouchableOpacity
                   style={styles.actionItem}
                   onPress={() => recallMessage(actionMessage.id)}
@@ -1864,10 +2222,77 @@ export default function HomeScreen({
                   </Text>
                 </TouchableOpacity>
               )}
+          </View>
+        </Pressable>
+      </Modal>
+    </SafeAreaView>
+
+      {/* === GIF PICKER MODAL === */}
+      <Modal visible={showGifPicker} transparent animationType="slide" onRequestClose={() => setShowGifPicker(false)}>
+        <Pressable style={styles.overlay} onPress={() => setShowGifPicker(false)}>
+          <Pressable style={[styles.actionSheet, { height: '70%' }]} onPress={e => e.stopPropagation()}>
+            <Text style={styles.contactPickerTitle}>Chọn GIF</Text>
+            <View style={{ flexDirection: 'row', padding: 10, gap: 8 }}>
+              <TextInput
+                value={gifSearchQuery}
+                onChangeText={setGifSearchQuery}
+                placeholder="Tìm GIF..."
+                style={[styles.composerInput, { flex: 1, borderWidth: 1, borderColor: '#dde3ea', borderRadius: 12, paddingHorizontal: 12, height: 38 }]}
+                returnKeyType="search"
+                onSubmitEditing={() => searchGif(gifSearchQuery)}
+              />
+              <TouchableOpacity onPress={() => searchGif(gifSearchQuery)} style={[styles.sendButton, { borderRadius: 12, paddingHorizontal: 16 }]}>
+                <Text style={styles.sendButtonText}>search</Text>
+              </TouchableOpacity>
+            </View>
+            {gifLoading ? (
+              <ActivityIndicator color="#0058bc" style={{ marginTop: 20 }} />
+            ) : (
+              <FlatList
+                data={gifResults}
+                numColumns={2}
+                keyExtractor={item => item.id}
+                contentContainerStyle={{ padding: 8, gap: 8 }}
+                columnWrapperStyle={{ gap: 8 }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity onPress={() => sendGif(item.url)} style={{ flex: 1, borderRadius: 10, overflow: 'hidden', backgroundColor: '#f0f2f5' }}>
+                    <Image source={{ uri: item.preview }} style={{ width: '100%', aspectRatio: 1.5, borderRadius: 10 }} resizeMode="cover" />
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={<Text style={{ textAlign: 'center', color: '#8a9099', marginTop: 20 }}>Nhấn Search để tìm GIF</Text>}
+              />
+            )}
           </Pressable>
         </Pressable>
-      )}
-    </SafeAreaView>
+      </Modal>
+
+      {/* === STICKER PICKER MODAL === */}
+      <Modal visible={showStickerPicker} transparent animationType="slide" onRequestClose={() => setShowStickerPicker(false)}>
+        <Pressable style={styles.overlay} onPress={() => setShowStickerPicker(false)}>
+          <Pressable style={[styles.actionSheet, { maxHeight: '60%' }]} onPress={e => e.stopPropagation()}>
+            <Text style={styles.contactPickerTitle}>Chọn Sticker</Text>
+            {STICKER_PACKS.map(pack => (
+              <View key={pack.id}>
+                <Text style={{ paddingHorizontal: 16, paddingVertical: 8, fontWeight: 'bold', color: '#3c4a5a', fontSize: 13 }}>{pack.name}</Text>
+                <FlatList
+                  data={pack.stickers}
+                  numColumns={4}
+                  keyExtractor={(url, i) => `${pack.id}-${i}`}
+                  contentContainerStyle={{ paddingHorizontal: 8 }}
+                  columnWrapperStyle={{ gap: 4 }}
+                  scrollEnabled={false}
+                  renderItem={({ item: url }) => (
+                    <TouchableOpacity onPress={() => sendSticker(url)} style={{ flex: 1, padding: 4, alignItems: 'center' }}>
+                      <Image source={{ uri: url }} style={{ width: 64, height: 64 }} resizeMode="contain" />
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
@@ -2493,4 +2918,98 @@ const styles = StyleSheet.create({
     borderBottomColor: "#eef2f7",
   },
   actionText: { ...Typography.body, fontSize: 15, color: "#1f2631" },
+
+  // ── LOCATION CARD ──────────────────────────────────────────
+  locationCard: {
+    marginTop: 8,
+    backgroundColor: '#e8f4ff',
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  locationCardLabel: { ...Typography.heading, fontSize: 13, color: '#0058bc' },
+  locationCardCoords: { ...Typography.body, fontSize: 11, color: '#5f697a' },
+  locationCardText: { ...Typography.body, fontSize: 12, color: '#3c4a5a' },
+  locationCardBtn: {
+    marginTop: 6,
+    backgroundColor: '#0058bc',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+  },
+  locationCardBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
+
+  // ── PENDING VOICE BAR ───────────────────────────────────────
+  pendingVoiceBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#eef2f7',
+  },
+  pendingVoiceText: { flex: 1, ...Typography.body, fontSize: 13, color: '#3c4a5a' },
+  pendingVoiceBtn: {
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    backgroundColor: '#f0f2f5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── FEATURE TOOLBAR ─────────────────────────────────────────
+  featureToolbar: {
+    flexDirection: 'row',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#f7f9fb',
+    borderTopWidth: 1,
+    borderTopColor: '#eef2f7',
+    position: 'relative',
+  },
+  featureBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#dde3ea',
+  },
+  featureBtnIcon: {
+    fontFamily: 'MaterialIcons',
+    fontSize: 18,
+    color: '#0058bc',
+  },
+
+  // ── LOCATION MENU ───────────────────────────────────────────
+  locationMenu: {
+    position: 'absolute',
+    bottom: 44,
+    left: 80,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 10,
+    zIndex: 999,
+    minWidth: 220,
+    overflow: 'hidden',
+  },
+  locationMenuItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f2f5',
+  },
+  locationMenuText: { ...Typography.body, fontSize: 14, color: '#1f2631' },
 });
+

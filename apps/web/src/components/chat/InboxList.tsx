@@ -27,7 +27,6 @@ const InboxList: React.FC = () => {
     hiddenConversations,
     hideConversationWithPin,
     unhideConversationWithPin,
-    setIsAddFriendModalOpen,
     isCreateGroupModalOpen,
     setIsCreateGroupModalOpen
   } = useChatStore();
@@ -69,7 +68,7 @@ const InboxList: React.FC = () => {
 
   const normalizedSearch = String(searchQuery || '').trim().toLowerCase();
 
-  const conversationMatchesSearch = (conv: any) => {
+  const conversationMatchesSearch = (conv: { type?: string; members?: string[]; name?: string; lastMessageContent?: string; lastMessage?: string }) => {
     if (!normalizedSearch) return true;
 
     const partnerEmail = conv.type === 'direct'

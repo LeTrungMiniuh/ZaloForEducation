@@ -7,7 +7,6 @@ import {
     FileImage,
     FileText,
     Forward,
-    Heart,
     Loader2,
     MoreHorizontal,
     Music,
@@ -75,15 +74,22 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onContextMenu, u
   const isHighlighted = highlightedMessageId === message.id;
   const hasReactions = !!(message.reactions && Object.keys(message.reactions).length > 0 && !isRecalled);
 
-  useEffect(() => {
+  // Reset reaction dock when conversation/message changes (useState prev-value pattern)
+  const [prevConvMsgKey, setPrevConvMsgKey] = useState(`${activeConvId}-${message.id}`);
+  const currentConvMsgKey = `${activeConvId}-${message.id}`;
+  if (prevConvMsgKey !== currentConvMsgKey) {
+    setPrevConvMsgKey(currentConvMsgKey);
     setIsReactionDockOpen(false);
-  }, [activeConvId, message.id]);
+  }
 
-  useEffect(() => {
+  // Close reaction dock when call overlay becomes active
+  const [prevCallOverlay, setPrevCallOverlay] = useState(isCallOverlayActive);
+  if (isCallOverlayActive !== prevCallOverlay) {
+    setPrevCallOverlay(isCallOverlayActive);
     if (isCallOverlayActive) {
       setIsReactionDockOpen(false);
     }
-  }, [isCallOverlayActive]);
+  }
 
   useEffect(() => {
     if (!isReactionDockOpen) return;

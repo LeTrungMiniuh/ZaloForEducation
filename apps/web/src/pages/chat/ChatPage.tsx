@@ -18,8 +18,6 @@ import {
   Star, 
   ListChecks, 
   Info, 
-  LayoutGrid, 
-  ChevronRight, 
   RotateCcw, 
   Trash2 
 } from 'lucide-react';
@@ -42,8 +40,8 @@ const ChatPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [isInfoOpen, setIsInfoOpen] = useState(true);
-  const [replyTarget, setReplyTarget] = useState<any | null>(null);
-  const [forwardMessage, setForwardMessage] = useState<any | null>(null);
+  const [replyTarget, setReplyTarget] = useState<{ id: string; content: string; senderId?: string } | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<{ id: string; content: string; senderId?: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevRoomRef = useRef<string | null>(null);
@@ -100,11 +98,16 @@ const ChatPage: React.FC = () => {
     };
   }, [activeConvId, fetchMessages, socket]);
 
+  // Reset typing users when room changes (store prev value as state)
+  const [prevActiveConvId, setPrevActiveConvId] = useState(activeConvId);
+  if (activeConvId !== prevActiveConvId) {
+    setPrevActiveConvId(activeConvId);
+    setTypingUsers(new Set());
+  }
+
   // Handle typing indicator via CustomEvent from useSocketListeners
   useEffect(() => {
-    setTypingUsers(new Set()); // Reset when changing room
-    
-    const handleTypingEvent = (e: any) => {
+    const handleTypingEvent = (e: CustomEvent) => {
       const data = e.detail;
       if (data.convId === activeConvId && data.email !== user?.email) {
         if (data.isTyping) {
@@ -131,8 +134,8 @@ const ChatPage: React.FC = () => {
       }
     };
 
-    document.addEventListener('chat_typing_update', handleTypingEvent);
-    return () => document.removeEventListener('chat_typing_update', handleTypingEvent);
+    document.addEventListener('chat_typing_update', handleTypingEvent as EventListener);
+    return () => document.removeEventListener('chat_typing_update', handleTypingEvent as EventListener);
   }, [activeConvId, user]);
 
   // Mark as read when messages change or room opens
@@ -199,7 +202,7 @@ const ChatPage: React.FC = () => {
     );
   };
 
-  const [contextMenu, setContextMenu] = useState<{ message: any; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ message: Record<string, unknown> & { id: string; content: string; senderId?: string; pinned?: boolean; recalled?: boolean; createdAt?: string; status?: string }; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const navState = (location.state || null) as {

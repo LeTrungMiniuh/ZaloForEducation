@@ -3,7 +3,7 @@ import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import { getDisplayName, getDisplayAvatar, highlightText, getFileIcon } from '../../utils/chatUtils';
 
-import { X, Search, ArrowRight } from 'lucide-react';
+import { Search } from 'lucide-react';
 
 const SearchOverlay: React.FC = () => {
   const { user } = useAuth();
@@ -25,19 +25,19 @@ const SearchOverlay: React.FC = () => {
   const [searchTab, setSearchTab] = useState<'all' | 'contacts' | 'messages' | 'files'>('all');
   const [showAllContacts, setShowAllContacts] = useState(false);
   const [showAllMessages, setShowAllMessages] = useState(false);
-  const [showAllFiles, setShowAllFiles] = useState(false);
+  const [showAllFiles] = useState(false);
 
   // Auto-load profiles for message senders and contacts in search results
   useEffect(() => {
     // Scan messages
     if (searchResults.messages.length > 0) {
-      searchResults.messages.forEach((msg: any) => {
+      searchResults.messages.forEach((msg: { senderId?: string }) => {
         if (msg.senderId) loadUserProfile(msg.senderId);
       });
     }
     // Scan contacts
     if (searchResults.contacts.length > 0) {
-      searchResults.contacts.forEach((contact: any) => {
+      searchResults.contacts.forEach((contact: { email?: string }) => {
         if (contact.email) loadUserProfile(contact.email);
       });
     }
@@ -110,7 +110,7 @@ const SearchOverlay: React.FC = () => {
             {['all', 'contacts', 'messages', 'files'].map((tab) => (
               <button
                 key={tab}
-                onClick={() => setSearchTab(tab as any)}
+                onClick={() => setSearchTab(tab as 'all' | 'contacts' | 'messages' | 'files')}
                 className={`px-5 py-2.5 rounded-[14px] text-[13px] font-extrabold transition-all duration-300 ${
                   searchTab === tab 
                     ? 'bg-white text-primary shadow-sm ring-1 ring-black/5 dark:bg-primary/20 dark:text-on-surface' 
@@ -164,7 +164,7 @@ const SearchOverlay: React.FC = () => {
                   <section className="space-y-4">
                     <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Người dùng & Liên hệ</p>
                     <div className="bg-white rounded-[24px] p-2 shadow-sm border border-outline-variant/10">
-                       {(showAllContacts ? searchResults.contacts : searchResults.contacts.slice(0, 5)).map((contact: any) => (
+                       {(showAllContacts ? searchResults.contacts : searchResults.contacts.slice(0, 5)).map((contact: { email: string; fullName?: string }) => (
                          <div 
                            key={contact.email} 
                            onClick={() => startDirectChat(contact.email)}
@@ -194,7 +194,7 @@ const SearchOverlay: React.FC = () => {
                    <section className="space-y-4">
                       <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Nội dung tin nhắn</p>
                       <div className="space-y-2">
-                         {(showAllMessages ? searchResults.messages : searchResults.messages.slice(0, 5)).map((msg: any) => (
+                         {(showAllMessages ? searchResults.messages : searchResults.messages.slice(0, 5)).map((msg: { id: string; senderId?: string; content?: string; createdAt?: string; conversationId?: string; convId?: string }) => (
                            <div 
                              key={msg.id} 
                              onClick={() => { setActiveConversation(msg.conversationId || msg.convId); setIsSearching(false); setSearchQuery(''); }}
@@ -228,7 +228,7 @@ const SearchOverlay: React.FC = () => {
                   <section className="space-y-4">
                      <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Tệp tin & Đa phương tiện</p>
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {(showAllFiles ? searchResults.files : searchResults.files.slice(0, 6)).map((f: any) => (
+                        {(showAllFiles ? searchResults.files : searchResults.files.slice(0, 6)).map((f: { messageId: string; name: string; size: number; senderId?: string; convId?: string; conversationId?: string }) => (
                           <div 
                             key={f.messageId} 
                             onClick={() => { setActiveConversation(f.convId || f.conversationId); setIsSearching(false); setSearchQuery(''); }}

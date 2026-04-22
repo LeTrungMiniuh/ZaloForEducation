@@ -4,30 +4,46 @@ import React, {
   useState,
   useEffect,
   useRef,
+  useCallback,
 } from "react";
 import api from "../services/api";
 import { io } from "socket.io-client";
 import { getDeviceId, getDeviceInfo } from "../utils/device";
 import Swal from "sweetalert2";
 
+interface UserProfile {
+  email: string;
+  fullName?: string;
+  fullname?: string;
+  avatarUrl?: string;
+  backgroundUrl?: string;
+  gender?: boolean;
+  dataOfBirth?: string;
+  phone?: string;
+  address?: string;
+  bio?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
 interface AuthContextType {
-  user: any;
+  user: UserProfile | null;
   loading: boolean;
   login: (
     email: string,
     password: string,
   ) => Promise<{ requireOtp?: boolean; email?: string; success?: boolean }>;
   requestRegisterOtp: (email: string) => Promise<void>;
-  confirmRegister: (data: any) => Promise<void>;
+  confirmRegister: (data: Record<string, unknown>) => Promise<void>;
   resendOtp: (
     email: string,
     type: "register" | "forgot_password",
   ) => Promise<void>;
   requestForgotPassword: (email: string) => Promise<void>;
-  resetPassword: (data: any) => Promise<void>;
-  getSessions: () => Promise<any>;
+  resetPassword: (data: Record<string, unknown>) => Promise<void>;
+  getSessions: () => Promise<{ activeDevices?: unknown[]; loginHistory?: unknown[] }>;
   revokeSession: (deviceId: string) => Promise<void>;
-  refreshUser: () => Promise<any>;
+  refreshUser: () => Promise<UserProfile | null>;
   logout: () => void;
   logoutAll: () => Promise<void>;
   requestChangePassword: (data: {
@@ -39,7 +55,7 @@ interface AuthContextType {
   confirmLockAccount: (otp: string) => Promise<void>;
   requestDeleteAccount: (currentPassword: string) => Promise<void>;
   confirmDeleteAccount: (otp: string) => Promise<void>;
-  verifyLoginOtp: (otp: string, email: string) => Promise<any>;
+  verifyLoginOtp: (otp: string, email: string) => Promise<UserProfile>;
   googleLogin: (idToken: string) => Promise<{
     isProfileComplete?: boolean;
     requireOtp?: boolean;
@@ -47,10 +63,10 @@ interface AuthContextType {
     success?: boolean;
   }>;
   requestGoogleCompletionOtp: (email: string) => Promise<void>;
-  completeGoogleProfile: (data: any) => Promise<void>;
-  pendingGoogleUser: any;
-  setPendingGoogleUser: (user: any) => void;
-  socket: any;
+  completeGoogleProfile: (data: Record<string, unknown>) => Promise<void>;
+  pendingGoogleUser: Record<string, unknown> | null;
+  setPendingGoogleUser: (user: Record<string, unknown> | null) => void;
+  socket: ReturnType<typeof import('socket.io-client').io> | null;
   deviceId: string;
 }
 
@@ -59,15 +75,15 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [user, setUser] = useState<any>(null);
-  const [pendingGoogleUser, setPendingGoogleUser] = useState<any>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [pendingGoogleUser, setPendingGoogleUser] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
-  const [socket, setSocket] = useState<any>(null);
+  const [socket, setSocket] = useState<ReturnType<typeof io> | null>(null);
   const [deviceId, setDeviceId] = useState<string>("");
 
   // FIX 2+3: dùng ref để track socket hiện tại,
   // tránh tạo nhiều socket và memory leak
-  const socketRef = useRef<any>(null);
+  const socketRef = useRef<ReturnType<typeof io> | null>(null);
 
   // FIX 5: getDeviceId có thể async, dùng useEffect để lấy
   useEffect(() => {
@@ -78,57 +94,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     initDeviceId();
   }, []);
 
-  useEffect(() => {
-    const initSession = async () => {
-      const savedUser = localStorage.getItem("user");
-      const savedToken = localStorage.getItem("token");
-      const savedPending = localStorage.getItem("pendingGoogleUser");
+  const logoutLocal = useCallback(() => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    localStorage.removeItem("pendingGoogleUser");
+    // deviceId được giữ lại để duy trì trạng thái "Thiết bị tin cậy"
 
-      // 1. Khôi phục user đầy đủ nếu có
-      if (savedUser && savedUser !== "undefined" && savedToken) {
-        try {
-          const parsedUser = JSON.parse(savedUser);
-          setUser(parsedUser);
-          setupSocket(parsedUser.email);
-        } catch (e) {
-          console.error("Failed to parse saved user:", e);
-        }
-      }
-      // 2. Nếu chỉ có token (VD: F5 khi đang Profile Completion), gọi API lấy profile
-      else if (savedToken) {
-        try {
-          // Sếp yêu cầu dùng /auth/me để lấy profile mới nhất
-          const res = await api.get("/auth/me");
-          if (res.data.profile) {
-            setUser(res.data.profile);
-            setupSocket(res.data.profile.email);
-            localStorage.setItem("user", JSON.stringify(res.data.profile));
-          }
-        } catch (err: any) {
-          console.error("Rehydration failed:", err);
-          // Nếu lỗi 403 (Pending) hoặc 401 thì check savedPending
-          if (savedPending) {
-            setPendingGoogleUser(JSON.parse(savedPending));
-          } else {
-            localStorage.removeItem("token");
-          }
-        }
-      }
-
-      setLoading(false);
-    };
-
-    initSession();
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-    };
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+    setUser(null);
+    setSocket(null);
+    setPendingGoogleUser(null);
+    window.location.href = "/login";
   }, []);
 
-  const setupSocket = (email: string) => {
+  const setupSocket = useCallback((email: string) => {
     // FIX 3: disconnect socket cũ trước khi tạo mới
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -185,7 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     newSocket.on("profile_update", (data) => {
       if (data && data.profile) {
         console.log("⚡ [SOCKET] Profile update event received:", data.profile);
-        setUser((prevUser: any) => {
+        setUser((prevUser: UserProfile | null) => {
           const merged = { ...prevUser, ...data.profile };
           localStorage.setItem("user", JSON.stringify(merged));
           console.log("✅ [AUTH] User state updated from socket sync");
@@ -232,10 +214,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     // FIX 2: lưu vào ref để quản lý lifecycle
     socketRef.current = newSocket;
     setSocket(newSocket);
-  };
+  }, [deviceId, logoutLocal]);
+
+  useEffect(() => {
+    const initSession = async () => {
+      const savedUser = localStorage.getItem("user");
+      const savedToken = localStorage.getItem("token");
+      const savedPending = localStorage.getItem("pendingGoogleUser");
+
+      // 1. Khôi phục user đầy đủ nếu có
+      if (savedUser && savedUser !== "undefined" && savedToken) {
+        try {
+          const parsedUser = JSON.parse(savedUser);
+          setUser(parsedUser);
+          setupSocket(parsedUser.email);
+        } catch (e) {
+          console.error("Failed to parse saved user:", e);
+        }
+      }
+      // 2. Nếu chỉ có token (VD: F5 khi đang Profile Completion), gọi API lấy profile
+      else if (savedToken) {
+        try {
+          // Sếp yêu cầu dùng /auth/me để lấy profile mới nhất
+          const res = await api.get("/auth/me");
+          if (res.data.profile) {
+            setUser(res.data.profile);
+            setupSocket(res.data.profile.email);
+            localStorage.setItem("user", JSON.stringify(res.data.profile));
+          }
+        } catch (err: unknown) {
+          console.error("Rehydration failed:", err);
+          // Nếu lỗi 403 (Pending) hoặc 401 thì check savedPending
+          if (savedPending) {
+            setPendingGoogleUser(JSON.parse(savedPending));
+          } else {
+            localStorage.removeItem("token");
+          }
+        }
+      }
+
+      setLoading(false);
+    };
+
+    initSession();
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, [setupSocket]);
 
   const login = async (email: string, password: string) => {
-    const { deviceName, deviceType } = getDeviceInfo();
+    const { deviceName } = getDeviceInfo();
     const currentDeviceId = deviceId || (await Promise.resolve(getDeviceId()));
 
     try {
@@ -261,8 +293,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setUser(userData);
       setupSocket(userData.email);
       return { success: true };
-    } catch (err: any) {
-      if (err.response?.data?.type === "REQUIRE_OTP") {
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { type?: string } } };
+      if (axiosErr.response?.data?.type === "REQUIRE_OTP") {
         return { requireOtp: true, email };
       }
       throw err;
@@ -270,7 +303,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const verifyLoginOtp = async (otp: string, email: string) => {
-    const { deviceName, deviceType } = getDeviceInfo();
+    const { deviceName } = getDeviceInfo();
     const currentDeviceId = deviceId || (await Promise.resolve(getDeviceId()));
 
     const res = await api.post("/auth/verify-login-otp", {
@@ -296,7 +329,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     await api.post("/auth/register", { email });
   };
 
-  const confirmRegister = async (data: any) => {
+  const confirmRegister = async (data: Record<string, unknown>) => {
     await api.post("/auth/register/confirm", data);
   };
 
@@ -311,7 +344,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     await api.post("/auth/forgot-password", { email });
   };
 
-  const resetPassword = async (data: any) => {
+  const resetPassword = async (data: Record<string, unknown>) => {
     await api.post("/auth/reset-password", data);
   };
 
@@ -336,21 +369,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const logoutLocal = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    localStorage.removeItem("pendingGoogleUser");
-    // deviceId được giữ lại để duy trì trạng thái "Thiết bị tin cậy"
-
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null;
-    }
-    setUser(null);
-    setSocket(null);
-    setPendingGoogleUser(null);
-    window.location.href = "/login";
-  };
 
   const logout = async () => {
     try {
@@ -432,7 +450,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const googleLogin = async (idToken: string) => {
-    const { deviceName, deviceType } = getDeviceInfo();
+    const { deviceName } = getDeviceInfo();
     const currentDeviceId = deviceId || (await Promise.resolve(getDeviceId()));
 
     const res = await api.post("/auth/google-login", {
@@ -470,8 +488,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     await api.post("/auth/google-complete/request-otp", { email });
   };
 
-  const completeGoogleProfile = async (data: any) => {
-    const { deviceName, deviceType } = getDeviceInfo();
+  const completeGoogleProfile = async (data: Record<string, unknown>) => {
+    const { deviceName } = getDeviceInfo();
     const currentDeviceId = deviceId || (await Promise.resolve(getDeviceId()));
 
     const res = await api.post("/auth/google-complete/confirm", {
@@ -529,6 +547,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) throw new Error("useAuth must be used within an AuthProvider");
