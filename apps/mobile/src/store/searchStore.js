@@ -233,7 +233,7 @@ export const useSearchStore = create((set, get) => {
           // Signature: (screen, params, tab)
           onNavigate('profile', { userId: item.userId || item.id });
         } else if (item.type === 'MESSAGE' || item.type === 'FILE') {
-          onNavigate('chat', {
+          onNavigate('home', {
             conversationId: item.conversationId,
             targetMessageId: item.messageId || item.id,
             highlightKeyword: get().lastQuery,

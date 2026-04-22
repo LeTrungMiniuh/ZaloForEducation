@@ -409,8 +409,10 @@ export class ChatService {
     );
 
     // Filter into text-only messages vs files for the response
+    // [SENIOR] EXCLUDE ALL SYSTEM-GENERATED MESSAGES (system, call logs, etc.)
+    const EXCLUDED_MESSAGE_TYPES = ['system', 'SYSTEM_CALL'];
     const searchMessages = matchedMessages
-      .filter(m => (m.content || '').toLowerCase().includes(q))
+      .filter(m => !EXCLUDED_MESSAGE_TYPES.includes(m.type) && (m.content || '').toLowerCase().includes(q))
       .map(m => ({
         id: m.SK,
         convId: m.PK,
@@ -420,6 +422,7 @@ export class ChatService {
       }));
 
     const searchFiles = matchedMessages.flatMap(m => {
+      if (EXCLUDED_MESSAGE_TYPES.includes(m.type)) return [];
       const media = Array.isArray(m.media) ? m.media : [];
       const files = Array.isArray(m.files) ? m.files : [];
       const allItems = [...media, ...files];
@@ -435,6 +438,41 @@ export class ChatService {
           createdAt: m.createdAt
         }));
     });
+
+    // [SENIOR] HYDRATE SENDER PROFILES
+    const uniqueSenders = new Set([
+      ...searchMessages.map(m => m.senderId),
+      ...searchFiles.map(f => f.senderId)
+    ].filter(Boolean));
+
+    const senderProfiles = {};
+    if (uniqueSenders.size > 0) {
+      const senderEmails = Array.from(uniqueSenders);
+      const profileResults = await Promise.all(
+        senderEmails.map(email =>
+          this.db.docClient.send(new GetCommand({
+            TableName: this.db.tableName,
+            Key: { PK: `USER#${email}`, SK: 'METADATA' }
+          }))
+        )
+      );
+
+      profileResults.forEach((res, idx) => {
+        const p = res.Item;
+        const email = senderEmails[idx];
+        if (p) {
+          senderProfiles[email] = {
+            name: p.fullName || p.fullname || email,
+            avatar: p.avatarUrl || p.urlAvatar || ''
+          };
+        } else {
+          senderProfiles[email] = {
+            name: email,
+            avatar: ''
+          };
+        }
+      });
+    }
 
     // Standardize for Search V2: type/id/conversationId/sender
     const standardized = {
@@ -456,7 +494,7 @@ export class ChatService {
         id: m.id,
         conversationId: m.convId,
         content: m.content,
-        sender: { name: m.senderId }
+        sender: senderProfiles[m.senderId] || { name: m.senderId, avatar: '' }
       })),
       files: searchFiles.slice(0, 50).map(f => ({
         type: 'FILE',
@@ -464,7 +502,7 @@ export class ChatService {
         messageId: f.messageId,
         conversationId: f.convId,
         content: f.name,
-        sender: { name: f.senderId }
+        sender: senderProfiles[f.senderId] || { name: f.senderId, avatar: '' }
       }))
     };
     return standardized;

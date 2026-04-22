@@ -70,15 +70,20 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
   const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
   const [messageToForward, setMessageToForward] = useState(null);
   const [messageReactions, setMessageReactions] = useState({});
+  const [localConversation, setLocalConversation] = useState(null);
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
 
   const typingTimeoutRef = useRef(null);
   const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
 
   // Derived Values
-  const selectedChat = useMemo(() =>
+  const selectedChatFromStore = useMemo(() =>
     conversations.find(c => c.id === conversationId),
     [conversations, conversationId]);
+
+  // Use store conversation if available, otherwise use fetched local metadata
+  const selectedChat = selectedChatFromStore || localConversation;
 
   const reversedMessages = useMemo(() =>
     Array.isArray(messages) ? [...messages].reverse() : [],
@@ -123,6 +128,21 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
     }
   };
 
+  const fetchConversationMetadata = async (id) => {
+    if (!id || isLoadingMetadata) return;
+    setIsLoadingMetadata(true);
+    try {
+      const res = await chatGet(`/conversations/${id}/metadata`);
+      if (res.ok && res.data) {
+        setLocalConversation(res.data);
+      }
+    } catch (err) {
+      console.error("[Chat] Failed to fetch metadata", err);
+    } finally {
+      setIsLoadingMetadata(false);
+    }
+  };
+
   // Chat Helpers
   const getMessagePreview = (message) => {
     if (!message) return "Tin nhắn";
@@ -141,12 +161,17 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
     // 1. Set active in store
     setActiveConversation(conversationId);
 
-    // 2. Load context if needed
-    if (selectedChat?.type === "direct") {
+    // 2. Load metadata if missing from store
+    if (!selectedChatFromStore) {
+      fetchConversationMetadata(conversationId);
+    }
+
+    // 3. Load user profiles if direct chat
+    if (selectedChat?.type === "direct" && selectedChat?.partner) {
       loadUserProfile(selectedChat.partner);
     }
 
-    // 3. Socket Join
+    // 4. Socket Join
     if (SocketService.socket) {
       SocketService.socket.emit("join_room", { convId: conversationId });
       SocketService.socket.emit("conversation_marked_read", { convId: conversationId });
@@ -163,19 +188,21 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
 
   // Deep link scroll to target message
   useEffect(() => {
-    if (!targetMessageId || !messagesScrollRef.current) return;
+    if (!targetMessageId || !messagesScrollRef.current || reversedMessages.length === 0) return;
 
-    // Since inverted + reversed, find index from end
-    const index = reversedMessages.findIndex(msg => msg.id === targetMessageId);
-    if (index !== -1) {
-      messagesScrollRef.current.scrollToIndex({
-        index,
-        animated: true,
-        viewPosition: 0.5 // Center vertically
-      });
-    }
-    // Note: If not found, user can scroll up; future: load more pages
-  }, [targetMessageId, reversedMessages]);
+    // Small delay to allow layout to settle
+    const t = setTimeout(() => {
+      const index = reversedMessages.findIndex(msg => msg.id === targetMessageId || msg.SK === targetMessageId);
+      if (index !== -1) {
+        messagesScrollRef.current.scrollToIndex({
+          index,
+          animated: true,
+          viewPosition: 0.5 // Center vertically
+        });
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [targetMessageId, reversedMessages.length]);
 
   // Message Handling
   const handleChatSend = async (textToSend, attachmentsToSend) => {
@@ -284,7 +311,7 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
 
   // CALL LOGIC (Preserving Chime)
   const handleStartCall = async (type) => {
-    if (!selectedChat || selectedChat.type !== 'direct') {
+    if (!selectedChat || selectedChat?.type !== 'direct') {
       Alert.alert('Thất bại', 'Hiện tại chỉ hỗ trợ gọi 1:1');
       return;
     }
@@ -386,12 +413,12 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
 
           <View style={styles.headerInfo}>
             <View style={styles.avatarContainer}>
-              <Image source={{ uri: selectedChat.type === 'direct' ? getDisplayAvatar(selectedChat.partner) : selectedChat.avatar }} style={styles.avatar} />
+              <Image source={{ uri: selectedChat?.type === 'direct' ? getDisplayAvatar(selectedChat.partner) : (selectedChat?.avatar || getDisplayAvatar()) }} style={styles.avatar} />
               {isOnline && <View style={styles.onlineBadge} />}
             </View>
             <View style={styles.headerText}>
               <Text style={styles.name} numberOfLines={1}>
-                {selectedChat.type === 'direct' ? getDisplayName(selectedChat.partner) : selectedChat.name}
+                {selectedChat?.type === 'direct' ? getDisplayName(selectedChat.partner) : (selectedChat?.name || "...")}
               </Text>
               <Text style={styles.status}>{typingText}</Text>
             </View>
@@ -452,6 +479,12 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
             />
           );
         }}
+        onScrollToIndexFailed={info => {
+          messagesScrollRef.current?.scrollToOffset({ 
+            offset: info.averageItemLength * info.index, 
+            animated: true 
+          });
+        }}
         contentContainerStyle={styles.listContent}
       />
 
@@ -461,7 +494,7 @@ export default function ChatScreen({ onNavigate, goBack, params }) {
         replyTarget={replyTarget}
         onClearReply={() => setReplyTarget(null)}
         onTyping={() => {
-          if (SocketService.socket && selectedChat.id) {
+          if (SocketService.socket && selectedChat?.id) {
             if (!typingTimeoutRef.current) {
               SocketService.socket.emit("typing", { convId: selectedChat.id, isTyping: true });
               typingTimeoutRef.current = setTimeout(() => { typingTimeoutRef.current = null; }, 2000);

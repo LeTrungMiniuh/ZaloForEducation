@@ -21,6 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import styles from './style/SearchScreen.styles';
 import { useSearchStore } from '../../store/searchStore';
+import SafeImage from '../../components/common/SafeImage';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,28 @@ const highlightKeyword = (text, keyword) => {
   );
 };
 
+const getFileIcon = (mimeType = "", fileName = "") => {
+  const lowerName = String(fileName || "").toLowerCase();
+  const lowerMime = String(mimeType || "").toLowerCase();
+  if (lowerMime.includes("pdf") || lowerName.endsWith(".pdf"))
+    return "picture_as_pdf";
+  if (
+    lowerMime.includes("word") ||
+    lowerName.endsWith(".doc") ||
+    lowerName.endsWith(".docx")
+  )
+    return "description";
+  if (
+    lowerMime.includes("excel") ||
+    lowerName.endsWith(".xls") ||
+    lowerName.endsWith(".xlsx")
+  )
+    return "table_chart";
+  if (lowerMime.startsWith("image/")) return "image";
+  if (lowerMime.startsWith("video/")) return "movie";
+  return "draft";
+};
+
 // ─── SearchItem ───────────────────────────────────────────────────────────────
 /**
  * Fully memoized result row.
@@ -63,9 +86,21 @@ const highlightKeyword = (text, keyword) => {
 const SearchItem = memo(
   ({ item, isActive, isHighlighting, highlightAnim, query, onPress }) => {
     const tag = TAG_CONFIG[item.type];
-    const displayName =
-      item.displayName || item.sender?.name || item.content || item.id || '';
-    const avatar = item.avatar || item.sender?.avatar || DEFAULT_AVATAR;
+    const isFile = item.type === 'FILE';
+    const isMessage = item.type === 'MESSAGE';
+    const isContact = item.type === 'CONTACT';
+
+    // Title: For messages/files, show sender name. For contacts, show display name.
+    const title = isContact 
+      ? (item.fullName || item.displayName || item.sender?.name || '')
+      : (item.sender?.name || item.displayName || '');
+    
+    // Subtitle: For messages, show content snippet. For files, show file name.
+    const subtitle = (isMessage || isFile) ? item.content : '';
+
+    // For messages, prioritize sender's avatar
+    const senderAvatar = item.sender?.avatar || item.sender?.avatarUrl || DEFAULT_AVATAR;
+    const itemAvatar = isMessage ? senderAvatar : (item.avatar || DEFAULT_AVATAR);
 
     const animatedBorderColor = isHighlighting
       ? highlightAnim.interpolate({
@@ -86,22 +121,26 @@ const SearchItem = memo(
             },
           ]}
         >
-          <Image
-            source={{ uri: avatar }}
-            style={styles.avatar}
-            defaultSource={{ uri: DEFAULT_AVATAR }}
-          />
+          {isFile ? (
+            <View style={[styles.avatar, { backgroundColor: '#f0f7ff', justifyContent: 'center', alignItems: 'center' }]}>
+              <Text style={{ fontFamily: 'Material Symbols Outlined', fontSize: 24, color: '#0068FF' }}>
+                {getFileIcon(item.mimeType, item.name || item.content)}
+              </Text>
+            </View>
+          ) : (
+            <SafeImage
+              source={{ uri: itemAvatar }}
+              style={styles.avatar}
+              fallback={DEFAULT_AVATAR}
+            />
+          )}
           <View style={styles.resultInfo}>
             <Text style={styles.resultName} numberOfLines={1}>
-              {highlightKeyword(displayName, query)}
+              {highlightKeyword(title, query)}
             </Text>
-            {/* Show subtitle: prefer content snippet, fall back to conversationId */}
-            {(item.content || item.conversationId) ? (
+            {subtitle ? (
               <Text style={styles.resultSub} numberOfLines={1}>
-                {highlightKeyword(
-                  item.content || item.conversationId,
-                  query,
-                )}
+                {highlightKeyword(subtitle, query)}
               </Text>
             ) : null}
           </View>

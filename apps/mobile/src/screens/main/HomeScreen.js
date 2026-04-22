@@ -206,10 +206,10 @@ export default function HomeScreen({
   onLogout,
   initialTab,
   onTabChange,
+  params,
 }) {
   const insets = useSafeAreaInsets();
   const { user, profileVersion, checkSessionStatus } = useAuth();
-
   // ZUSTAND STORE
   const {
     conversations,
@@ -290,6 +290,33 @@ export default function HomeScreen({
 
   // Derived State
   const selectedChat = safeConversations.find((c) => c.id === activeConvId);
+
+  const { conversationId: paramConvId, targetMessageId, highlightKeyword } = params || {};
+
+  // Deep link effect: Auto-open conversation from params
+  useEffect(() => {
+    if (paramConvId) {
+      handleSelectChat({ id: paramConvId });
+    }
+  }, [paramConvId]);
+
+  // Deep link effect: Scroll to message
+  useEffect(() => {
+    if (!targetMessageId || !messagesScrollRef.current || reversedMessages.length === 0) return;
+
+    const timeout = setTimeout(() => {
+      const index = reversedMessages.findIndex(msg => (msg.id === targetMessageId || msg.SK === targetMessageId));
+      if (index !== -1) {
+        messagesScrollRef.current.scrollToIndex({
+          index,
+          animated: true,
+          viewPosition: 0.5
+        });
+      }
+    }, 500);
+
+    return () => clearTimeout(timeout);
+  }, [targetMessageId, reversedMessages.length]);
 
   useEffect(() => {
     if (checkSessionStatus) checkSessionStatus();
@@ -1298,8 +1325,16 @@ export default function HomeScreen({
                   onLongPress={setActionMessage}
                   onReaction={toggleReaction}
                   onReply={startReply}
+                  isHighlighted={message.id === targetMessageId || message.SK === targetMessageId}
+                  highlightKeyword={highlightKeyword}
                 />
               );
+            }}
+            onScrollToIndexFailed={info => {
+              messagesScrollRef.current?.scrollToOffset({ 
+                offset: info.averageItemLength * info.index, 
+                animated: true 
+              });
             }}
             contentContainerStyle={{
               paddingHorizontal: 12,

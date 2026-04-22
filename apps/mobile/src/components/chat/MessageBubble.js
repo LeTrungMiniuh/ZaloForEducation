@@ -178,7 +178,11 @@ export default function MessageBubble({
                   if (isVideo) {
                     return (
                       <TouchableOpacity key={index} style={styles.videoBox} onPress={() => Linking.openURL(file.dataUrl)}>
-                        <Image source={{ uri: file.dataUrl }} style={styles.mediaImage} blurRadius={10} />
+                        {file.dataUrl ? (
+                          <Image source={{ uri: file.dataUrl }} style={styles.mediaImage} blurRadius={10} />
+                        ) : (
+                          <View style={[styles.mediaImage, { backgroundColor: '#333' }]} />
+                        )}
                         <View style={styles.videoOverlay}>
                           <Text style={styles.videoIcon}>play_circle</Text>
                         </View>
@@ -188,11 +192,15 @@ export default function MessageBubble({
 
                   return (
                     <View key={index} style={styles.imageBox}>
-                      <Image 
-                        source={{ uri: file.dataUrl }} 
-                        style={[styles.mediaImage, isSticker && styles.stickerImage]} 
-                        resizeMode={isSticker ? "contain" : "cover"} 
-                      />
+                      {file.dataUrl ? (
+                        <Image 
+                          source={{ uri: file.dataUrl }} 
+                          style={[styles.mediaImage, isSticker && styles.stickerImage]} 
+                          resizeMode={isSticker ? "contain" : "cover"} 
+                        />
+                      ) : (
+                        <View style={styles.mediaImage} />
+                      )}
                       {(isSticker || isHD) && (
                         <View style={styles.mediaBadgeRow}>
                           {isSticker && <View style={styles.stkBadge}><Text style={styles.badgeText}>STK</Text></View>}
@@ -230,7 +238,11 @@ export default function MessageBubble({
           <View style={[styles.reactionSummary, isMe ? styles.reactionSummaryMe : styles.reactionSummaryOther]}>
             {reactionSummary.map(([emoji, users]) => (
               <TouchableOpacity key={emoji} style={styles.reactionBadge} onPress={() => onReaction && onReaction(message, emoji)}>
-                <Image source={{ uri: FLUENT_EMOJI_MAP[emoji] || '' }} style={styles.reactionEmojiIcon} />
+                {FLUENT_EMOJI_MAP[emoji] ? (
+                  <Image source={{ uri: FLUENT_EMOJI_MAP[emoji] }} style={styles.reactionEmojiIcon} />
+                ) : (
+                  <Text style={{ fontSize: 12 }}>{emoji}</Text>
+                )}
                 <Text style={styles.reactionCount}>{users.length}</Text>
               </TouchableOpacity>
             ))}

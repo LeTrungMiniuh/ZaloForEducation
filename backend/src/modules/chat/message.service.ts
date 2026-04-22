@@ -471,7 +471,9 @@ export class MessageService {
     }
 
     return {
-      messages: filteredItems.reverse(), // Chronological order for frontend
+      messages: filteredItems
+        .map(msg => ({ ...msg, id: msg.id || msg.SK }))
+        .reverse(), // Chronological order for frontend
       nextCursor,
     };
   }
