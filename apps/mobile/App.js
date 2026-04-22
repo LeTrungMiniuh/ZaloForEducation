@@ -24,6 +24,7 @@ import ProfileMoreScreen from './src/screens/profile/ProfileMoreScreen';
 import SettingsScreen from './src/screens/profile/SettingsScreen';
 import ChangePasswordScreen from './src/screens/profile/ChangePasswordScreen';
 import LoginOtpScreen from './src/screens/auth/LoginOtpScreen';
+import NotificationScreen from './src/screens/main/NotificationScreen'; // [ADDED] From tin_notification branch (integrated structure)
 import SplashScreen from './src/components/SplashScreen';
 import CallOverlay from './src/components/chat/CallOverlay';
 import SearchScreen from './src/screens/main/SearchScreen';
@@ -156,6 +157,7 @@ function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, pa
     case 'profile-more': return <ProfileMoreScreen onNavigate={navigate} goBack={goBack} />;
     case 'settings': return <SettingsScreen onNavigate={navigate} onLogout={handleLogout} goBack={goBack} />;
     case 'change-password': return <ChangePasswordScreen onNavigate={navigate} goBack={goBack} />;
+    case 'notifications': return <NotificationScreen onNavigate={navigate} goBack={goBack} />;
     case 'login-otp': return <LoginOtpScreen onNavigate={navigate} goBack={goBack} params={params} />;
     case 'search': return <SearchScreen onNavigate={navigate} goBack={goBack} params={params} />;
     case 'login':

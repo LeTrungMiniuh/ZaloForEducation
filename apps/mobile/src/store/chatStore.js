@@ -6,7 +6,6 @@ let storage = null;
 
 try {
   // Expo Go does not provide Nitro native modules (MMKV v4), so this must be optional.
-  // eslint-disable-next-line global-require
   const { MMKV } = require("react-native-mmkv");
   storage = new MMKV();
 } catch (error) {
@@ -23,7 +22,6 @@ const safeJsonParse = (str, fallback = []) => {
   }
 };
 
-// Helper to get/set from storage
 const getCachedMessages = (convId) => {
   const key = `messages#${convId}`;
   if (!storage) return memoryCache.get(key) || [];
@@ -45,16 +43,23 @@ const getMsgTime = (m) => {
   return Number.isFinite(t) ? t : 0;
 };
 
-// Standardizes order to newest-first (tin mới nhất ở đầu mảng)
 const sortMessages = (arr) =>
   [...(arr || [])].sort((a, b) => {
     const ta = getMsgTime(a);
     const tb = getMsgTime(b);
     if (tb !== ta) return tb - ta;
-
-    // fallback nếu createdAt thiếu hoặc bằng nhau
     return String(b?.id || "").localeCompare(String(a?.id || ""));
   });
+
+const dedupeMessagesById = (messages) => {
+  const seen = new Set();
+  return (Array.isArray(messages) ? messages : []).filter((message) => {
+    const id = String(message?.id || "").trim();
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
 
 const normalizeMessage = (message) => {
   if (!message || typeof message !== "object") return null;
@@ -65,8 +70,6 @@ const normalizeMessage = (message) => {
 
   const id = String(message.id || message.SK || "").trim();
   const senderId = String(message.senderId || message.sender_id || "").trim() || "unknown";
-
-  // Giữ nguyên content nếu là object (cho multimedia/call), chỉ ép về string khi cần preview
   const content = typeof message.content === "string" ? message.content : message.content ?? "";
 
   if (!id || !conversationId) return null;
@@ -90,7 +93,8 @@ const normalizeConversation = (conv, currentUserEmail) => {
 
   let partner = conv.partner;
   if (conv.type === "direct" && !partner && Array.isArray(conv.members)) {
-    partner = conv.members.find((m) => m !== currentUserEmail);
+    const myEmail = String(currentUserEmail || "").toLowerCase();
+    partner = conv.members.find((m) => String(m).toLowerCase() !== myEmail);
   }
 
   return {
@@ -128,8 +132,6 @@ export const useChatStore = create((set, get) => ({
   loadUserProfile: async (email) => {
     if (!email) return;
     const normalizedEmail = email.trim().toLowerCase();
-    
-    // Skip if current user or already loaded with full info
     const { currentUserEmail, userProfiles } = get();
     if (normalizedEmail === currentUserEmail) return;
     
@@ -138,8 +140,6 @@ export const useChatStore = create((set, get) => ({
 
     try {
       let res = await chatGet("/friends/search", { email: normalizedEmail });
-      
-      // Fallback for different path structure if needed
       if (!res?.ok || !res?.found) {
         const fallbackRes = await apiRequest(`/api/chat/friends/search?email=${encodeURIComponent(normalizedEmail)}`);
         if (fallbackRes?.ok) {
@@ -172,11 +172,11 @@ export const useChatStore = create((set, get) => ({
     return String(message.conversationId || message.convId || "").trim() || null;
   },
 
-  setConversations: (updater) =>
-    set((state) => {
-      const next = typeof updater === "function" ? updater(state.conversations) : updater;
-      return { conversations: Array.isArray(next) ? next : [] };
-    }),
+  setConversations: (input) => {
+    const current = Array.isArray(get().conversations) ? get().conversations : [];
+    const resolved = typeof input === "function" ? input(current) : input;
+    set({ conversations: Array.isArray(resolved) ? resolved : current });
+  },
 
   setActiveConversation: (convId, targetId = null) => {
     const currentActiveId = get().activeConvId;
@@ -189,11 +189,9 @@ export const useChatStore = create((set, get) => ({
 
     if (currentActiveId === convId && !targetId) return;
 
-    // Offline-first: Load from cache first
     const cached = targetId ? [] : getCachedMessages(convId);
     const fetchToken = get().fetchToken + 1;
     
-    // Clear unreadCount locally
     const nextConversations = get().conversations.map(c => 
       c.id === convId ? { ...c, unreadCount: 0 } : c
     );
@@ -208,8 +206,9 @@ export const useChatStore = create((set, get) => ({
   setMessages: (updater, nextCursor) =>
     set((state) => {
       const source = typeof updater === "function" ? updater(state.messages) : updater;
+      const dedupped = dedupeMessagesById(Array.isArray(source) ? source : []);
       const safeMessages = sortMessages(
-        Array.isArray(source) ? source.map(normalizeMessage).filter(Boolean) : []
+        dedupped.map(normalizeMessage).filter(Boolean)
       );
       if (state.activeConvId) {
         setCachedMessages(state.activeConvId, safeMessages);
@@ -242,7 +241,6 @@ export const useChatStore = create((set, get) => ({
         target.lastMessageSenderId = safeMessage.senderId;
         target.updatedAt = safeMessage.createdAt || new Date().toISOString();
 
-        // Unread logic
         const isNotActive = state.activeConvId !== incomingConvId;
         const myEmail = get().currentUserEmail;
         const isFromOthers = safeMessage.senderId && myEmail && safeMessage.senderId !== myEmail;
@@ -254,7 +252,6 @@ export const useChatStore = create((set, get) => ({
         nextConversations.splice(convIndex, 1);
         nextConversations.unshift(target);
       } else {
-        // [SENIOR] If it's a NEW conversation not in our list, trigger a fetch
         get().fetchConversations();
       }
 
@@ -265,7 +262,6 @@ export const useChatStore = create((set, get) => ({
         return { conversations: nextConversations };
       }
 
-      // Filter out optimistic duplicates
       const filteredMessages = state.messages.filter(
         (m) =>
           m.id !== safeMessage.id &&
@@ -350,10 +346,6 @@ export const useChatStore = create((set, get) => ({
 
         const existing = currentConversations.find(c => c.id === newConv.id);
         if (existing) {
-          // [SENIOR] Reconciliation logic: 
-          // If local state is read (0) but server says unread (>0)
-          // AND the last message ID hasn't changed, then it's a race condition.
-          // Keep it read locally.
           if (existing.unreadCount === 0 && newConv.unreadCount > 0) {
             if (String(existing.lastMessage) === String(newConv.lastMessage)) {
               return { ...newConv, unreadCount: 0 };
@@ -426,10 +418,11 @@ export const useChatStore = create((set, get) => ({
       const moreMessages = rawMore.map(normalizeMessage).filter(Boolean);
 
       set((state) => {
-        const merged = sortMessages([...state.messages, ...moreMessages]);
-        setCachedMessages(convId, merged);
+        const merged = dedupeMessagesById([...state.messages, ...moreMessages]);
+        const sorted = sortMessages(merged);
+        setCachedMessages(convId, sorted);
         return {
-          messages: merged,
+          messages: sorted,
           nextCursor: payload?.nextCursor || null,
           isLoadingMessages: false,
         };
@@ -523,12 +516,10 @@ export const useChatStore = create((set, get) => ({
   markNotificationsRead: (conversationId) =>
     set((state) => {
       const nextNotifications = state.notifications.map((n) => {
-        // If conversationId is provided, only mark those matching
         if (conversationId) {
           const match = n.metadata?.conversationId === conversationId;
           return match ? { ...n, read: true } : n;
         }
-        // Otherwise mark all
         return { ...n, read: true };
       });
 
@@ -544,14 +535,12 @@ export const useChatStore = create((set, get) => ({
 
   addNotification: (notification) =>
     set((state) => {
-      // [SENIOR] 1. Check for duplicates
       const msgId = notification.messageId || notification.metadata?.messageId;
       const isDuplicate = state.notifications.some(n => 
         n.id === notification.id || (msgId && n.metadata?.messageId === msgId)
       );
       if (isDuplicate) return state;
 
-      // [SENIOR] 2. Skip message notifications for the ACTIVE conversation
       const convId = notification.conversationId || notification.metadata?.conversationId;
       if (convId && state.activeConvId === convId) {
         return state;

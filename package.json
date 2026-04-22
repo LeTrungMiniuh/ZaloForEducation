@@ -11,9 +11,18 @@
     "backend:dev": "npm run start:dev -w backend",
     "web:dev": "npm run dev -w apps/web",
     "mobile:dev": "npm run start -w apps/mobile",
-    "install:all": "npm install"
+    "install:all": "npm install",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
+    "@nestjs/common": "^11.1.19",
+    "@nestjs/core": "^11.1.19",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/jwt": "^11.0.2",
+    "@nestjs/platform-express": "^11.1.19",
+    "@nestjs/platform-socket.io": "^11.1.19",
+    "@nestjs/websockets": "^11.1.19",
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
     "class-transformer": "^0.5.1",
@@ -28,7 +37,9 @@
     "react-dom": "19.1.0",
     "react-native-nitro-modules": "^0.35.4",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "expo": "~54.0.33",
+    "react-native": "0.81.5"
   },
   "overrides": {
     "react": "19.1.0",

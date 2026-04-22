@@ -84,7 +84,11 @@ const Sidebar: React.FC = () => {
                     className={isActive ? 'fill-white/10' : ''}
                   />
                   {item.hasBadge && (
-                    <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 bg-error rounded-full ring-2 ring-[#00418f] animate-pulse"></span>
+                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-error text-white text-[10px] font-bold rounded-full ring-2 ring-[#00418f] flex items-center justify-center px-1 animate-pulse">
+                      {item.id === 'chat' && conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0) > 0 
+                        ? (conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0) > 99 ? '99+' : conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0))
+                        : ''}
+                    </span>
                   )}
                   {/* Tooltip */}
                   <span className="absolute left-full ml-4 px-2 py-1 bg-surface-container-highest text-on-surface text-[11px] font-bold rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-[100] shadow-lg border border-outline-variant/10">

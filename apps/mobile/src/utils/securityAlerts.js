@@ -1,22 +1,68 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const SECURITY_ALERTS_STORAGE_KEY = "security_alerts_storage";
+export const SECURITY_ALERTS_STORAGE_KEY = "security_alerts_v1";
 
-const normalizeSecurityAlert = (payload) => ({
-  id: payload.id || `alert#${Date.now()}#${Math.random().toString(36).slice(2, 5)}`,
-  type: payload.type || "SECURITY_INFO",
-  title: payload.title || "Cảnh báo bảo mật",
-  message: payload.message || "",
-  at: payload.at || new Date().toISOString(),
-  read: false,
-  metadata: payload.metadata || {},
-});
+const normalizeLegacyVietnamese = (value = "") => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+
+  if (trimmed === "Canh bao bao mat") return "Cảnh báo bảo mật";
+  if (trimmed === "Mat khau da duoc thay doi")
+    return "Mật khẩu đã được thay đổi";
+  if (trimmed === "Phat hien dang nhap thiet bi la")
+    return "Phát hiện đăng nhập thiết bị lạ";
+  if (
+    trimmed ===
+    "He thong ghi nhan mat khau tai khoan vua duoc thay doi. Neu khong phai ban, hay khoa tai khoan ngay."
+  ) {
+    return "Hệ thống ghi nhận mật khẩu tài khoản vừa được thay đổi. Nếu không phải bạn, hãy khóa tài khoản ngay.";
+  }
+  if (
+    trimmed ===
+    "Ban vua doi mat khau thanh cong. Tat ca phien dang nhap se duoc dang xuat de bao mat."
+  ) {
+    return "Bạn vừa đổi mật khẩu thành công. Tất cả phiên đăng nhập sẽ được đăng xuất để bảo mật.";
+  }
+
+  return value
+    .replace("Tai khoan vua dang nhap tren thiet bi", "Tài khoản vừa đăng nhập trên thiết bị")
+    .replace("khong xac dinh", "không xác định")
+    .replace("Neu khong phai ban", "Nếu không phải bạn")
+    .replace("vui long doi mat khau ngay.", "vui lòng đổi mật khẩu ngay.")
+    .replace("Tai khoan cua ban vua co hoat dong can chu y.", "Tài khoản của bạn vừa có hoạt động cần chú ý.");
+};
+
+const normalizeSecurityAlert = (payload = {}) => {
+  const now = new Date().toISOString();
+  const rawTime = payload.at || payload.createdAt || now;
+  const parsed = new Date(rawTime);
+  const at = Number.isNaN(parsed.getTime()) ? now : parsed.toISOString();
+
+  return {
+    id:
+      payload.id ||
+      `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+    type: payload.type || "SECURITY_ALERT",
+    title: normalizeLegacyVietnamese(payload.title || "Cảnh báo bảo mật"),
+    message: normalizeLegacyVietnamese(
+      payload.message || "Tài khoản của bạn vừa có hoạt động cần chú ý.",
+    ),
+    at,
+    metadata: payload.metadata || {},
+    read: Boolean(payload.read),
+  };
+};
 
 export const getSecurityAlerts = async () => {
   try {
     const raw = await AsyncStorage.getItem(SECURITY_ALERTS_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return (Array.isArray(parsed) ? parsed : [])
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((item) => item && typeof item === "object")
       .map((item) => normalizeSecurityAlert(item))
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   } catch (error) {

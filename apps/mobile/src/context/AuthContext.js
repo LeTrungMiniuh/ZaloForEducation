@@ -151,6 +151,12 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
         }
       });
 
+      SocketService.on('security_alert', (data) => {
+        pushSecurityAlert(data).catch((error) => {
+          console.warn('[AUTH] Failed to persist security alert', error?.message);
+        });
+      });
+
       SocketService.on('profile_update', (data) => {
         if (data && data.profile) updateUser(data.profile);
       });

@@ -165,20 +165,24 @@ export class ChatController {
     );
 
     const normalizedConvId = convId.toLowerCase();
-
-    // 1. BROADCAST REAL-TIME VIA SOCKET
-    this.chatGateway.server.to(normalizedConvId).emit("receiveMessage", res);
-    console.log(`[SOCKET] Broadcasted to room: ${normalizedConvId}`);
-
-    // 2. BROADCAST REAL-TIME TO ALL MEMBERS' PERSONAL ROOMS (For conversation list updates)
     const convMetadata = await this.chatService.getConversationMetadata(convId);
-    if (convMetadata && convMetadata.members) {
-      for (const member of convMetadata.members) {
-        // Emit to user#email room so all their devices update the "tab" preview
-        const userRoom = `user#${member.toLowerCase()}`;
-        this.chatGateway.server.to(userRoom).emit("receiveMessage", res);
-        console.log(`[SOCKET] Broadcasted to user room: ${userRoom}`);
+    
+    // 1. BROADCAST REAL-TIME VIA SOCKET
+    if (this.chatGateway?.server) {
+      this.chatGateway.server.to(normalizedConvId).emit("receiveMessage", res);
+      console.log(`[SOCKET] Broadcasted to room: ${normalizedConvId}`);
+
+      // 2. BROADCAST REAL-TIME TO ALL MEMBERS' PERSONAL ROOMS (For conversation list updates)
+      if (convMetadata && convMetadata.members) {
+        for (const member of convMetadata.members) {
+          // Emit to user#email room so all their devices update the "tab" preview
+          const userRoom = `user#${member.toLowerCase()}`;
+          this.chatGateway.server.to(userRoom).emit("receiveMessage", res);
+          console.log(`[SOCKET] Broadcasted to user room: ${userRoom}`);
+        }
       }
+    } else {
+      console.warn(`[SOCKET] Skipping real-time broadcast for ${normalizedConvId} - Gateway server not initialized`);
     }
 
     // 3. SEND PUSH NOTIFICATION (FRAMEWORK READY)
@@ -276,30 +280,32 @@ export class ChatController {
     // [SENIOR] BROADCAST REAL-TIME VIA SOCKET (Unified event for Store sync)
     this.chatGateway.emitMessagePatched(convId, res);
 
-    // [BACKWARD COMPATIBILITY] Specialized events
-    if (body.action === 'react') {
-      this.chatGateway.server.to(convId).emit('message_reaction', { 
-        messageId, 
-        reactions: res.reactions 
-      });
-    } else if (body.action === "recall") {
-      this.chatGateway.server.to(convId).emit("message_recalled", {
-        messageId,
-        conversationId: convId,
-        recalledBy: email,
-      });
-    } else if (body.action === "pin" || body.action === "unpin") {
-      this.chatGateway.server.to(convId).emit("PIN_UPDATE", {
-        conversationId: convId,
-        pinnedMessageIds: res.pinnedMessageIds,
-      });
-      // Legacy support if needed
-      this.chatGateway.server.to(convId).emit("message_pinned", {
-        messageId,
-        conversationId: convId,
-        pinned: body.action === "pin",
-        pinnedBy: email,
-      });
+    if (this.chatGateway?.server) {
+      // [BACKWARD COMPATIBILITY] Specialized events
+      if (body.action === 'react') {
+        this.chatGateway.server.to(convId).emit('message_reaction', { 
+          messageId, 
+          reactions: res.reactions 
+        });
+      } else if (body.action === "recall") {
+        this.chatGateway.server.to(convId).emit("message_recalled", {
+          messageId,
+          conversationId: convId,
+          recalledBy: email,
+        });
+      } else if (body.action === "pin" || body.action === "unpin") {
+        this.chatGateway.server.to(convId).emit("PIN_UPDATE", {
+          conversationId: convId,
+          pinnedMessageIds: res.pinnedMessageIds,
+        });
+        // Legacy support if needed
+        this.chatGateway.server.to(convId).emit("message_pinned", {
+          messageId,
+          conversationId: convId,
+          pinned: body.action === "pin",
+          pinnedBy: email,
+        });
+      }
     }
 
     return res;
@@ -392,7 +398,7 @@ export class ChatController {
 
   @Patch("conversations/:id/read")
   async markAsRead(@Param("id") id: string, @Req() req: any) {
-    return await this.chatService.markConversationAsRead(id, req.user.email);
+    return await this.chatService.markConversationAsRead(req.user.email, id);
   }
 
   @Patch("conversations/:id/auto-delete")
@@ -409,7 +415,7 @@ export class ChatController {
     );
 
     const metadata = await this.chatService.getConversationMetadata(id);
-    if (metadata?.members?.length) {
+    if (metadata?.members?.length && this.chatGateway?.server) {
       for (const member of metadata.members) {
         const userRoom = `user#${member.toLowerCase()}`;
         this.chatGateway.server

@@ -2,7 +2,7 @@ import type { Conversation as SharedConversation, Message as SharedMessage } fro
 import Swal from "sweetalert2";
 import { create } from "zustand";
 import api from "../services/api";
-import type { Attachment } from "../utils/chatUtils";
+import { type Attachment, getMessagePreview } from "../utils/chatUtils";
 
 // Extend shared types with optional properties used in this store
 export type Message = SharedMessage & {
@@ -48,7 +48,7 @@ const getCurrentUserEmail = (): string => {
   }
 };
 
-type MuteSetting = true | 'until-open' | number;
+export type MuteSetting = true | 'until-open' | number;
 
 const normalizeMutedConversations = (raw: any): Record<string, MuteSetting> => {
   if (!raw || typeof raw !== 'object') return {};
@@ -71,6 +71,17 @@ const normalizeMutedConversations = (raw: any): Record<string, MuteSetting> => {
   });
 
   return normalized;
+};
+
+const normalizeConversation = (
+  conv: any,
+  tags: Record<string, string>,
+): Conversation => {
+  return {
+    ...conv,
+    tagId: tags[conv.id] || conv.tagId || undefined,
+    unreadCount: conv.unreadCount || 0,
+  };
 };
 
 interface ChatState {
@@ -116,7 +127,15 @@ interface ChatState {
   fetchConversations: () => Promise<void>;
   fetchMessages: (convId: string, limit?: number) => Promise<void>;
   loadMoreMessages: (convId: string, limit?: number) => Promise<void>;
-  sendMessageOptimistic: (convId: string, senderEmail: string, content: string, msgType?: string, attachments?: Attachment[], replyTo?: any, extraFields?: Record<string, any>) => Promise<void>;
+  sendMessageOptimistic: (
+    convId: string, 
+    senderEmail: string, 
+    content: string, 
+    msgType?: string, 
+    attachments?: Attachment[], 
+    replyTo?: any, 
+    extraFields?: Record<string, any>
+  ) => Promise<void>;
   createGroupConversation: (name: string, members: string[]) => Promise<any>;
   startDirectChat: (targetEmail: string) => Promise<void>;
   clearHistory: (convId: string) => Promise<void>;
@@ -134,7 +153,7 @@ interface ChatState {
     days: 1 | 7 | 30 | null,
   ) => Promise<void>;
 
-  // Tagging (conversation-focused)
+  // Tagging
   tags: Array<{ id: string; name: string; color?: string }>;
   messageFilter: string;
   addTag: (tag: { id: string; name: string; color?: string }) => Promise<void>;
@@ -164,7 +183,7 @@ interface ChatState {
   addToSearchHistory: (query: string) => void;
   clearSearchHistory: () => void;
 
-  // Add Friend Modal
+  // Modals
   isAddFriendModalOpen: boolean;
   setIsAddFriendModalOpen: (val: boolean) => void;
   isCreateGroupModalOpen: boolean;
@@ -183,47 +202,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   previewImage: null,
   hiddenConversations: JSON.parse(localStorage.getItem('hidden_conversations') || '{}'),
   mutedConversations: normalizeMutedConversations(JSON.parse(localStorage.getItem('muted_conversations') || '{}')),
-  // Tagging system (local)
   tags: JSON.parse(localStorage.getItem("chat_tags") || "[]"),
   messageFilter: "all",
-
-  // Search Initial State
   isSearching: false,
   searchQuery: "",
   searchResults: { contacts: [], messages: [], files: [] },
   searchHistory: JSON.parse(localStorage.getItem('search_history') || '[]'),
-
-  // Add Friend Modal State
   isAddFriendModalOpen: false,
   setIsAddFriendModalOpen: (val) => set({ isAddFriendModalOpen: val }),
   isCreateGroupModalOpen: false,
   setIsCreateGroupModalOpen: (val) => set({ isCreateGroupModalOpen: val }),
-
-  // ... existing actions ...
-
-  clearHistory: async (convId) => {
-    try {
-      await api.delete(
-        `/chat/conversations/${encodeURIComponent(convId)}/history`,
-      );
-      get().localClearHistory(convId);
-    } catch (err) {
-      console.error("Failed to clear history", err);
-      throw err;
-    }
-  },
-
-  localClearHistory: (convId) => {
-    // 1. Kiểm tra nếu đang ở đúng hội thoại này, xóa sạch trạng thái active
-    if (get().activeConvId === convId) {
-      set({ activeConvId: null, messages: [], nextCursor: null });
-    }
-
-    // 2. Xóa hẳn hội thoại khỏi danh sách bên trái
-    set((state) => ({
-      conversations: state.conversations.filter((c) => c.id !== convId),
-    }));
-  },
 
   setConversations: (updater) => set((state) => ({
     conversations: typeof updater === 'function' ? updater(state.conversations) : updater
@@ -248,9 +236,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       let res;
       try {
-        res = await api.get(`/chat/friends/search`, { params: { email } });
+        res = await api.get(`/chat/friends/search`, { params: { email: normalized } });
       } catch {
-        res = await api.get(`/api/chat/friends/search`, { params: { email } });
+        res = await api.get(`/api/chat/friends/search`, { params: { email: normalized } });
       }
       
       if (res.data?.found && res.data?.user) {
@@ -272,9 +260,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setActiveConversation: (convId) => {
-    // Auto unmute when muted "until-open" and user opens this conversation.
     if (convId && get().mutedConversations[convId] === 'until-open') {
       get().clearConversationMuted(convId);
+    }
+    
+    // Clear unread count locally
+    if (convId) {
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, unreadCount: 0 } : c
+        )
+      }));
     }
 
     set({ activeConvId: convId, messages: [], nextCursor: null });
@@ -291,24 +287,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const isActiveConversation = incomingConvId === state.activeConvId;
 
-    // 1. Tránh trùng lặp tin nhắn dựa trên ID
+    // 1. Avoid duplicates
     if (isActiveConversation && state.messages.find(m => m.id === message.id)) return state;
 
-    // 2. Kiểm tra nếu tin nhắn này "trùng khớp" với một tin nhắn đang ở trạng thái 'sending' (Optimistic)
-    // Điều này xảy ra khi Socket báo về nhanh hơn API response
+    // 2. Optimistic merge
     const optimisticIndex = isActiveConversation
       ? state.messages.findIndex(m =>
         (m.conversationId || (m as any).convId) === incomingConvId &&
         m.senderId === message.senderId &&
         m.content === message.content &&
         m.status === 'sending' &&
-        Math.abs(new Date(m.createdAt).getTime() - new Date(message.createdAt).getTime()) < 10000 // Trong vòng 10s
+        Math.abs(new Date(m.createdAt).getTime() - new Date(message.createdAt).getTime()) < 10000
       )
       : -1;
 
     let newMessages;
     if (optimisticIndex !== -1) {
-      // "Hợp nhất" tin nhắn thật vào vị trí tin nhắn tạm
       newMessages = [...state.messages];
       newMessages[optimisticIndex] = { ...message, status: 'sent' };
     } else if (isActiveConversation) {
@@ -317,21 +311,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
       newMessages = state.messages;
     }
 
-    // 3. Cập nhật Preview trong danh sách hội thoại và đẩy lên đầu
+    // 3. Update preview and bump conversation to top
     const newConvs = [...state.conversations];
     const convIndex = newConvs.findIndex(c => c.id === incomingConvId);
 
     if (convIndex !== -1) {
+      const isNotActive = incomingConvId !== state.activeConvId;
+      const myEmail = getCurrentUserEmail();
+      const isFromOthers = message.senderId && myEmail && message.senderId !== myEmail;
+
       const updatedConv = {
         ...newConvs[convIndex],
-        lastMessageContent: message.content,
+        lastMessageContent: getMessagePreview(message),
         lastMessageSenderId: message.senderId,
         lastMessageTimestamp: new Date(message.createdAt).getTime(),
         updatedAt: message.createdAt,
+        unreadCount: (isNotActive && isFromOthers) 
+          ? (newConvs[convIndex].unreadCount || 0) + 1 
+          : newConvs[convIndex].unreadCount
       };
 
       newConvs.splice(convIndex, 1);
       newConvs.unshift(updatedConv);
+    } else {
+      // If conversation is missing, trigger a full fetch
+      get().fetchConversations();
     }
 
     return {
@@ -340,22 +344,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
   }),
 
-
   markAsRead: async (convId) => {
-    // 1. Optimistic Update
     set((state) => ({
       conversations: state.conversations.map((c) =>
         c.id === convId ? { ...c, lastReadAt: Date.now() } : c
       )
     }));
     get().setLocalRead(convId);
-
-    // 2. Persist to Backend
     try {
       await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/read`);
     } catch (err) {
       console.error("Failed to mark as read on server", err);
-      // Optional: Rollback if critical, but for read status we usually don't need it
     }
   },
 
@@ -375,21 +374,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setHighlightedMessageId: (id) => set({ highlightedMessageId: id }),
 
   jumpToMessage: (messageId: string) => {
-    // Đợi một nhịp để React render xong các tin nhắn mới sau khi fetch
     setTimeout(() => {
       const el = document.getElementById(`msg-${messageId}`);
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         set({ highlightedMessageId: messageId });
-        
-        // Tự động tắt highlight sau 2 giây cho chuyên nghiệp
         setTimeout(() => {
           if (get().highlightedMessageId === messageId) {
             set({ highlightedMessageId: null });
           }
         }, 2000);
       } else {
-        console.warn("Message not found in current view. It might be further up in history.");
+        console.warn("Message not found in current view.");
       }
     }, 300);
   },
@@ -402,59 +398,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ]);
       const convTagMap = readConversationTags();
       const conversations = Array.isArray(conversationRes.data)
-        ? conversationRes.data.map((conv: any) => ({
-            ...conv,
-            tagId: convTagMap[conv.id] || conv.tagId,
-          }))
+        ? conversationRes.data.map((conv: any) => normalizeConversation(conv, convTagMap))
         : [];
 
       const myEmail = getCurrentUserEmail();
-      const friendships = Array.isArray(friendshipRes.data)
-        ? friendshipRes.data
-        : [];
+      const friendships = Array.isArray(friendshipRes.data) ? friendshipRes.data : [];
 
       const nicknameByEmail: Record<string, string> = {};
       friendships.forEach((friendship: any) => {
-        const senderEmail = String(friendship?.sender_id || "")
-          .trim()
-          .toLowerCase();
-        const receiverEmail = String(friendship?.receiver_id || "")
-          .trim()
-          .toLowerCase();
+        const senderEmail = String(friendship?.sender_id || "").trim().toLowerCase();
+        const receiverEmail = String(friendship?.receiver_id || "").trim().toLowerCase();
         const nickname = String(friendship?.nickname || "").trim();
 
         if (!myEmail) return;
-
-        const otherEmail =
-          senderEmail === myEmail
-            ? receiverEmail
-            : receiverEmail === myEmail
-              ? senderEmail
-              : "";
-
-        if (otherEmail) {
-          nicknameByEmail[otherEmail] = nickname;
-        }
+        const otherEmail = senderEmail === myEmail ? receiverEmail : receiverEmail === myEmail ? senderEmail : "";
+        if (otherEmail) nicknameByEmail[otherEmail] = nickname;
       });
 
       get().setUserProfiles((prev) => {
         const next: Record<string, any> = { ...prev };
         Object.entries(nicknameByEmail).forEach(([email, nickname]) => {
-          const normalized = String(email || "").trim().toLowerCase();
-          const existing = next[normalized] || next[email] || { email: normalized };
+          const normalized = String(email).trim().toLowerCase();
+          const existing = next[normalized] || { email: normalized };
           if (nickname) {
-            next[normalized] = {
-              ...existing,
-              email: normalized,
-              nickname,
-            };
-            return;
+            next[normalized] = { ...existing, email: normalized, nickname };
+          } else {
+            const cleaned = { ...existing };
+            delete (cleaned as any).nickname;
+            next[normalized] = cleaned;
           }
-
-          if (!existing) return;
-          const cleaned = { ...existing };
-          delete cleaned.nickname;
-          next[normalized] = cleaned;
         });
         return next;
       });
@@ -470,7 +442,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const res = await api.get(`/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${limit}`);
       const rawMessages = res.data.messages || [];
-      // [SENIOR] Web uses ascending order (older first), so we reverse if API returns newest first
       const formattedMessages = Array.isArray(rawMessages) ? [...rawMessages].reverse() : [];
       set({
         messages: formattedMessages,
@@ -494,10 +465,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const olderMessages = Array.isArray(rawOlder) ? [...rawOlder].reverse() : [];
       
       set((state) => {
-        // Guard: Only merge if still in the same conversation
         if (state.activeConvId !== convId) return { isLoadingMessages: false };
         return {
-          messages: [...olderMessages, ...state.messages], // Prepend older messages
+          messages: [...olderMessages, ...state.messages],
           nextCursor: res.data.nextCursor,
           isLoadingMessages: false
         };
@@ -510,11 +480,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   createGroupConversation: async (name, members) => {
     try {
-      const res = await api.post("/chat/conversations/group", {
-        name,
-        members,
-      });
-      // Reload conversations list
+      const res = await api.post("/chat/conversations/group", { name, members });
       get().fetchConversations();
       return res.data;
     } catch (err) {
@@ -527,12 +493,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const tempId = `TEMP#${Date.now()}#${Math.random().toString(36).slice(2, 8)}`;
     const timestamp = new Date().toISOString();
 
-    // Categorize attachments
     const media = attachments
-      .filter(
-        (a) =>
-          a.mimeType.startsWith("image/") || a.mimeType.startsWith("video/"),
-      )
+      .filter((a) => a.mimeType.startsWith("image/") || a.mimeType.startsWith("video/"))
       .map((a) => ({
         url: a.dataUrl,
         dataUrl: a.dataUrl,
@@ -544,10 +506,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
 
     const files = attachments
-      .filter(
-        (a) =>
-          !a.mimeType.startsWith("image/") && !a.mimeType.startsWith("video/"),
-      )
+      .filter((a) => !a.mimeType.startsWith("image/") && !a.mimeType.startsWith("video/"))
       .map((a) => ({
         url: a.dataUrl,
         dataUrl: a.dataUrl,
@@ -570,7 +529,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...extraFields,
     };
 
-    // 1. Add Optimistically
     set((state) => {
       const newConvs = [...state.conversations];
       const convIndex = newConvs.findIndex((c) => c.id === convId);
@@ -581,16 +539,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (msgType === 'contact_card') return '[Danh thiếp]';
             if (!content || content.startsWith('MSG#')) {
               if (media.length > 0) {
-                if (
-                  media.some(
-                    (item: any) =>
-                      item.isSticker === true ||
-                      String(item.mimeType || "").includes("sticker"),
-                  )
-                )
-                  return "[Sticker]";
-                if (media.some((item: any) => item.isHD === true))
-                  return "[Ảnh HD]";
+                if (media.some((item: any) => item.isSticker || String(item.mimeType).includes("sticker"))) return "[Sticker]";
+                if (media.some((item: any) => item.isHD)) return "[Ảnh HD]";
                 return "[Hình ảnh]";
               }
               if (files.length > 0) return "[Tệp tin]";
@@ -622,21 +572,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...extraFields,
       });
 
-      // 2. Replace temp message with server ACK
-      set((state) => {
-        const stillExists = state.messages.some((m) => m.id === tempId);
-        if (!stillExists) return state;
-
-        return {
-          messages: state.messages.map((m) =>
-            m.id === tempId ? { ...res.data, status: "sent" } : m,
-          ),
-        };
-      });
+      set((state) => ({
+        messages: state.messages.map((m) =>
+          m.id === tempId ? { ...res.data, status: "sent" } : m
+        ),
+      }));
     } catch (err) {
       set((state) => ({
         messages: state.messages.map((m) =>
-          m.id === tempId ? { ...m, status: "error" } : m,
+          m.id === tempId ? { ...m, status: "error" } : m
         ),
       }));
       console.error("Failed to send message", err);
@@ -644,267 +588,150 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   deleteMessageOptimistic: async (convId, messageId) => {
-    // 1. Optimistic Update: Remove from UI immediately
-    set((state) => ({
-      messages: state.messages.filter((m) => m.id !== messageId),
-    }));
-
-    // 2. Persist to Backend
+    set((state) => ({ messages: state.messages.filter((m) => m.id !== messageId) }));
     try {
-      await api.patch(
-        `/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`,
-        {
-          action: "deleteForMe",
-        },
-      );
+      await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`, { action: "deleteForMe" });
     } catch (err) {
-      console.error("Failed to delete message for me", err);
+      console.error("Failed to delete message", err);
     }
   },
 
   patchMessageOptimistic: async (convId, messageId, payload) => {
     const { action } = payload;
-    const userEmail = (get() as any).user?.email;
+    const userEmail = getCurrentUserEmail();
 
-    // 1. Optimistic Updates
     set((state) => ({
       messages: state.messages.map((m) => {
         if (m.id !== messageId) return m;
 
-        if (action === 'recall') {
-          return {
-            ...m,
-            recalled: true,
-            content: 'Tin nhắn đã được thu hồi',
-            media: [],
-            files: [],
-            reactions: {}
-          };
+        if (action === "recall") {
+          return { ...m, recalled: true, content: "Tin nhắn đã được thu hồi", media: [], files: [], reactions: {} };
         }
-        if (action === 'pin' || action === 'unpin') {
-          return {
-            ...m,
-            pinned: action === 'pin',
-            pinnedBy: action === 'pin' ? userEmail : null
-          };
+        if (action === "pin" || action === "unpin") {
+          return { ...m, pinned: action === "pin", pinnedBy: action === "pin" ? userEmail : null };
         }
         if (action === "react") {
           const { reactAction, emoji } = payload;
           const newReactions = { ...m.reactions };
           const users = newReactions[emoji] || [];
-
           if (reactAction === "add") {
-            newReactions[emoji] = [...users, userEmail];
+            if (!users.includes(userEmail)) newReactions[emoji] = [...users, userEmail];
           } else {
             newReactions[emoji] = users.filter((e: string) => e !== userEmail);
             if (newReactions[emoji].length === 0) delete newReactions[emoji];
           }
-
           return { ...m, reactions: newReactions };
         }
         return m;
       }),
     }));
-    // 2. Persist to Backend
+
     try {
       const res = await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`, payload);
-
-      // Update with final server state
       set((state) => ({
-        messages: state.messages.map((m) =>
-          m.id === messageId ? res.data : m,
-        ),
+        messages: state.messages.map((m) => m.id === messageId ? res.data : m),
       }));
     } catch (err: any) {
       console.error(`Failed to patch message (${action})`, err);
-      const errorMsg = err.response?.data?.message || 'Có lỗi xảy ra khi thực hiện thao tác này.';
-
-      if (action === 'pin') {
-        // Rollback optimistic update
+      if (action === "pin") {
         set((state) => ({
-          messages: state.messages.map((m) =>
-            m.id === messageId ? { ...m, pinned: false, pinnedBy: null } : m,
-          ),
+          messages: state.messages.map((m) => m.id === messageId ? { ...m, pinned: false, pinnedBy: null } : m),
         }));
-
-        Swal.fire({
-          icon: "error",
-          title: "Không thể ghim tin nhắn",
-          text: errorMsg,
-          confirmButtonColor: "#00418f",
-          timer: 3000,
-          timerProgressBar: true,
-        });
+        Swal.fire({ icon: "error", title: "Lỗi", text: err.response?.data?.message || "Không thể thực hiện ghim." });
       }
     }
   },
 
   setConversationAutoDelete: async (convId, days) => {
     const prevConversations = get().conversations;
-
     set((state) => ({
-      conversations: state.conversations.map((conversation) =>
-        conversation.id === convId
-          ? {
-            ...conversation,
-            autoDeleteDays: days,
-            autoDeleteUpdatedAt: new Date().toISOString(),
-          }
-          : conversation,
+      conversations: state.conversations.map((c) =>
+        c.id === convId ? { ...c, autoDeleteDays: days, autoDeleteUpdatedAt: new Date().toISOString() } : c
       ),
     }));
 
     try {
-      const res = await api.patch(
-        `/chat/conversations/${encodeURIComponent(convId)}/auto-delete`,
-        {
-          days,
-        },
-      );
-
+      const res = await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/auto-delete`, { days });
       set((state) => ({
-        conversations: state.conversations.map((conversation) =>
-          conversation.id === convId
-            ? {
-              ...conversation,
-              autoDeleteDays: res.data?.autoDeleteDays ?? days,
-              autoDeleteUpdatedAt: res.data?.autoDeleteUpdatedAt || new Date().toISOString(),
-            }
-            : conversation,
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, autoDeleteDays: res.data?.autoDeleteDays ?? days, autoDeleteUpdatedAt: res.data?.autoDeleteUpdatedAt || new Date().toISOString() } : c
         ),
       }));
     } catch (err) {
-      console.error("Failed to update conversation auto-delete setting", err);
+      console.error("Failed to update auto-delete", err);
       set({ conversations: prevConversations });
       throw err;
     }
   },
 
   setPreviewImage: (url, name = "image.png") => {
-    if (!url) {
-      set({ previewImage: null });
-    } else {
-      set({ previewImage: { url, name } });
-    }
+    set({ previewImage: url ? { url, name } : null });
   },
-  // Tag management
+
   addTag: async (tag) => {
-    try {
-      const tags = [...get().tags, tag];
-      localStorage.setItem("chat_tags", JSON.stringify(tags));
-      set({ tags });
-    } catch (err) {
-      console.error("Failed to add tag", err);
-    }
+    const tags = [...get().tags, tag];
+    localStorage.setItem("chat_tags", JSON.stringify(tags));
+    set({ tags });
   },
+
   editTag: async (tagId, updates) => {
-    try {
-      const tags = get().tags.map((t: any) =>
-        t.id === tagId ? { ...t, ...updates } : t,
-      );
-      localStorage.setItem("chat_tags", JSON.stringify(tags));
-      set({ tags });
-    } catch (err) {
-      console.error("Failed to edit tag", err);
-    }
+    const tags = get().tags.map((t: any) => t.id === tagId ? { ...t, ...updates } : t);
+    localStorage.setItem("chat_tags", JSON.stringify(tags));
+    set({ tags });
   },
+
   deleteTag: async (tagId) => {
-    try {
-      const tags = get().tags.filter((t: any) => t.id !== tagId);
-      localStorage.setItem("chat_tags", JSON.stringify(tags));
-      // Remove tag assignments from messages and conversations
-      const nextMap = { ...readConversationTags() };
-      Object.keys(nextMap).forEach((convId) => {
-        if (nextMap[convId] === tagId) {
-          delete nextMap[convId];
-        }
-      });
-      writeConversationTags(nextMap);
-
-      set((state) => ({
-        tags,
-        messages: state.messages.map((m) =>
-          m.tagId === tagId ? { ...m, tagId: undefined } : m,
-        ),
-        conversations: state.conversations.map((c: any) =>
-          c.tagId === tagId ? { ...c, tagId: undefined } : c,
-        ),
-      }));
-    } catch (err) {
-      console.error("Failed to delete tag", err);
-    }
+    const tags = get().tags.filter((t: any) => t.id !== tagId);
+    localStorage.setItem("chat_tags", JSON.stringify(tags));
+    const nextMap = { ...readConversationTags() };
+    Object.keys(nextMap).forEach((id) => { if (nextMap[id] === tagId) delete nextMap[id]; });
+    writeConversationTags(nextMap);
+    set((state) => ({
+      tags,
+      messages: state.messages.map((m) => m.tagId === tagId ? { ...m, tagId: undefined } : m),
+      conversations: state.conversations.map((c) => c.tagId === tagId ? { ...c, tagId: undefined } : c),
+    }));
   },
+
   assignTagToConversation: async (convId, tagId) => {
-    try {
-      const map = { ...readConversationTags() };
-      if (tagId) {
-        map[convId] = tagId;
-      } else {
-        delete map[convId];
-      }
-      writeConversationTags(map);
+    const map = { ...readConversationTags() };
+    if (tagId) map[convId] = tagId; else delete map[convId];
+    writeConversationTags(map);
+    set((state) => ({
+      conversations: state.conversations.map((c) => c.id === convId ? { ...c, tagId } : c),
+    }));
+  },
 
-      set((state) => ({
-        conversations: state.conversations.map((c: any) =>
-          c.id === convId ? { ...c, tagId } : c,
-        ),
-      }));
-    } catch (err) {
-      console.error("Failed to assign tag to conversation", err);
-    }
-  },
-  removeTagFromConversation: async (convId) => {
-    await get().assignTagToConversation(convId, undefined);
-  },
+  removeTagFromConversation: async (convId) => get().assignTagToConversation(convId, undefined),
+
   assignTagToMessage: async (convId, messageId, tagId) => {
+    set((state) => ({
+      messages: state.messages.map((m) => m.id === messageId ? { ...m, tagId } : m),
+    }));
     try {
-      set((state) => ({
-        messages: state.messages.map((m) =>
-          m.id === messageId ? { ...m, tagId } : m,
-        ),
-      }));
-      // Best-effort persist to backend
-      try {
-        await api.patch(
-          `/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`,
-          { action: "tag", tagId },
-        );
-      } catch (e) {
-        // swallow backend errors — local state still works
-        console.debug("Backend tag persist failed", e?.message || e);
-      }
-    } catch (err) {
-      console.error("Failed to assign tag", err);
+      await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`, { action: "tag", tagId });
+    } catch (e) {
+      console.debug("Backend tag failed", e);
     }
   },
+
   removeTagFromMessage: async (convId, messageId) => {
+    set((state) => ({
+      messages: state.messages.map((m) => m.id === messageId ? { ...m, tagId: undefined } : m),
+    }));
     try {
-      set((state) => ({
-        messages: state.messages.map((m) =>
-          m.id === messageId ? { ...m, tagId: undefined } : m,
-        ),
-      }));
-      try {
-        await api.patch(
-          `/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`,
-          { action: "untag" },
-        );
-      } catch (e) {
-        console.debug("Backend untag persist failed", e?.message || e);
-      }
-    } catch (err) {
-      console.error("Failed to remove tag", err);
+      await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`, { action: "untag" });
+    } catch (e) {
+      console.debug("Backend untag failed", e);
     }
   },
+
   setMessageFilter: (filter) => set({ messageFilter: filter }),
 
   hideConversationWithPin: (convId, pin) => {
     if (!convId || !pin) return;
     set((state) => {
-      const nextHidden = {
-        ...state.hiddenConversations,
-        [convId]: pin,
-      };
+      const nextHidden = { ...state.hiddenConversations, [convId]: pin };
       localStorage.setItem('hidden_conversations', JSON.stringify(nextHidden));
       return {
         hiddenConversations: nextHidden,
@@ -918,7 +745,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unhideConversationWithPin: (convId, pin) => {
     const currentPin = get().hiddenConversations[convId];
     if (!currentPin || currentPin !== pin) return false;
-
     set((state) => {
       const nextHidden = { ...state.hiddenConversations };
       delete nextHidden[convId];
@@ -933,13 +759,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setConversationMuted: (convId, muted) => {
     if (!convId) return;
     set((state) => {
-      const nextMuted: Record<string, MuteSetting> = {
-        ...state.mutedConversations,
-      };
-
-      if (muted) nextMuted[convId] = true;
-      else delete nextMuted[convId];
-
+      const nextMuted: Record<string, MuteSetting> = { ...state.mutedConversations };
+      if (muted) nextMuted[convId] = true; else delete nextMuted[convId];
       localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
       return { mutedConversations: nextMuted };
     });
@@ -947,32 +768,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   muteConversationFor: (convId, option) => {
     if (!convId) return;
-
     const now = new Date();
     let nextSetting: MuteSetting = true;
-
-    if (option === '1h') {
-      nextSetting = Date.now() + 60 * 60 * 1000;
-    } else if (option === '4h') {
-      nextSetting = Date.now() + 4 * 60 * 60 * 1000;
-    } else if (option === 'until-8am') {
+    if (option === '1h') nextSetting = Date.now() + 60 * 60 * 1000;
+    else if (option === '4h') nextSetting = Date.now() + 4 * 60 * 60 * 1000;
+    else if (option === 'until-8am') {
       const until = new Date(now);
       until.setHours(8, 0, 0, 0);
-      if (until.getTime() <= now.getTime()) {
-        until.setDate(until.getDate() + 1);
-      }
+      if (until.getTime() <= now.getTime()) until.setDate(until.getDate() + 1);
       nextSetting = until.getTime();
-    } else if (option === 'until-open') {
-      nextSetting = 'until-open';
-    } else {
-      nextSetting = true;
-    }
-
+    } else if (option === 'until-open') nextSetting = 'until-open';
+    
     set((state) => {
-      const nextMuted: Record<string, MuteSetting> = {
-        ...state.mutedConversations,
-        [convId]: nextSetting,
-      };
+      const nextMuted: Record<string, MuteSetting> = { ...state.mutedConversations, [convId]: nextSetting };
       localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
       return { mutedConversations: nextMuted };
     });
@@ -981,8 +789,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearConversationMuted: (convId) => {
     if (!convId) return;
     set((state) => {
-      if (!(convId in state.mutedConversations)) return state;
-      const nextMuted: Record<string, MuteSetting> = { ...state.mutedConversations };
+      const nextMuted = { ...state.mutedConversations };
       delete nextMuted[convId];
       localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
       return { mutedConversations: nextMuted };
@@ -991,24 +798,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   toggleConversationMuted: (convId) => {
     if (!convId) return false;
-    let nextValue = false;
+    let val = false;
     set((state) => {
-      const nextMuted: Record<string, MuteSetting> = {
-        ...state.mutedConversations,
-      };
-
-      if (nextMuted[convId]) {
-        delete nextMuted[convId];
-        nextValue = false;
-      } else {
-        nextMuted[convId] = true;
-        nextValue = true;
-      }
-
+      const nextMuted: Record<string, MuteSetting> = { ...state.mutedConversations };
+      if (nextMuted[convId]) { delete nextMuted[convId]; val = false; }
+      else { nextMuted[convId] = true; val = true; }
       localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
       return { mutedConversations: nextMuted };
     });
-    return nextValue;
+    return val;
   },
 
   isConversationMuted: (convId) => {
@@ -1016,29 +814,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const setting = get().mutedConversations[convId];
     if (!setting) return false;
     if (setting === true || setting === 'until-open') return true;
-
     if (typeof setting === 'number') {
       if (Date.now() < setting) return true;
-      // Auto clear expired mute.
       get().clearConversationMuted(convId);
-      return false;
     }
-
     return false;
   },
 
-  // Search Implementation
   setIsSearching: (val) => set({ isSearching: val }),
   setSearchQuery: (q) => set({ searchQuery: q }),
 
   performGlobalSearch: async (query) => {
     const q = query.trim();
-    if (q.length < 2) {
-      set({ searchResults: { contacts: [], messages: [], files: [] } });
-      return;
-    }
+    if (q.length < 2) { set({ searchResults: { contacts: [], messages: [], files: [] } }); return; }
     try {
-      const res = await api.get(`/chat/search?q=${encodeURIComponent(query)}`);
+      const res = await api.get(`/chat/search?q=${encodeURIComponent(q)}`);
       set({ searchResults: res.data });
     } catch (err) {
       console.error("Search failed", err);
@@ -1049,10 +839,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const q = query.trim();
     if (!q) return;
     set((state) => {
-      const newHistory = [
-        q,
-        ...state.searchHistory.filter((h) => h !== q),
-      ].slice(0, 10);
+      const newHistory = [q, ...state.searchHistory.filter((h) => h !== q)].slice(0, 10);
       localStorage.setItem("search_history", JSON.stringify(newHistory));
       return { searchHistory: newHistory };
     });
@@ -1067,20 +854,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const res = await api.post("/chat/conversations/direct", { targetEmail });
       const conv = res.data;
-
-      // Update conversations list if not present
       set((state) => {
-        const exists = state.conversations.find((c) => c.id === conv.id);
-        if (!exists) {
-          return { conversations: [conv, ...state.conversations] };
-        }
+        if (!state.conversations.find((c) => c.id === conv.id)) return { conversations: [conv, ...state.conversations] };
         return state;
       });
-
       get().setActiveConversation(conv.id);
       set({ isSearching: false, searchQuery: "" });
     } catch (err) {
-      console.error("Failed to start direct chat", err);
+      console.error("Failed start direct chat", err);
     }
+  },
+
+  clearHistory: async (convId) => {
+    try {
+      await api.delete(
+        `/chat/conversations/${encodeURIComponent(convId)}/history`,
+      );
+      get().localClearHistory(convId);
+    } catch (err) {
+      console.error("Failed to clear history", err);
+      throw err;
+    }
+  },
+
+  localClearHistory: (convId) => {
+    if (get().activeConvId === convId) set({ activeConvId: null, messages: [], nextCursor: null });
+    set((state) => ({ conversations: state.conversations.filter((c) => c.id !== convId) }));
   },
 }));

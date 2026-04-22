@@ -63,6 +63,8 @@ interface CallStore {
   setIncomingUpgradeRequest: (incoming: boolean) => void;
   setUpgradeRequesterEmail: (email: string | null) => void;
   setRemoteTiles: (tiles: any[]) => void;
+  isPeerJoined: boolean;
+  setPeerJoined: (joined: boolean) => void;
   isMinimized: boolean;
   setMinimized: (minimized: boolean) => void;
 }
@@ -89,6 +91,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
   upgradeRequesterEmail: null,
   engine: null,
   callOffer: null,
+  isPeerJoined: false,
   isMinimized: false,
   
   setMinimized: (isMinimized) => set({ isMinimized }),
@@ -220,6 +223,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
   setIncomingUpgradeRequest: (incomingUpgradeRequest: boolean) => set({ incomingUpgradeRequest }),
   setUpgradeRequesterEmail: (upgradeRequesterEmail: string | null) => set({ upgradeRequesterEmail }),
   setRemoteTiles: (remoteTiles: any[]) => set({ remoteTiles }),
+  setPeerJoined: (isPeerJoined: boolean) => set({ isPeerJoined }),
 
   resetCall: () => {
     clearInternalTimeout();
@@ -243,6 +247,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
       upgradeRequesterEmail: null,
       engine: null,
       callOffer: null,
+      isPeerJoined: false,
       remoteTiles: [],
       isMinimized: false,
     });

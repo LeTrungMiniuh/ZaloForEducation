@@ -461,7 +461,12 @@ const InboxList: React.FC = () => {
                             })()}
                       </p>
                     </div>
-                    {unread && (
+                    {unread && chat.unreadCount > 0 && (
+                      <div className="min-w-[20px] h-5 bg-error text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1.5 ml-2 shadow-sm shadow-error/20">
+                        {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
+                      </div>
+                    )}
+                    {unread && (!chat.unreadCount || chat.unreadCount === 0) && (
                       <div className="w-2.5 h-2.5 bg-primary rounded-full shrink-0 ml-2 shadow-sm shadow-primary/20"></div>
                     )}
                   </div>
