@@ -11,15 +11,15 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Button from '../components/Button';
-import Input from '../components/Input';
-import { Colors, Shadows, Typography } from '../constants/Theme';
-import Alert from '../utils/Alert';
+import Button from '../../components/Button';
+import Input from '../../components/Input';
+import { Colors, Shadows, Typography } from '../../constants/Theme';
+import Alert from '../../utils/Alert';
 
-import { useAuth } from '../context/AuthContext';
-import { apiRequest } from '../utils/api';
-import { getDeviceInfo } from '../utils/device';
-import { getDeviceId } from '../utils/deviceId';
+import { useAuth } from '../../context/AuthContext';
+import { apiRequest } from '../../utils/api';
+import { getDeviceInfo } from '../../utils/device';
+import { getDeviceId } from '../../utils/deviceId';
 
 export default function LoginScreen({ onNavigate }) {
   const { login } = useAuth();
@@ -115,7 +115,7 @@ export default function LoginScreen({ onNavigate }) {
           <View style={styles.headerContainer}>
             <View style={styles.logoBox}>
               <Image
-                source={require('../../assets/logo_blue.png')}
+                source={require('../../../assets/logo_blue.png')}
                 style={styles.logoImage}
                 resizeMode="cover"
               />

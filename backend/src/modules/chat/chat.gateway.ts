@@ -17,7 +17,6 @@ import { RedisService } from "../../infrastructure/redis.service";
 @WebSocketGateway({
   cors: { origin: "*" },
 })
-@UseGuards(WsJwtGuard)
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
@@ -69,6 +68,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     console.log(`Web Client ${client.id} joined QR room: ${data.qrCodeId}`);
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("join_room")
   async handleJoinRoom(
     @MessageBody() data: { convId: string },
@@ -92,6 +92,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`[SOCKET] Client ${client.id} joined room: ${room}`);
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("join_identity")
   async handleJoinIdentity(
     @MessageBody() data: { email: string; deviceId: string },
@@ -121,6 +122,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("typing")
   async handleTyping(
     @MessageBody() data: { convId: string; isTyping: boolean },
@@ -141,6 +143,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("sendMessage")
   async handleMessage(
     @MessageBody() data: { convId: string; message: any },
@@ -186,6 +189,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`Notified user ${email} that conversation ${convId} was read`);
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("call:invite")
   handleCallInvite(
     @MessageBody()
@@ -215,6 +219,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.to(data.convId).emit("call:incoming", payload);
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("call:offer")
   handleCallOffer(
     @MessageBody()
@@ -244,6 +249,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.to(data.convId).emit("call:offer", payload);
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("call:answer")
   handleCallAnswer(
     @MessageBody()
@@ -273,6 +279,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.to(data.convId).emit("call:answer", payload);
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("call:ice")
   handleCallIce(
     @MessageBody()
@@ -302,6 +309,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.to(data.convId).emit("call:ice", payload);
   }
 
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("call:end")
   handleCallEnd(
     @MessageBody()

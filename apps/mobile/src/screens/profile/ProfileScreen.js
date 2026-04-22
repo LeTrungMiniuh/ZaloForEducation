@@ -24,10 +24,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors, Shadows, Typography } from '../constants/Theme';
-import Alert from '../utils/Alert';
-import { useAuth } from '../context/AuthContext';
-import { toDateParts, formatDisplayDate } from '../utils/date';
+import { Colors, Shadows, Typography } from '../../constants/Theme';
+import Alert from '../../utils/Alert';
+import { useAuth } from '../../context/AuthContext';
+import { toDateParts, formatDisplayDate } from '../../utils/date';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 const COVER_URL =

@@ -210,8 +210,11 @@ const ContactsPage: React.FC = () => {
   }, [myEmail, loadUserProfile]);
 
   useEffect(() => {
-    refreshContacts().catch(() => null);
-  }, []); // Only on mount
+    const timer = setTimeout(() => {
+      refreshContacts().catch(() => null);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [refreshContacts]);
 
   useEffect(() => {
     const handleFriendRequestReceived = () => {

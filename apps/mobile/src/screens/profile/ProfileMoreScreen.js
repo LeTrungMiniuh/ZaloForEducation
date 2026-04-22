@@ -10,8 +10,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { Typography } from '../constants/Theme';
-import Alert from '../utils/Alert';
+import { Typography } from '../../constants/Theme';
+import Alert from '../../utils/Alert';
 
 const INFORMATION_ITEMS = [
   'Information',

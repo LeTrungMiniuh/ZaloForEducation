@@ -16,9 +16,9 @@ import {
     useWindowDimensions,
     View
 } from 'react-native';
-import { Colors, Shadows, Typography } from '../constants/Theme';
-import { useAuth } from '../context/AuthContext';
-import Alert from '../utils/Alert';
+import { Colors, Shadows, Typography } from '../../constants/Theme';
+import { useAuth } from '../../context/AuthContext';
+import Alert from '../../utils/Alert';
 
 const SETTINGS_KEY = 'mobile_settings';
 

@@ -16,6 +16,6 @@
     "strict": false,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "ignoreDeprecations": "5.0",
-  },
+    "ignoreDeprecations": "5.0"
+  }
 }
