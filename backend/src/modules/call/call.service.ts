@@ -195,7 +195,7 @@ export class CallService {
       const callMsg = await this.messageService.sendMessage(
         convId,
         caller, // senderId = callerId
-        'call', // content generic để tránh bẫy i18n
+        callType === 'video' ? 'Cuộc gọi video' : 'Cuộc gọi thoại', // Descriptive content
         'SYSTEM_CALL', // Type chuẩn production
         [],
         [],

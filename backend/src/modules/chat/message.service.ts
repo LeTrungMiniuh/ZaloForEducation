@@ -103,11 +103,15 @@ export class MessageService {
         Update: {
           TableName: this.db.tableName,
           Key: { PK: convId, SK: "METADATA" },
-          UpdateExpression: "SET lastMessage = :sk, lastMessageContent = :content, lastMessageSenderId = :senderId, lastMessageTimestamp = :ts, updatedAt = :time, listClearedAt = :cleared",
+          UpdateExpression: "SET lastMessage = :sk, lastMessageContent = :content, lastMessageSenderId = :senderId, lastMessageTimestamp = :ts, updatedAt = :time, listClearedAt = :cleared ADD totalMessages :inc",
           ExpressionAttributeValues: {
             ":sk": SK,
             ":content": (() => {
               if (type === 'system') return content;
+              if (type === 'SYSTEM_CALL') {
+                const callType = extraFields?.callType || 'audio';
+                return callType === 'video' ? '[Cuộc gọi video]' : '[Cuộc gọi thoại]';
+              }
               if (type === 'contact_card') return '[Danh thiếp]';
               if (type === 'location') return '[Vị trí]';
               if (!content || content.startsWith('MSG#')) {
@@ -131,7 +135,8 @@ export class MessageService {
             ":senderId": senderEmail,
             ":ts": Date.now(),
             ":time": timestamp,
-            ":cleared": {} // Reset deep cleanup metadata if needed? No, just keep simple for now
+            ":cleared": {}, 
+            ":inc": 1
           },
         },
       },
@@ -143,22 +148,24 @@ export class MessageService {
           UpdateExpression: "SET updatedAt = :ts, lastReadAt = :readAt",
           ExpressionAttributeValues: {
             ":ts": timestamp,
-            ":readAt": Date.now(),
+            ":readAt": timestamp,
           },
         },
       }
     ];
 
-    // 4. Update other members' mappings (updatedAt) to show in their inbox
+    // 4. Update other members' mappings (updatedAt & Atomic unreadCount)
     for (const member of members) {
       if (member === senderEmail) continue;
       transactItems.push({
         Update: {
           TableName: this.db.tableName,
           Key: { PK: `USER#${member}`, SK: convId },
-          UpdateExpression: "SET updatedAt = :ts",
+          // [PRODUCTION] Atomic increment unreadCount
+          UpdateExpression: "SET updatedAt = :ts ADD unreadCount :inc",
           ExpressionAttributeValues: {
             ":ts": timestamp,
+            ":inc": 1
           },
         },
       });
@@ -471,9 +478,9 @@ export class MessageService {
     }
 
     return {
-      messages: filteredItems
+      messages: (filteredItems as any[])
         .map(msg => ({ ...msg, id: msg.id || msg.SK }))
-        .reverse(), // Chronological order for frontend
+        .sort((a, b) => b.id.localeCompare(a.id)), // Force newest-first (descending) by id (which contains SK)
       nextCursor,
     };
   }
@@ -632,7 +639,7 @@ export class MessageService {
       TableName: this.db.tableName,
       Key: { PK: convId, SK: messageId }
     }));
-    const targetItem = targetRes.Item as Message;
+    const targetItem = targetRes.Item as any;
     if (!targetItem || (lastClearedAt && targetItem.SK <= msgPrefix)) {
       throw new BadRequestException('Target message not found or cleared');
     }
@@ -667,9 +674,9 @@ export class MessageService {
       this.db.docClient.send(new QueryCommand(newerParams))
     ]);
 
-    const olderItems = (olderRes.Items || []) as Message[];
-    const newerItems = (newerRes.Items || []) as Message[];
-
+    const olderItems = (olderRes.Items || []) as any[];
+    const newerItems = (newerRes.Items || []) as any[];
+    
     // Result: [Older (some)] + [Target] + [Newer (all to latest)]
     const combined = [
       ...olderItems.filter(m => m.SK !== messageId).reverse(),
@@ -683,7 +690,7 @@ export class MessageService {
     }
 
     return {
-      messages: combined
+      messages: (combined as any[])
         .filter(msg => !msg.removed?.includes(userEmail))
         .map(msg => ({ ...msg, id: msg.id || msg.SK })),
       nextCursor,

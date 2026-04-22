@@ -158,6 +158,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @UseGuards(WsJwtGuard)
+  @SubscribeMessage("leave_room")
+  async handleLeaveRoom(
+    @MessageBody() data: { convId: string },
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    if (!data?.convId) return;
+    const room = data.convId.toLowerCase();
+    client.leave(room);
+    this.logger.log(`[SOCKET] Client ${client.id} left room: ${room}`);
+  }
+
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("sendMessage")
   async handleMessage(
     @MessageBody() data: { convId: string; message: any },
@@ -176,8 +188,63 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       senderId: data.message.senderId || user.email,
     };
 
-    // Broadcast message to everyone in the conversation room EXCEPT the sender
+    // 1. Broadcast message to everyone in the conversation room (for active chat UI)
     socket.to(room).emit("receiveMessage", safeMessage);
+
+    // 2. [SENIOR] Broadcast to user-specific rooms (for Inbox/HomeScreen update & Notifications)
+    const metadata = await this.chatService.getConversationMetadata(data.convId);
+    if (metadata && Array.isArray(metadata.members)) {
+      const senderEmail = user.email.toLowerCase();
+      for (const member of metadata.members) {
+        const memberEmail = String(member).toLowerCase();
+        const userRoom = `user#${memberEmail}`;
+        
+        // Emit to user room so Inbox updates even if they are NOT in the chat room
+        // We use this.server.to() to ensure ALL devices (including sender's other devices) get it.
+        this.server.to(userRoom).emit("receiveMessage", safeMessage);
+
+        // Also trigger a formal notification event for the Store (only for others)
+        if (memberEmail !== senderEmail) {
+          this.server.to(userRoom).emit("notification:new", {
+            id: `NOTIF#${safeMessage.id || Date.now()}`,
+            title: metadata.name || (metadata.type === 'direct' ? user.fullName || user.email : 'Tin nhắn mới'),
+            message: typeof safeMessage.content === 'string' ? safeMessage.content : (safeMessage.content?.text || 'Bạn có tin nhắn mới'),
+            at: safeMessage.createdAt || new Date().toISOString(),
+            read: false,
+            metadata: {
+              conversationId: data.convId,
+              messageId: safeMessage.id,
+              senderId: user.email
+            }
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * [SENIOR] Notify members when a message is updated (Recall/React/Pin)
+   */
+  emitMessagePatched(convId: string, message: any) {
+    const room = convId.toLowerCase();
+    // Broadcast to the room so active viewers see it
+    this.server.to(room).emit("message_patched", { convId, message });
+    this.logger.log(`[SOCKET] Broadcasted message_patched for ${message.id} in ${convId}`);
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage("message_delivered")
+  async handleMessageDelivered(
+    @MessageBody() data: { convId: string; messageId: string },
+    @ConnectedSocket() socket: Socket,
+  ): Promise<void> {
+    const user = socket['user'];
+    if (!user || !data?.convId || !data?.messageId) return;
+    
+    // Asynchronously mark as delivered to avoid blocking socket thread
+    this.chatService.markAsDelivered(user.email, data.convId, data.messageId).catch(err => {
+      this.logger.error(`[SOCKET] Failed to mark message as delivered: ${err.message}`);
+    });
   }
 
   notifyFriendRequest(email: string, payload: any) {
@@ -251,6 +318,27 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.server.to(userRoom).emit("profile_update", { profile });
     console.log(`Sent profile_update to room ${userRoom}`);
   }
+
+  notifySecurityAlert(
+    email: string,
+    payload: {
+      type: "NEW_DEVICE_LOGIN" | "PASSWORD_CHANGED";
+      title: string;
+      message: string;
+      at?: string;
+      metadata?: Record<string, any>;
+    },
+  ) {
+    const userRoom = `user#${email.toLowerCase()}`;
+    this.server.to(userRoom).emit("security_alert", {
+      ...payload,
+      at: payload.at || new Date().toISOString(),
+    });
+    this.logger.warn(
+      `[SOCKET] security_alert emitted to ${userRoom}: ${payload.type}`,
+    );
+  }
+
 
   notifyHistoryCleared(email: string, convId: string) {
     const userRoom = `user#${email.toLowerCase()}`;

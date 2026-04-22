@@ -13,22 +13,48 @@ try {
   // Expo Go fallback: keep using in-memory cache silently.
 }
 
+const MAX_CACHE = 50;
+
+const safeJsonParse = (str, fallback = []) => {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return fallback;
+  }
+};
+
 // Helper to get/set from storage
 const getCachedMessages = (convId) => {
   const key = `messages#${convId}`;
   if (!storage) return memoryCache.get(key) || [];
   const data = storage.getString(key);
-  return data ? JSON.parse(data) : [];
+  return data ? safeJsonParse(data, []) : [];
 };
 
-const setCachedMessages = (convId, messages) => {
+const setCachedMessages = (convId, messagesNewestFirst) => {
   const key = `messages#${convId}`;
-  const payload = messages.slice(-50);
+  const payload = (Array.isArray(messagesNewestFirst) ? messagesNewestFirst : []).slice(0, MAX_CACHE);
   memoryCache.set(key, payload);
   if (storage) {
-    storage.set(key, JSON.stringify(payload)); // Chỉ cache 50 tin mới nhất
+    storage.set(key, JSON.stringify(payload));
   }
 };
+
+const getMsgTime = (m) => {
+  const t = m?.createdAt ? Date.parse(m.createdAt) : NaN;
+  return Number.isFinite(t) ? t : 0;
+};
+
+// Standardizes order to newest-first (tin mới nhất ở đầu mảng)
+const sortMessages = (arr) =>
+  [...(arr || [])].sort((a, b) => {
+    const ta = getMsgTime(a);
+    const tb = getMsgTime(b);
+    if (tb !== ta) return tb - ta;
+
+    // fallback nếu createdAt thiếu hoặc bằng nhau
+    return String(b?.id || "").localeCompare(String(a?.id || ""));
+  });
 
 const normalizeMessage = (message) => {
   if (!message || typeof message !== "object") return null;
@@ -37,21 +63,46 @@ const normalizeMessage = (message) => {
     message.conversationId || message.convId || "",
   ).trim();
 
-  const normalized = {
+  const id = String(message.id || message.SK || "").trim();
+  const senderId = String(message.senderId || message.sender_id || "").trim() || "unknown";
+
+  // Giữ nguyên content nếu là object (cho multimedia/call), chỉ ép về string khi cần preview
+  const content = typeof message.content === "string" ? message.content : message.content ?? "";
+
+  if (!id || !conversationId) return null;
+
+  return {
     ...message,
-    id: String(message.id || "").trim(),
+    id,
     conversationId,
     convId: conversationId,
-    senderId: String(message.senderId || message.sender_id || "").trim(),
-    content: String(message.content || ""),
+    senderId,
+    content,
+    createdAt: message.createdAt || message.created_at || null,
   };
-
-  if (!normalized.id) return null;
-  if (!normalized.senderId) normalized.senderId = "unknown";
-  return normalized;
 };
 
+const normalizeConversation = (conv, currentUserEmail) => {
+  if (!conv || typeof conv !== "object") return null;
+  
+  const id = String(conv.id || conv.PK || "").trim();
+  if (!id) return null;
 
+  let partner = conv.partner;
+  if (conv.type === "direct" && !partner && Array.isArray(conv.members)) {
+    partner = conv.members.find((m) => m !== currentUserEmail);
+  }
+
+  return {
+    ...conv,
+    id,
+    partner,
+    name: conv.name || "",
+    avatar: conv.avatar || "",
+    unreadCount: Number(conv.unreadCount || 0),
+    updatedAt: conv.updatedAt || conv.created_at || new Date().toISOString(),
+  };
+};
 
 export const useChatStore = create((set, get) => ({
   conversations: [],
@@ -60,7 +111,14 @@ export const useChatStore = create((set, get) => ({
   isLoadingMessages: false,
   nextCursor: null,
   fetchToken: 0,
-  userProfiles: {}, // [NEW] Cache for user names/avatars
+  userProfiles: {}, 
+  notifications: storage ? safeJsonParse(storage.getString("notifications"), []) : [],
+  unreadNotificationCount: storage 
+    ? safeJsonParse(storage.getString("notifications"), []).filter(n => !n.read).length 
+    : 0,
+  currentUserEmail: null,
+
+  setCurrentUserEmail: (email) => set({ currentUserEmail: email?.toLowerCase() }),
 
   upsertProfiles: (newProfiles) => 
     set((state) => ({ 
@@ -69,16 +127,12 @@ export const useChatStore = create((set, get) => ({
 
   getMessageConvId: (message) => {
     if (!message || typeof message !== "object") return null;
-    const convId = String(
-      message.conversationId || message.convId || "",
-    ).trim();
-    return convId || null;
+    return String(message.conversationId || message.convId || "").trim() || null;
   },
 
   setConversations: (updater) =>
     set((state) => {
-      const next =
-        typeof updater === "function" ? updater(state.conversations) : updater;
+      const next = typeof updater === "function" ? updater(state.conversations) : updater;
       return { conversations: Array.isArray(next) ? next : [] };
     }),
 
@@ -86,8 +140,6 @@ export const useChatStore = create((set, get) => ({
     const currentActiveId = get().activeConvId;
     const currentMessages = get().messages;
 
-    // If already in this conversation AND the target message is already loaded, 
-    // just let the UI handle scrolling without a fresh fetch.
     if (currentActiveId === convId && targetId) {
       const exists = currentMessages.some(m => m.id === targetId || m.SK === targetId);
       if (exists) return;
@@ -95,10 +147,16 @@ export const useChatStore = create((set, get) => ({
 
     if (currentActiveId === convId && !targetId) return;
 
-    // Offline-first: Load from cache first (if no targetId)
+    // Offline-first: Load from cache first
     const cached = targetId ? [] : getCachedMessages(convId);
     const fetchToken = get().fetchToken + 1;
-    set({ activeConvId: convId, messages: cached, nextCursor: null, fetchToken });
+    
+    // Clear unreadCount locally
+    const nextConversations = get().conversations.map(c => 
+      c.id === convId ? { ...c, unreadCount: 0 } : c
+    );
+
+    set({ activeConvId: convId, conversations: nextConversations, messages: cached, nextCursor: null, fetchToken });
 
     if (convId) {
       get().fetchMessages(convId, 50, fetchToken, targetId);
@@ -107,11 +165,10 @@ export const useChatStore = create((set, get) => ({
 
   setMessages: (updater, nextCursor) =>
     set((state) => {
-      const source =
-        typeof updater === "function" ? updater(state.messages) : updater;
-      const safeMessages = Array.isArray(source)
-        ? source.map(normalizeMessage).filter(Boolean)
-        : [];
+      const source = typeof updater === "function" ? updater(state.messages) : updater;
+      const safeMessages = sortMessages(
+        Array.isArray(source) ? source.map(normalizeMessage).filter(Boolean) : []
+      );
       if (state.activeConvId) {
         setCachedMessages(state.activeConvId, safeMessages);
       }
@@ -125,51 +182,51 @@ export const useChatStore = create((set, get) => ({
     set((state) => {
       const safeMessage = normalizeMessage(message);
       if (!safeMessage) return state;
-      const incomingConvId = get().getMessageConvId(safeMessage);
-      if (!incomingConvId) return state;
+      const incomingConvId = safeMessage.conversationId;
 
-      // 1. Update Cache
-      const cached = getCachedMessages(incomingConvId);
-      if (!cached.some((m) => m.id === safeMessage.id)) {
-        setCachedMessages(incomingConvId, [...cached, safeMessage]);
-      }
+      const alreadyInMessages = state.messages.some((m) => m.id === safeMessage.id);
 
-      // 2. [SENIOR] Update conversations list (Jump to Top, Preview, Unread)
+      // 1. Update conversations list (Jump to Top, Preview, Unread)
       const convIndex = state.conversations.findIndex((c) => c.id === incomingConvId);
       let nextConversations = [...state.conversations];
       if (convIndex !== -1) {
         const target = { ...nextConversations[convIndex] };
-        
-        // Only update if it's actually newer or if current lastMessage is older
-        const timestamp = safeMessage.createdAt || new Date().toISOString();
-        target.lastMessage = safeMessage.content;
-        target.lastMessageContent = safeMessage.content;
+        const previewText = typeof safeMessage.content === "string" 
+          ? safeMessage.content 
+          : (safeMessage.content?.text || "[Tin nhắn]");
+
+        target.lastMessage = safeMessage.id; 
+        target.lastMessageContent = previewText;
         target.lastMessageSenderId = safeMessage.senderId;
-        target.updatedAt = timestamp;
+        target.updatedAt = safeMessage.createdAt || new Date().toISOString();
 
         // Unread logic
         const isNotActive = state.activeConvId !== incomingConvId;
-        const isFromOthers = safeMessage.senderId !== "me" && safeMessage.senderId !== ""; // Simple shim, real check is usually email
-        if (isNotActive && isFromOthers) {
+        const myEmail = get().currentUserEmail;
+        const isFromOthers = safeMessage.senderId && myEmail && safeMessage.senderId !== myEmail;
+        
+        if (!alreadyInMessages && isNotActive && isFromOthers) {
           target.unreadCount = (target.unreadCount || 0) + 1;
         }
 
         nextConversations.splice(convIndex, 1);
         nextConversations.unshift(target);
+      } else {
+        // [SENIOR] If it's a NEW conversation not in our list, trigger a fetch
+        get().fetchConversations();
       }
 
-      // 3. Update active messages list if applicable
-      if (incomingConvId !== state.activeConvId) {
+      // 2. Update active messages list if applicable
+      const isActive = incomingConvId && state.activeConvId && incomingConvId.toLowerCase() === state.activeConvId.toLowerCase();
+      
+      if (!isActive) {
         return { conversations: nextConversations };
       }
 
-      if (state.messages.find((m) => m.id === safeMessage.id)) {
-        return { conversations: nextConversations };
-      }
-
-      // Optimistically remove any temporary message that matches this real one
+      // Filter out optimistic duplicates
       const filteredMessages = state.messages.filter(
         (m) =>
+          m.id !== safeMessage.id &&
           !(
             String(m.id).startsWith("TEMP#") &&
             m.content === safeMessage.content &&
@@ -177,13 +234,16 @@ export const useChatStore = create((set, get) => ({
           ),
       );
 
+      const nextMessages = sortMessages([safeMessage, ...filteredMessages]);
+      setCachedMessages(incomingConvId, nextMessages);
+
       return { 
-        messages: [...filteredMessages, safeMessage],
+        messages: nextMessages,
         conversations: nextConversations 
       };
     }),
   
-  upsertConversationLastMessage: (convId, content, senderId) =>
+  upsertConversationLastMessage: (convId, content, senderId, isSystem, messageId) =>
     set((state) => {
       const convIndex = state.conversations.findIndex((c) => c.id === convId);
       if (convIndex === -1) return state;
@@ -191,7 +251,7 @@ export const useChatStore = create((set, get) => ({
       const nextConversations = [...state.conversations];
       const target = { ...nextConversations[convIndex] };
       
-      target.lastMessage = content;
+      target.lastMessage = messageId || target.lastMessage; 
       target.lastMessageContent = content;
       if (senderId) {
         target.lastMessageSenderId = senderId;
@@ -205,11 +265,26 @@ export const useChatStore = create((set, get) => ({
     }),
 
   updateMessage: (msgId, updates) =>
-    set((state) => ({
-      messages: state.messages.map((m) =>
+    set((state) => {
+      const nextMessages = state.messages.map((m) =>
         m.id === msgId ? { ...m, ...updates } : m,
-      ),
-    })),
+      );
+      if (state.activeConvId) {
+        setCachedMessages(state.activeConvId, nextMessages);
+      }
+      return { messages: nextMessages };
+    }),
+
+  markReadLocal: (convId) => 
+    set((state) => {
+      const convIndex = state.conversations.findIndex(c => c.id === convId);
+      if (convIndex === -1) return state;
+
+      const nextConversations = [...state.conversations];
+      nextConversations[convIndex] = { ...nextConversations[convIndex], unreadCount: 0 };
+
+      return { conversations: nextConversations };
+    }),
 
   fetchConversations: async () => {
     try {
@@ -223,8 +298,31 @@ export const useChatStore = create((set, get) => ({
           data = numericKeys.map(k => res[k]);
         }
       }
-      set({ conversations: data });
-      return data;
+
+      const currentConversations = get().conversations;
+      const currentUserEmail = get().currentUserEmail;
+
+      const reconciled = data.map(rawConv => {
+        const newConv = normalizeConversation(rawConv, currentUserEmail);
+        if (!newConv) return null;
+
+        const existing = currentConversations.find(c => c.id === newConv.id);
+        if (existing) {
+          // [SENIOR] Reconciliation logic: 
+          // If local state is read (0) but server says unread (>0)
+          // AND the last message ID hasn't changed, then it's a race condition.
+          // Keep it read locally.
+          if (existing.unreadCount === 0 && newConv.unreadCount > 0) {
+            if (String(existing.lastMessage) === String(newConv.lastMessage)) {
+              return { ...newConv, unreadCount: 0 };
+            }
+          }
+        }
+        return newConv;
+      }).filter(c => c !== null);
+
+      set({ conversations: reconciled });
+      return reconciled;
     } catch (err) {
       console.error("Failed to fetch conversations", err);
       return [];
@@ -243,30 +341,60 @@ export const useChatStore = create((set, get) => ({
         `/conversations/${encodeURIComponent(convId)}/messages`,
         queryParams,
       );
-      const payload = res?.data || {};
-      const newMessages = (Array.isArray(payload?.messages)
-        ? payload.messages
-        : Array.isArray(payload)
-          ? payload
-          : [])
-        .map(normalizeMessage)
-        .filter(Boolean);
-
-      // Ignore stale responses when user switched conversations quickly.
+      
       if (get().activeConvId !== convId || get().fetchToken !== requestToken) {
         set({ isLoadingMessages: false });
         return;
       }
 
+      const payload = res?.data || {};
+      const rawMessages = Array.isArray(payload?.messages) ? payload.messages : Array.isArray(payload) ? payload : [];
+      const formattedMessages = sortMessages(rawMessages.map(normalizeMessage).filter(Boolean));
+
       set({
-        messages: newMessages,
+        messages: formattedMessages,
         nextCursor: payload?.nextCursor || null,
         isLoadingMessages: false,
       });
-      setCachedMessages(convId, newMessages);
+      setCachedMessages(convId, formattedMessages);
     } catch (err) {
       set({ isLoadingMessages: false });
       console.error("Failed to fetch messages", err);
+    }
+  },
+  
+  fetchMoreMessages: async (convId, limit = 30, requestToken = get().fetchToken) => {
+    const { nextCursor, isLoadingMessages, activeConvId } = get();
+    if (!nextCursor || isLoadingMessages || activeConvId !== convId) return;
+
+    set({ isLoadingMessages: true });
+    try {
+      const res = await chatGet(
+        `/conversations/${encodeURIComponent(convId)}/messages`,
+        { limit, cursor: nextCursor }
+      );
+
+      if (get().activeConvId !== convId || get().fetchToken !== requestToken) {
+        set({ isLoadingMessages: false });
+        return;
+      }
+
+      const payload = res?.data || {};
+      const rawMore = Array.isArray(payload?.messages) ? payload.messages : Array.isArray(payload) ? payload : [];
+      const moreMessages = rawMore.map(normalizeMessage).filter(Boolean);
+
+      set((state) => {
+        const merged = sortMessages([...state.messages, ...moreMessages]);
+        setCachedMessages(convId, merged);
+        return {
+          messages: merged,
+          nextCursor: payload?.nextCursor || null,
+          isLoadingMessages: false,
+        };
+      });
+    } catch (err) {
+      set({ isLoadingMessages: false });
+      console.error("Failed to fetch more messages", err);
     }
   },
 
@@ -291,23 +419,20 @@ export const useChatStore = create((set, get) => ({
       ...extraFields,
     };
 
-    const cached = getCachedMessages(convId);
-    setCachedMessages(convId, [...cached, optimisticMsg]);
-
     set((state) => {
-      // 1. Update internal messages list if active
       let nextMessages = state.messages;
       if (state.activeConvId === convId) {
-        nextMessages = [...state.messages, optimisticMsg];
+        nextMessages = sortMessages([optimisticMsg, ...state.messages]);
+        setCachedMessages(convId, nextMessages);
       }
 
-      // 2. [SENIOR] Optimistic Jump to Top & Last Message Update
       const convIndex = state.conversations.findIndex((c) => c.id === convId);
       let nextConversations = [...state.conversations];
       if (convIndex !== -1) {
         const target = { ...nextConversations[convIndex] };
-        target.lastMessage = content;
-        target.lastMessageContent = content;
+        const previewText = typeof content === "string" ? content : (content?.text || "[Tin nhắn]");
+        target.lastMessage = tempId; 
+        target.lastMessageContent = previewText;
         target.lastMessageSenderId = senderEmail;
         target.updatedAt = timestamp;
         
@@ -332,44 +457,98 @@ export const useChatStore = create((set, get) => ({
       );
       const savedMessage = normalizeMessage(res?.data || res);
 
-      if (!savedMessage) {
-        throw new Error("INVALID_MESSAGE_PAYLOAD");
-      }
+      if (!savedMessage) throw new Error("INVALID_MESSAGE_PAYLOAD");
 
-      set((state) => ({
-        messages:
-          state.activeConvId === convId
-            ? state.messages.map((m) =>
-                m.id === tempId ? { ...savedMessage, status: "sent" } : m,
-              )
-            : state.messages,
-      }));
-
-      const currentCached = getCachedMessages(convId);
-      setCachedMessages(
-        convId,
-        currentCached.map((m) =>
+      set((state) => {
+        const nextMessages = state.messages.map((m) =>
           m.id === tempId ? { ...savedMessage, status: "sent" } : m,
-        ),
-      );
+        );
+        if (state.activeConvId === convId) {
+          setCachedMessages(convId, nextMessages);
+        }
+        return { messages: nextMessages };
+      });
     } catch (err) {
       set((state) => ({
-        messages:
-          state.activeConvId === convId
-            ? state.messages.map((m) =>
-                m.id === tempId ? { ...m, status: "error" } : m,
-              )
-            : state.messages,
-      }));
-
-      const currentCached = getCachedMessages(convId);
-      setCachedMessages(
-        convId,
-        currentCached.map((m) =>
+        messages: state.messages.map((m) =>
           m.id === tempId ? { ...m, status: "error" } : m,
         ),
-      );
+      }));
       console.error("Failed to send message", err);
     }
   },
+
+  markNotificationsRead: (conversationId) =>
+    set((state) => {
+      const nextNotifications = state.notifications.map((n) => {
+        // If conversationId is provided, only mark those matching
+        if (conversationId) {
+          const match = n.metadata?.conversationId === conversationId;
+          return match ? { ...n, read: true } : n;
+        }
+        // Otherwise mark all
+        return { ...n, read: true };
+      });
+
+      if (storage) {
+        storage.set("notifications", JSON.stringify(nextNotifications));
+      }
+
+      return {
+        notifications: nextNotifications,
+        unreadNotificationCount: nextNotifications.filter((n) => !n.read).length,
+      };
+    }),
+
+  addNotification: (notification) =>
+    set((state) => {
+      // [SENIOR] 1. Check for duplicates
+      const msgId = notification.messageId || notification.metadata?.messageId;
+      const isDuplicate = state.notifications.some(n => 
+        n.id === notification.id || (msgId && n.metadata?.messageId === msgId)
+      );
+      if (isDuplicate) return state;
+
+      // [SENIOR] 2. Skip message notifications for the ACTIVE conversation
+      const convId = notification.conversationId || notification.metadata?.conversationId;
+      if (convId && state.activeConvId === convId) {
+        return state;
+      }
+
+      const newNotification = {
+        id: notification.id || `notif#${Date.now()}#${Math.random().toString(36).slice(2, 5)}`,
+        title: notification.title || "Thông báo mới",
+        message: notification.content || notification.message || "",
+        at: notification.at || new Date().toISOString(),
+        read: false,
+        type: notification.type || "text",
+        metadata: {
+          conversationId: convId,
+          messageId: msgId,
+          ...notification.metadata
+        },
+      };
+
+      const nextNotifications = [newNotification, ...state.notifications].slice(0, 100);
+      
+      if (storage) {
+        storage.set("notifications", JSON.stringify(nextNotifications));
+      }
+
+      return {
+        notifications: nextNotifications,
+        unreadNotificationCount: nextNotifications.filter(n => !n.read).length,
+      };
+    }),
+
+  clearNotifications: () =>
+    set(() => {
+      if (storage) {
+        storage.set("notifications", "[]");
+      }
+      return {
+        notifications: [],
+        unreadNotificationCount: 0,
+      };
+    }),
 }));

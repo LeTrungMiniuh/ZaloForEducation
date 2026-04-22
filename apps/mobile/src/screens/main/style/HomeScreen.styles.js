@@ -523,6 +523,26 @@ export default StyleSheet.create({
   tabIconActive: { color: "#00418f", fontVariationSettings: "'FILL' 1" },
   tabLabel: { ...Typography.label, fontSize: 10, color: "#727784" },
   tabLabelActive: { color: "#00418f" },
+  tabBadge: {
+    position: "absolute",
+    top: 4,
+    right: "25%",
+    backgroundColor: "#ff3b30",
+    borderRadius: 9,
+    minWidth: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: "#fff",
+    zIndex: 10,
+  },
+  tabBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "900",
+  },
 
   overlay: {
     ...StyleSheet.absoluteFillObject,

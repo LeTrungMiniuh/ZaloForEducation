@@ -12,16 +12,17 @@ import ForwardModal from '../../components/chat/ForwardModal';
 import { getMessageTimeContext } from '../../utils/chatUtils';
 import type { Attachment } from '../../utils/chatUtils';
 
-import { 
-  Copy, 
-  Pin, 
-  Star, 
-  ListChecks, 
-  Info, 
-  LayoutGrid, 
-  ChevronRight, 
-  RotateCcw, 
-  Trash2 
+import {
+  Copy,
+  Pin,
+  Star,
+  ListChecks,
+  Info,
+  LayoutGrid,
+  ChevronRight,
+  RotateCcw,
+  Trash2,
+  ArrowDown
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 
@@ -36,7 +37,10 @@ const ChatPage: React.FC = () => {
     setActiveConversation,
     userProfiles,
     markAsRead,
-    fetchMessages
+    fetchMessages,
+    loadMoreMessages,
+    isLoadingMessages,
+    nextCursor
   } = useChatStore();
   const location = useLocation();
   const navigate = useNavigate();
@@ -49,16 +53,76 @@ const ChatPage: React.FC = () => {
   const prevRoomRef = useRef<string | null>(null);
   const prevMessagesLengthRef = useRef(0);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const prevScrollHeightRef = useRef(0);
+  const isPrependingRef = useRef(false);
+  const lastCursorRef = useRef<string | null>(null);
+  const isLoadingMoreRef = useRef(false);
 
   // Utility to scroll to bottom
   const scrollToBottom = (instant = false) => {
-    setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({
-        behavior: instant ? 'auto' : 'smooth',
-        block: 'end'
-      });
-    }, 100);
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: instant ? 'auto' : 'smooth'
+    });
   };
+
+  // Handle scroll for Infinite Load and Scroll Bottom Button
+  const handleScroll = () => {
+    if (!scrollRef.current || !activeConvId) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    
+    // Show/Hide Scroll to Bottom button (threshold 300px from bottom)
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 300;
+    setShowScrollBottom(!isNearBottom);
+
+    // [SENIOR] Improved Trigger: Check Cursor lock to avoid spam
+    if (
+      scrollTop < 100 && 
+      nextCursor && 
+      nextCursor !== lastCursorRef.current && 
+      !isLoadingMessages && 
+      !isLoadingMoreRef.current
+    ) {
+      lastCursorRef.current = nextCursor;
+      isLoadingMoreRef.current = true;
+      isPrependingRef.current = true;
+      prevScrollHeightRef.current = scrollHeight;
+      
+      // Fire-and-forget async call
+      void (async () => {
+        try {
+          await loadMoreMessages(activeConvId);
+        } finally {
+          isLoadingMoreRef.current = false;
+        }
+      })();
+    }
+  };
+
+  // Adjust scroll position after loading more messages
+  useEffect(() => {
+    if (isPrependingRef.current && prevScrollHeightRef.current > 0 && scrollRef.current) {
+      const newScrollHeight = scrollRef.current.scrollHeight;
+      const heightDiff = newScrollHeight - prevScrollHeightRef.current;
+      if (heightDiff > 0) {
+        scrollRef.current.scrollTop += heightDiff;
+      }
+      prevScrollHeightRef.current = 0;
+      isPrependingRef.current = false;
+    }
+  }, [messages.length]);
+
+  // Reset scroll state when room changes
+  useEffect(() => {
+    prevMessagesLengthRef.current = 0;
+    prevScrollHeightRef.current = 0;
+    isLoadingMoreRef.current = false;
+    isPrependingRef.current = false;
+    lastCursorRef.current = null;
+  }, [activeConvId]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -79,19 +143,19 @@ const ChatPage: React.FC = () => {
   useEffect(() => {
     if (activeConvId) {
       fetchMessages(activeConvId);
-      
+
       // Join Socket Room for Real-time
       if (socket) {
         // Leave previous room if exists
         if (prevRoomRef.current && prevRoomRef.current !== activeConvId) {
           socket.emit('leave_room', { convId: prevRoomRef.current });
         }
-        
+
         socket.emit('join_room', { convId: activeConvId });
         prevRoomRef.current = activeConvId;
       }
     }
-    
+
     return () => {
       // Cleanup: leave room on unmount
       if (activeConvId && socket) {
@@ -103,7 +167,7 @@ const ChatPage: React.FC = () => {
   // Handle typing indicator via CustomEvent from useSocketListeners
   useEffect(() => {
     setTypingUsers(new Set()); // Reset when changing room
-    
+
     const handleTypingEvent = (e: any) => {
       const data = e.detail;
       if (data.convId === activeConvId && data.email !== user?.email) {
@@ -277,9 +341,28 @@ const ChatPage: React.FC = () => {
             <div
               ref={scrollRef}
               className="flex-1 overflow-y-auto p-4 hide-scrollbar flex flex-col"
+              onScroll={handleScroll}
             >
+              {/* Infinite Load Indicator */}
+              {isLoadingMessages && nextCursor && (
+                <div className="flex justify-center py-4">
+                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+
               {/* Spacer để đẩy tin nhắn xuống dưới cùng */}
               <div className="flex-1" />
+
+              {/* Nút cuộn xuống dưới cùng (Floating Action Button) */}
+              {showScrollBottom && (
+                <button
+                  onClick={() => scrollToBottom(true)}
+                  className="fixed bottom-32 right-12 md:right-80 z-[40] w-10 h-10 bg-white dark:bg-surface-container-high rounded-full shadow-lg border border-outline-variant/10 flex items-center justify-center text-primary hover:bg-surface-container transition-all animate-in fade-in zoom-in duration-200"
+                  title="Cuộn xuống dưới cùng"
+                >
+                  <ArrowDown size={20} strokeWidth={2.5} className="text-primary" />
+                </button>
+              )}
 
 
               {messages.length === 0 ? (
@@ -331,14 +414,14 @@ const ChatPage: React.FC = () => {
               {typingUsers.size > 0 && (
                 <div className="absolute bottom-[95px] left-8 z-[10] shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <div className="bg-white dark:bg-surface-container-high rounded-full px-4 py-2 border border-outline-variant/10 flex items-center gap-3">
-                     <div className="flex gap-1.5 items-center">
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce"></div>
-                     </div>
-                     <span className="text-[12px] font-bold text-on-surface-variant italic">
-                       {Array.from(typingUsers).map(email => userProfiles[email]?.fullName || email.split('@')[0]).join(', ')} đang soạn tin...
-                     </span>
+                    <div className="flex gap-1.5 items-center">
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce"></div>
+                    </div>
+                    <span className="text-[12px] font-bold text-on-surface-variant italic">
+                      {Array.from(typingUsers).map(email => userProfiles[email]?.fullName || email.split('@')[0]).join(', ')} đang soạn tin...
+                    </span>
                   </div>
                 </div>
               )}
@@ -365,10 +448,10 @@ const ChatPage: React.FC = () => {
         )}
       </div>
 
-      <ForwardModal 
-        isOpen={!!forwardMessage} 
-        onClose={() => setForwardMessage(null)} 
-        message={forwardMessage} 
+      <ForwardModal
+        isOpen={!!forwardMessage}
+        onClose={() => setForwardMessage(null)}
+        message={forwardMessage}
       />
 
       {/* 3. Info Sidebar */}
@@ -383,9 +466,9 @@ const ChatPage: React.FC = () => {
         >
           <div
             className="absolute bg-white dark:bg-surface-container rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] border border-outline-variant/10 dark:border-outline-variant/30 py-1.5 w-64 animate-in fade-in zoom-in-95 duration-200"
-            style={{ 
-              left: Math.min(contextMenu.x, window.innerWidth - 270), 
-              top: Math.min(contextMenu.y, window.innerHeight - 400) 
+            style={{
+              left: Math.min(contextMenu.x, window.innerWidth - 270),
+              top: Math.min(contextMenu.y, window.innerHeight - 400)
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -402,8 +485,8 @@ const ChatPage: React.FC = () => {
             </button>
             <button
               onClick={() => {
-                useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, { 
-                  action: contextMenu.message.pinned ? 'unpin' : 'pin' 
+                useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, {
+                  action: contextMenu.message.pinned ? 'unpin' : 'pin'
                 });
                 setContextMenu(null);
               }}
@@ -412,7 +495,7 @@ const ChatPage: React.FC = () => {
               <Pin size={18} className="text-on-surface-variant" />
               {contextMenu.message.pinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'}
             </button>
-            <button 
+            <button
               onClick={() => {
                 Swal.fire({
                   title: 'Đánh dấu tin nhắn',
@@ -432,7 +515,7 @@ const ChatPage: React.FC = () => {
             <div className="h-px bg-outline-variant/10 my-1 mx-2" />
 
             {/* Group 2: Advanced Actions */}
-            <button 
+            <button
               onClick={() => {
                 Swal.fire({
                   title: 'Chọn nhiều tin nhắn',
@@ -447,7 +530,7 @@ const ChatPage: React.FC = () => {
               <ListChecks size={18} className="text-on-surface-variant" />
               Chọn nhiều tin nhắn
             </button>
-            <button 
+            <button
               onClick={() => {
                 const date = new Date(contextMenu.message.createdAt).toLocaleString();
                 Swal.fire({
@@ -475,23 +558,23 @@ const ChatPage: React.FC = () => {
 
             {/* Group 3: Destructive Actions */}
             {contextMenu.message.senderId === user?.email && !contextMenu.message.recalled && (
-               <button
-                 onClick={() => {
-                   useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, { action: 'recall' });
-                   setContextMenu(null);
-                 }}
-                 className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
-               >
-                 <RotateCcw size={18} />
-                 Thu hồi
-               </button>
+              <button
+                onClick={() => {
+                  useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, { action: 'recall' });
+                  setContextMenu(null);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
+              >
+                <RotateCcw size={18} />
+                Thu hồi
+              </button>
             )}
             <button
-               onClick={() => {
-                 useChatStore.getState().deleteMessageOptimistic(activeConvId!, contextMenu.message.id);
-                 setContextMenu(null);
-               }}
-               className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
+              onClick={() => {
+                useChatStore.getState().deleteMessageOptimistic(activeConvId!, contextMenu.message.id);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
             >
               <Trash2 size={18} />
               Xóa chỉ ở phía tôi

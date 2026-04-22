@@ -27,7 +27,7 @@ export default function LoginOtpScreen({ onNavigate, goBack, params }) {
       Alert.alert('Lỗi', 'Thiếu thông tin xác thực. Vui lòng đăng nhập lại.');
       if (onNavigate) onNavigate('login');
     }
-  }, [email]);
+  }, []);
 
   const handleVerifyOtp = async () => {
     if (otp.length !== 6) {

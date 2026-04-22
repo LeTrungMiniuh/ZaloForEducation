@@ -53,10 +53,11 @@ export const useSocketListeners = () => {
 
       addMessage(msg);
 
-      const incomingConvId = msg.conversationId || msg.convId;
+      const incomingConvId = (msg.conversationId || msg.convId || '').trim();
       if (!incomingConvId) return;
 
-      if (incomingConvId === useChatStore.getState().activeConvId) {
+      const currentActiveId = useChatStore.getState().activeConvId;
+      if (currentActiveId && incomingConvId.toLowerCase() === currentActiveId.toLowerCase()) {
         markAsRead(incomingConvId).catch((error) => {
           console.error('Failed to mark conversation as read', error);
         });

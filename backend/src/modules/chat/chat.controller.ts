@@ -80,6 +80,13 @@ export class ChatController {
     );
   }
 
+  @Get("conversations/:convId/metadata")
+  async getMetadata(@Param("convId") convId: string) {
+    const res = await this.chatService.getConversationMetadata(convId);
+    if (!res) throw new NotFoundException("Conversation metadata not found");
+    return res;
+  }
+
   // --- MESSAGES ---
   @Get("conversations/:convId/messages")
   async getMessages(
@@ -251,7 +258,10 @@ export class ChatController {
       body,
     );
 
-    // BROADCAST REAL-TIME VIA SOCKET
+    // [SENIOR] BROADCAST REAL-TIME VIA SOCKET (Unified event for Store sync)
+    this.chatGateway.emitMessagePatched(convId, res);
+
+    // [BACKWARD COMPATIBILITY] Specialized events
     if (body.action === 'react') {
       this.chatGateway.server.to(convId).emit('message_reaction', { 
         messageId, 
@@ -267,13 +277,6 @@ export class ChatController {
       this.chatGateway.server.to(convId).emit('PIN_UPDATE', { 
         conversationId: convId,
         pinnedMessageIds: res.pinnedMessageIds
-      });
-      // Legacy support if needed
-      this.chatGateway.server.to(convId).emit('message_pinned', { 
-        messageId, 
-        conversationId: convId,
-        pinned: body.action === 'pin',
-        pinnedBy: email 
       });
     }
 

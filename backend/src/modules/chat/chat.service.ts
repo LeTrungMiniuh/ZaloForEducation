@@ -1,4 +1,4 @@
-import { BatchGetCommand, GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { BadRequestException, Inject, Injectable, forwardRef } from '@nestjs/common';
 import { Conversation } from '@zalo-edu/shared';
 import { v4 as uuidv4 } from 'uuid';
@@ -200,7 +200,8 @@ export class ChatService {
 
     const convs = batchResult.Responses?.[this.db.tableName] as Conversation[] || [];
 
-    // Create lookups for mapping data
+    // Create lookups for mapping data (now includes unreadCount from Mapping)
+    const countMap = new Map(mappings.map(m => [m.SK as string, m.unreadCount || 0]));
     const clearMap = new Map(mappings.map(m => [m.SK as string, m.lastClearedAt || ""]));
     const readMap = new Map(mappings.map(m => [m.SK as string, m.lastReadAt || 0]));
 
@@ -209,8 +210,9 @@ export class ChatService {
       .map((c) => {
         const lastClearedAt = clearMap.get(c.id);
         const lastReadAt = readMap.get(c.id) || 0;
+        const unreadCount = countMap.get(c.id) || 0;
 
-        const sanitizedConv = { ...c, lastReadAt };
+        const sanitizedConv = { ...c, lastReadAt, unreadCount };
 
         if (sanitizedConv.autoDeleteDays && sanitizedConv.lastMessageTimestamp) {
           const expireMs = Number(sanitizedConv.autoDeleteDays) * 24 * 60 * 60 * 1000;
@@ -238,31 +240,63 @@ export class ChatService {
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
-  async markConversationAsRead(convId: string, email: string) {
+  async markConversationAsRead(email: string, convId: string, messageId?: string) {
     const metadata = await this.getConversationMetadata(convId);
-    if (!metadata || !Array.isArray(metadata.members)) {
-      throw new BadRequestException('Conversation not found');
-    }
-
-    const isMember = metadata.members.some(
-      (member) => String(member).toLowerCase() === String(email).toLowerCase(),
-    );
-    if (!isMember) {
+    if (!metadata || !Array.isArray(metadata.members) || !metadata.members.includes(email)) {
       throw new BadRequestException('You are not a member of this conversation');
     }
 
-    await this.db.docClient.send(new UpdateCommand({
-      TableName: this.db.tableName,
-      Key: { PK: `USER#${email}`, SK: convId },
-      UpdateExpression: 'SET lastReadAt = :ts',
-      ExpressionAttributeValues: {
-        ':ts': Date.now()
-      }
+    const timestamp = new Date().toISOString();
+    
+    // Use Transaction to reset unreadCount and update Read Marker
+    await this.db.docClient.send(new TransactWriteCommand({
+      TransactItems: [
+        // 1. Reset Unread Count for this User-Conv mapping
+        {
+          Update: {
+            TableName: this.db.tableName,
+            Key: { PK: `USER#${email}`, SK: convId },
+            UpdateExpression: 'SET lastReadAt = :ts, unreadCount = :zero',
+            ExpressionAttributeValues: {
+              ':ts': timestamp,
+              ':zero': 0
+            }
+          }
+        },
+        // 2. [PRODUCTION] Update Global Read Marker for this member
+        {
+          Put: {
+            TableName: this.db.tableName,
+            Item: {
+              PK: convId,
+              SK: `READ#${email}`,
+              lastReadAt: timestamp,
+              lastReadMessageId: messageId || null,
+              updatedAt: timestamp
+            }
+          }
+        }
+      ]
     }));
 
     // Notify all devices of this user
     this.chatGateway.emitConversationRead(email, convId);
 
+    return { success: true };
+  }
+
+  async markAsDelivered(email: string, convId: string, messageId: string) {
+    const timestamp = new Date().toISOString();
+    await this.db.docClient.send(new PutCommand({
+      TableName: this.db.tableName,
+      Item: {
+        PK: convId,
+        SK: `DELIVERED#${email}`,
+        lastDeliveredMessageId: messageId,
+        deliveredAt: timestamp,
+        updatedAt: timestamp
+      }
+    }));
     return { success: true };
   }
 

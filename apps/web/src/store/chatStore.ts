@@ -41,7 +41,7 @@ interface ChatState {
   previewImage: { url: string; name: string } | null;
   hiddenConversations: Record<string, string>;
   mutedConversations: Record<string, MuteSetting>;
-  
+
   // Actions
   setConversations: (convs: Conversation[] | ((prev: Conversation[]) => Conversation[])) => void;
   setUserProfiles: (profiles: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void;
@@ -61,7 +61,7 @@ interface ChatState {
   clearConversationMuted: (convId: string) => void;
   toggleConversationMuted: (convId: string) => boolean;
   isConversationMuted: (convId: string) => boolean;
-  
+
   // Async Thunks (Logic)
   fetchConversations: () => Promise<void>;
   fetchMessages: (convId: string, limit?: number) => Promise<void>;
@@ -113,13 +113,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   searchQuery: '',
   searchResults: { contacts: [], messages: [], files: [] },
   searchHistory: JSON.parse(localStorage.getItem('search_history') || '[]'),
-  
+
   // Add Friend Modal State
   isAddFriendModalOpen: false,
   setIsAddFriendModalOpen: (val) => set({ isAddFriendModalOpen: val }),
   isCreateGroupModalOpen: false,
   setIsCreateGroupModalOpen: (val) => set({ isCreateGroupModalOpen: val }),
-  
+
   // ... existing actions ...
 
   clearHistory: async (convId) => {
@@ -144,8 +144,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  setConversations: (updater) => set((state) => ({ 
-    conversations: typeof updater === 'function' ? updater(state.conversations) : updater 
+  setConversations: (updater) => set((state) => ({
+    conversations: typeof updater === 'function' ? updater(state.conversations) : updater
   })),
 
   setUserProfiles: (updater) => set((state) => ({
@@ -174,7 +174,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
     }
   },
-  
+
   setActiveConversation: (convId) => {
     // Auto unmute when muted "until-open" and user opens this conversation.
     if (convId && get().mutedConversations[convId] === 'until-open') {
@@ -202,12 +202,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Điều này xảy ra khi Socket báo về nhanh hơn API response
     const optimisticIndex = isActiveConversation
       ? state.messages.findIndex(m =>
-      (m.conversationId || (m as any).convId) === incomingConvId &&
-      m.senderId === message.senderId && 
-      m.content === message.content && 
-      m.status === 'sending' &&
-      Math.abs(new Date(m.createdAt).getTime() - new Date(message.createdAt).getTime()) < 10000 // Trong vòng 10s
-    )
+        (m.conversationId || (m as any).convId) === incomingConvId &&
+        m.senderId === message.senderId &&
+        m.content === message.content &&
+        m.status === 'sending' &&
+        Math.abs(new Date(m.createdAt).getTime() - new Date(message.createdAt).getTime()) < 10000 // Trong vòng 10s
+      )
       : -1;
 
     let newMessages;
@@ -220,11 +220,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } else {
       newMessages = state.messages;
     }
-    
+
     // 3. Cập nhật Preview trong danh sách hội thoại và đẩy lên đầu
     const newConvs = [...state.conversations];
     const convIndex = newConvs.findIndex(c => c.id === incomingConvId);
-    
+
     if (convIndex !== -1) {
       const updatedConv = {
         ...newConvs[convIndex],
@@ -233,149 +233,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         lastMessageTimestamp: new Date(message.createdAt).getTime(),
         updatedAt: message.createdAt,
       };
-      
+
       newConvs.splice(convIndex, 1);
       newConvs.unshift(updatedConv);
     }
-    
-    return { 
+
+    return {
       messages: newMessages,
       conversations: newConvs
     };
   }),
 
-  hideConversationWithPin: (convId, pin) => {
-    if (!convId || !pin) return;
-    set((state) => {
-      const nextHidden = {
-        ...state.hiddenConversations,
-        [convId]: pin,
-      };
-      localStorage.setItem('hidden_conversations', JSON.stringify(nextHidden));
-      return {
-        hiddenConversations: nextHidden,
-        activeConvId: state.activeConvId === convId ? null : state.activeConvId,
-        messages: state.activeConvId === convId ? [] : state.messages,
-        nextCursor: state.activeConvId === convId ? null : state.nextCursor,
-      };
-    });
-  },
-
-  unhideConversationWithPin: (convId, pin) => {
-    const currentPin = get().hiddenConversations[convId];
-    if (!currentPin || currentPin !== pin) return false;
-
-    set((state) => {
-      const nextHidden = { ...state.hiddenConversations };
-      delete nextHidden[convId];
-      localStorage.setItem('hidden_conversations', JSON.stringify(nextHidden));
-      return { hiddenConversations: nextHidden };
-    });
-    return true;
-  },
-
-  isConversationHidden: (convId) => !!get().hiddenConversations[convId],
-
-  setConversationMuted: (convId, muted) => {
-    if (!convId) return;
-    set((state) => {
-      const nextMuted: Record<string, MuteSetting> = {
-        ...state.mutedConversations,
-      };
-
-      if (muted) nextMuted[convId] = true;
-      else delete nextMuted[convId];
-
-      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
-      return { mutedConversations: nextMuted };
-    });
-  },
-
-  muteConversationFor: (convId, option) => {
-    if (!convId) return;
-
-    const now = new Date();
-    let nextSetting: MuteSetting = true;
-
-    if (option === '1h') {
-      nextSetting = Date.now() + 60 * 60 * 1000;
-    } else if (option === '4h') {
-      nextSetting = Date.now() + 4 * 60 * 60 * 1000;
-    } else if (option === 'until-8am') {
-      const until = new Date(now);
-      until.setHours(8, 0, 0, 0);
-      if (until.getTime() <= now.getTime()) {
-        until.setDate(until.getDate() + 1);
-      }
-      nextSetting = until.getTime();
-    } else if (option === 'until-open') {
-      nextSetting = 'until-open';
-    } else {
-      nextSetting = true;
-    }
-
-    set((state) => {
-      const nextMuted: Record<string, MuteSetting> = {
-        ...state.mutedConversations,
-        [convId]: nextSetting,
-      };
-      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
-      return { mutedConversations: nextMuted };
-    });
-  },
-
-  clearConversationMuted: (convId) => {
-    if (!convId) return;
-    set((state) => {
-      if (!(convId in state.mutedConversations)) return state;
-      const nextMuted: Record<string, MuteSetting> = { ...state.mutedConversations };
-      delete nextMuted[convId];
-      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
-      return { mutedConversations: nextMuted };
-    });
-  },
-
-  toggleConversationMuted: (convId) => {
-    if (!convId) return false;
-    let nextValue = false;
-    set((state) => {
-      const nextMuted: Record<string, MuteSetting> = {
-        ...state.mutedConversations,
-      };
-
-      if (nextMuted[convId]) {
-        delete nextMuted[convId];
-        nextValue = false;
-      } else {
-        nextMuted[convId] = true;
-        nextValue = true;
-      }
-
-      localStorage.setItem('muted_conversations', JSON.stringify(nextMuted));
-      return { mutedConversations: nextMuted };
-    });
-    return nextValue;
-  },
-
-  isConversationMuted: (convId) => {
-    if (!convId) return false;
-    const setting = get().mutedConversations[convId];
-    if (!setting) return false;
-    if (setting === true || setting === 'until-open') return true;
-
-    if (typeof setting === 'number') {
-      if (Date.now() < setting) return true;
-      get().clearConversationMuted(convId);
-      return false;
-    }
-
-    return false;
-  },
 
   markAsRead: async (convId) => {
     // 1. Optimistic Update
     set((state) => ({
-      conversations: state.conversations.map((c) => 
+      conversations: state.conversations.map((c) =>
         c.id === convId ? { ...c, lastReadAt: Date.now() } : c
       )
     }));
@@ -391,7 +264,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setLocalRead: (convId) => set((state) => ({
-    conversations: state.conversations.map((c) => 
+    conversations: state.conversations.map((c) =>
       c.id === convId ? { ...c, lastReadAt: Date.now() } : c
     )
   })),
@@ -431,10 +304,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ isLoadingMessages: true });
     try {
       const res = await api.get(`/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${limit}`);
-      set({ 
-        messages: res.data.messages, 
+      const rawMessages = res.data.messages || [];
+      // [SENIOR] Web uses ascending order (older first), so we reverse if API returns newest first
+      const formattedMessages = Array.isArray(rawMessages) ? [...rawMessages].reverse() : [];
+      set({
+        messages: formattedMessages,
         nextCursor: res.data.nextCursor,
-        isLoadingMessages: false 
+        isLoadingMessages: false
       });
     } catch (err) {
       set({ isLoadingMessages: false });
@@ -443,16 +319,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadMoreMessages: async (convId, limit = 20) => {
-    const { nextCursor, messages } = get();
-    if (!nextCursor) return;
+    const { nextCursor, messages, isLoadingMessages } = get();
+    if (!nextCursor || isLoadingMessages) return;
 
+    set({ isLoadingMessages: true });
     try {
       const res = await api.get(`/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${limit}&cursor=${nextCursor}`);
-      set({ 
-        messages: [...res.data.messages, ...messages], // Prepend older messages
-        nextCursor: res.data.nextCursor 
+      const rawOlder = res.data.messages || [];
+      const olderMessages = Array.isArray(rawOlder) ? [...rawOlder].reverse() : [];
+      
+      set((state) => {
+        // Guard: Only merge if still in the same conversation
+        if (state.activeConvId !== convId) return { isLoadingMessages: false };
+        return {
+          messages: [...olderMessages, ...state.messages], // Prepend older messages
+          nextCursor: res.data.nextCursor,
+          isLoadingMessages: false
+        };
       });
     } catch (err) {
+      set({ isLoadingMessages: false });
       console.error('Failed to load more messages', err);
     }
   },
@@ -472,7 +358,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessageOptimistic: async (convId, senderEmail, content, msgType = 'text', attachments = [], replyTo = null, extraFields = {}) => {
     const tempId = `TEMP#${Date.now()}#${Math.random().toString(36).slice(2, 8)}`;
     const timestamp = new Date().toISOString();
-    
+
     // Categorize attachments
     const media = attachments.filter(a => a.mimeType.startsWith('image/') || a.mimeType.startsWith('video/')).map(a => ({
       url: a.dataUrl,
@@ -593,20 +479,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (m.id !== messageId) return m;
 
         if (action === 'recall') {
-          return { 
-            ...m, 
-            recalled: true, 
-            content: 'Tin nhắn đã được thu hồi', 
-            media: [], 
-            files: [], 
-            reactions: {} 
+          return {
+            ...m,
+            recalled: true,
+            content: 'Tin nhắn đã được thu hồi',
+            media: [],
+            files: [],
+            reactions: {}
           };
         }
         if (action === 'pin' || action === 'unpin') {
-          return { 
-            ...m, 
-            pinned: action === 'pin', 
-            pinnedBy: action === 'pin' ? userEmail : null 
+          return {
+            ...m,
+            pinned: action === 'pin',
+            pinnedBy: action === 'pin' ? userEmail : null
           };
         }
         if (action === 'react') {
@@ -629,7 +515,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 2. Persist to Backend
     try {
       const res = await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`, payload);
-      
+
       // Update with final server state
       set((state) => ({
         messages: state.messages.map(m => m.id === messageId ? res.data : m)
@@ -637,7 +523,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (err: any) {
       console.error(`Failed to patch message (${action})`, err);
       const errorMsg = err.response?.data?.message || 'Có lỗi xảy ra khi thực hiện thao tác này.';
-      
+
       if (action === 'pin') {
         // Rollback optimistic update
         set((state) => ({
@@ -663,10 +549,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations: state.conversations.map((conversation) =>
         conversation.id === convId
           ? {
-              ...conversation,
-              autoDeleteDays: days,
-              autoDeleteUpdatedAt: new Date().toISOString(),
-            }
+            ...conversation,
+            autoDeleteDays: days,
+            autoDeleteUpdatedAt: new Date().toISOString(),
+          }
           : conversation,
       ),
     }));
@@ -680,10 +566,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: state.conversations.map((conversation) =>
           conversation.id === convId
             ? {
-                ...conversation,
-                autoDeleteDays: res.data?.autoDeleteDays ?? days,
-                autoDeleteUpdatedAt: res.data?.autoDeleteUpdatedAt || new Date().toISOString(),
-              }
+              ...conversation,
+              autoDeleteDays: res.data?.autoDeleteDays ?? days,
+              autoDeleteUpdatedAt: res.data?.autoDeleteUpdatedAt || new Date().toISOString(),
+            }
             : conversation,
         ),
       }));
@@ -834,7 +720,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // Search Implementation
   setIsSearching: (val) => set({ isSearching: val }),
   setSearchQuery: (q) => set({ searchQuery: q }),
-  
+
   performGlobalSearch: async (query) => {
     const q = query.trim();
     if (q.length < 2) {
@@ -868,7 +754,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const res = await api.post('/chat/conversations/direct', { targetEmail });
       const conv = res.data;
-      
+
       // Update conversations list if not present
       set((state) => {
         const exists = state.conversations.find(c => c.id === conv.id);

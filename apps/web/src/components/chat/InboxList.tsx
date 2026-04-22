@@ -5,22 +5,22 @@ import { getDisplayName, getDisplayAvatar, isUnread } from '../../utils/chatUtil
 import CreateGroupModal from './CreateGroupModal';
 import Swal from 'sweetalert2';
 
-import { 
+import {
   Lock,
   MoreHorizontal,
-  UserPlus, 
-  Users, 
-  Menu 
+  UserPlus,
+  Users,
+  Menu
 } from 'lucide-react';
 
 const InboxList: React.FC = () => {
   const { user } = useAuth();
-  const { 
-    conversations, 
+  const {
+    conversations,
     activeConvId,
-    fetchConversations, 
-    searchQuery, 
-    setSearchQuery, 
+    fetchConversations,
+    searchQuery,
+    setSearchQuery,
     setActiveConversation,
     loadUserProfile,
     userProfiles,
@@ -50,10 +50,10 @@ const InboxList: React.FC = () => {
     if (conversations.length > 0) {
       conversations.forEach((conv) => {
         if (conv.type === 'direct') {
-          const partnerEmail = Array.isArray(conv.members) 
+          const partnerEmail = Array.isArray(conv.members)
             ? conv.members.find(m => m !== user?.email)
             : undefined;
-          
+
           if (partnerEmail) {
             loadUserProfile(partnerEmail);
           }
@@ -152,44 +152,44 @@ const InboxList: React.FC = () => {
       {/* Search Header */}
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2">
-           <div className="relative flex-1 group">
-             <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px] group-focus-within:text-primary transition-colors">search</span>
-             <input
-               value={searchQuery}
-               onChange={handleSearchTrigger}
-               className="w-full bg-surface-container-highest border-none rounded-[16px] py-2 pl-[34px] pr-4 text-[13px] outline-none text-on-surface placeholder:text-outline focus:ring-2 focus:ring-primary/20 transition-all cursor-text"
-               placeholder="Tìm kiếm..."
-             />
-           </div>
-           
-           <div className="flex items-center gap-1">
-          <button 
-            onClick={() => useChatStore.getState().setIsAddFriendModalOpen(true)}
-            className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
-          >
-            <UserPlus size={20} />
-          </button>
-          <button 
-            onClick={() => setIsCreateGroupModalOpen(true)}
-            className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
-          >
-            <Users size={20} />
-          </button>
-          <div className="w-px h-6 bg-outline-variant/10 mx-1" />
-          <button className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary">
-            <Menu size={20} />
-          </button>
-        </div>
+          <div className="relative flex-1 group">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px] group-focus-within:text-primary transition-colors">search</span>
+            <input
+              value={searchQuery}
+              onChange={handleSearchTrigger}
+              className="w-full bg-surface-container-highest border-none rounded-[16px] py-2 pl-[34px] pr-4 text-[13px] outline-none text-on-surface placeholder:text-outline focus:ring-2 focus:ring-primary/20 transition-all cursor-text"
+              placeholder="Tìm kiếm..."
+            />
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => useChatStore.getState().setIsAddFriendModalOpen(true)}
+              className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
+            >
+              <UserPlus size={20} />
+            </button>
+            <button
+              onClick={() => setIsCreateGroupModalOpen(true)}
+              className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
+            >
+              <Users size={20} />
+            </button>
+            <div className="w-px h-6 bg-outline-variant/10 mx-1" />
+            <button className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary">
+              <Menu size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-4 text-sm font-bold px-1">
-          <button 
+          <button
             onClick={() => setChatFilter('all')}
             className={`${chatFilter === 'all' ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-primary'} transition-all pb-2`}
           >
             Tất cả
           </button>
-          <button 
+          <button
             onClick={() => setChatFilter('unread')}
             className={`${chatFilter === 'unread' ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-primary'} transition-all pb-2`}
           >
@@ -208,18 +208,18 @@ const InboxList: React.FC = () => {
         ) : (
           filteredConversations.map((chat) => {
             const isSelected = activeConvId === chat.id;
-            const partnerEmail = chat.type === 'direct' 
+            const partnerEmail = chat.type === 'direct'
               ? (Array.isArray(chat.members) ? chat.members.find(m => m !== user?.email) : undefined)
               : undefined;
-            
-            const chatName = chat.type === 'direct' 
+
+            const chatName = chat.type === 'direct'
               ? getDisplayName(partnerEmail, user, userProfiles)
               : chat.name || 'Group';
-            
-            const chatAvatar = chat.type === 'direct' 
+
+            const chatAvatar = chat.type === 'direct'
               ? getDisplayAvatar(partnerEmail, user, userProfiles)
               : (chat.avatar || '/logo_blue.png');
-            
+
             const unread = isUnread(chat, user?.email);
             const isOnline = partnerEmail ? userProfiles[partnerEmail]?.status === 'online' : false;
             const isHidden = !!hiddenConversations[chat.id];
@@ -240,9 +240,8 @@ const InboxList: React.FC = () => {
                   }
                   setActiveConversation(chat.id);
                 }}
-                className={`flex items-center gap-3 p-3 rounded-[16px] cursor-pointer transition-all ${
-                  isSelected ? 'bg-primary/10 shadow-sm' : 'hover:bg-surface-container/70'
-                }`}
+                className={`flex items-center gap-3 p-3 rounded-[16px] cursor-pointer transition-all ${isSelected ? 'bg-primary/10 shadow-sm' : 'hover:bg-surface-container/70'
+                  }`}
               >
                 <div className="relative shrink-0">
                   <img className="w-12 h-12 rounded-full object-cover shadow-sm bg-surface-container ring-1 ring-black/5" alt={chatName} src={chatAvatar} />
@@ -263,7 +262,15 @@ const InboxList: React.FC = () => {
                     <p className={`text-[13px] truncate ${unread ? 'font-bold text-on-surface' : 'text-on-surface-variant'}`}>
                       {isHidden
                         ? 'Trò chuyện đã ẩn (yêu cầu PIN)'
-                        : (chat.lastMessageContent || chat.lastMessage || 'Chưa có tin nhắn')}
+                        : (() => {
+                            const content = chat.lastMessageContent || chat.lastMessage;
+                            if (content === '[Cuộc gọi thoại]' || content === '[Cuộc gọi video]') {
+                              const isMe = chat.lastMessageSenderId === user?.email;
+                              const type = content.includes('video') ? 'video' : 'thoại';
+                              return isMe ? `Cuộc gọi ${type} đi` : `Cuộc gọi ${type} đến`;
+                            }
+                            return content || 'Chưa có tin nhắn';
+                          })()}
                     </p>
                     {unread && (
                       <div className="w-2.5 h-2.5 bg-primary rounded-full shrink-0 ml-2 shadow-sm shadow-primary/20"></div>
@@ -307,9 +314,9 @@ const InboxList: React.FC = () => {
         )}
       </div>
 
-      <CreateGroupModal 
-        isOpen={isCreateGroupModalOpen} 
-        onClose={() => setIsCreateGroupModalOpen(false)} 
+      <CreateGroupModal
+        isOpen={isCreateGroupModalOpen}
+        onClose={() => setIsCreateGroupModalOpen(false)}
       />
     </div>
   );

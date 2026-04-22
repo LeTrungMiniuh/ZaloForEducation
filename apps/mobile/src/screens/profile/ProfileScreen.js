@@ -428,14 +428,14 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack, params }) 
               <View style={styles.sheetHeader}>
                 <TouchableOpacity
                   style={styles.headerIconButton}
-                  onPress={() => goBack ? goBack() : onNavigate('home', 'profile')}
+                  onPress={() => goBack ? goBack() : onNavigate('home', {}, 'profile')}
                 >
                   <Text style={styles.headerIcon}>arrow_back</Text>
                 </TouchableOpacity>
                 <Text style={styles.sheetTitle}>Thông tin tài khoản</Text>
                 <TouchableOpacity
                   style={styles.headerIconButton}
-                  onPress={() => goBack ? goBack() : onNavigate('home', 'profile')}
+                  onPress={() => goBack ? goBack() : onNavigate('home', {}, 'profile')}
                 >
                   <Text style={styles.headerIcon}>close</Text>
                 </TouchableOpacity>

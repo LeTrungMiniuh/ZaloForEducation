@@ -5,7 +5,9 @@ import SocketService from '../utils/socket';
 import { getDeviceId } from '../utils/deviceId';
 import { apiRequest } from '../utils/api';
 import { useCallStore } from '../store/callStore';
+import { useChatStore } from '../store/chatStore';
 import { chimeRef } from '../utils/chimeRef';
+import { pushSecurityAlert } from '../utils/securityAlerts';
 
 const AuthContext = createContext();
 
@@ -102,6 +104,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
           const parsedUser = JSON.parse(savedUser);
           setUser(parsedUser);
           setToken(savedToken);
+          useChatStore.getState().setCurrentUserEmail(parsedUser.email);
 
           const currentDeviceId = savedDeviceId || await getDeviceId();
           SocketService.connect(parsedUser.email, currentDeviceId, savedToken);
@@ -150,6 +153,49 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
 
       SocketService.on('profile_update', (data) => {
         if (data && data.profile) updateUser(data.profile);
+      });
+
+      // [CORE CHAT SYNC]
+      SocketService.on('receiveMessage', (data) => {
+        const store = useChatStore.getState();
+        store.addMessage(data);
+      });
+
+      SocketService.on('message_patched', (data) => {
+        if (data && data.message) {
+          useChatStore.getState().updateMessage(data.message.id, data.message);
+        }
+      });
+
+      SocketService.on('conversation_marked_read', (data) => {
+        if (data && data.convId) {
+          useChatStore.getState().markReadLocal(data.convId);
+        }
+      });
+
+      SocketService.on('typing_update', (data) => {
+        // Typing updates are usually screen-specific, but can be emitted as events
+        // If we want to support typing indicators in the Inbox list, we handle it here.
+        // For now, we emit a CustomEvent or similar for Screen-level hooks.
+      });
+
+      // [NEW: NOTIFICATION FEATURE]
+      SocketService.on('notification:new', (data) => {
+        console.log('[AUTH] New notification received:', data);
+        const { addNotification } = useChatStore.getState();
+        addNotification(data);
+      });
+
+      SocketService.on('security_alert', (data) => {
+        console.log('[AUTH] Security alert received:', data);
+        const { addNotification } = useChatStore.getState();
+        addNotification({
+          ...data,
+          type: 'security'
+        });
+        pushSecurityAlert(data).catch(err => {
+          console.warn('[AUTH] Failed to save security alert:', err.message);
+        });
       });
 
       // ===== CALL SIGNALING =====
@@ -348,6 +394,19 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
 
     return () => {
       SocketService.off('force_logout');
+      SocketService.off('profile_update');
+      SocketService.off('notification:new');
+      SocketService.off('security_alert');
+      SocketService.off('call:incoming');
+      SocketService.off('call:dismiss');
+      SocketService.off('call:accept');
+      SocketService.off('call:reject');
+      SocketService.off('call:hangup');
+      SocketService.off('call:timeout');
+      SocketService.off('call:handled_elsewhere');
+      SocketService.off('call:upgrade_request');
+      SocketService.off('call:upgrade_accepted');
+      SocketService.off('call:upgrade_declined');
       subscription.remove();
     };
   }, []);
@@ -360,6 +419,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }) => {
     setToken(accessToken);
     setDeviceId(currentDeviceId);
     setProfileVersion(Date.now());
+    useChatStore.getState().setCurrentUserEmail(userData.email);
     SocketService.connect(userData.email, currentDeviceId, accessToken);
   };
 

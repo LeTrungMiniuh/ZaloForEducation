@@ -27,7 +27,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Colors, Typography } from '../../constants/Theme';
 import Alert from '../../utils/Alert';
 import { useAuth } from '../../context/AuthContext';
-import { apiRequest, API_URL } from '../../utils/api';
+import { apiRequest, API_URL, chatGet, chatPost, chatPatch, chatUpload } from '../../utils/api';
 import SocketService from '../../utils/socket';
 import { useChatStore } from '../../store/chatStore';
 import { useCallStore } from "../../store/callStore";
@@ -37,6 +37,8 @@ import ChatInput from '../../components/chat/ChatInput';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from 'react-native';
 import SystemCallMessageItem from '../../components/chat/SystemCallMessageItem';
+import NotificationScreen from "./NotificationScreen"; // [NEW: NOTIFICATION FEATURE]
+
 const REACTION_OPTIONS = ["❤️", "👍", "😂", "😮", "😢", "😡"];
 const DEFAULT_AVATAR = require('../../../assets/logo_blue.png');
 const MAX_ATTACHMENTS_PER_MESSAGE = 8;
@@ -56,116 +58,6 @@ const normalizeHomeTab = (tab) =>
     .trim()
     .toLowerCase()
   ] || "chat";
-
-const normalizeApiPayload = (res) => {
-  if (!res || typeof res !== "object") return res;
-  if (Object.prototype.hasOwnProperty.call(res, "data")) return res.data;
-
-  const numericKeys = Object.keys(res).filter((key) => /^\d+$/.test(key));
-  if (numericKeys.length > 0) {
-    return numericKeys
-      .sort((a, b) => Number(a) - Number(b))
-      .map((key) => res[key]);
-  }
-
-  const payload = { ...res };
-  delete payload.ok;
-  delete payload.status;
-  return payload;
-};
-
-const normalizeConversation = (conv) => {
-  if (!conv || typeof conv !== "object") return null;
-  const id = String(conv.id || conv._id || "").trim();
-  if (!id) return null;
-  return {
-    ...conv,
-    id,
-    type: conv.type || "direct",
-    partner: String(conv.partner || "").trim(),
-    name: String(conv.name || "").trim(),
-    avatar: String(conv.avatar || "").trim(),
-    lastMessage: conv.lastMessage || null,
-    updatedAt: conv.updatedAt || conv.updated_at || null,
-  };
-};
-
-const normalizeApiResponse = (res) => ({
-  ...res,
-  data: normalizeApiPayload(res),
-});
-
-const chatGet = async (path, query) => {
-  const queryString = query
-    ? `?${Object.entries(query)
-      .filter(([, v]) => v !== undefined && v !== null && String(v) !== "")
-      .map(
-        ([k, v]) =>
-          `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
-      )
-      .join("&")}`
-    : "";
-
-  let res = await apiRequest(`/chat${path}${queryString}`);
-  if (!res?.ok && res?.status === 404) {
-    res = await apiRequest(`/api/chat${path}${queryString}`);
-  }
-  return normalizeApiResponse(res);
-};
-
-const chatPost = async (path, body) => {
-  let res = await apiRequest(`/chat${path}`, {
-    method: "POST",
-    body: JSON.stringify(body || {}),
-  });
-  if (!res?.ok && res?.status === 404) {
-    res = await apiRequest(`/api/chat${path}`, {
-      method: "POST",
-      body: JSON.stringify(body || {}),
-    });
-  }
-  return normalizeApiResponse(res);
-};
-
-const chatPatch = async (path, body) => {
-  let res = await apiRequest(`/chat${path}`, {
-    method: "PATCH",
-    body: JSON.stringify(body || {}),
-  });
-  if (!res?.ok && res?.status === 404) {
-    res = await apiRequest(`/api/chat${path}`, {
-      method: "PATCH",
-      body: JSON.stringify(body || {}),
-    });
-  }
-  return normalizeApiResponse(res);
-};
-
-const chatUpload = async (asset) => {
-  const token = await AsyncStorage.getItem("token");
-  const formData = new FormData();
-  formData.append("file", {
-    uri: asset.uri,
-    name: asset.fileName || `image-${Date.now()}.jpg`,
-    type: asset.mimeType || "image/jpeg",
-  });
-
-  const upload = async (basePath) => {
-    const response = await fetch(`${API_URL}${basePath}`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: formData,
-    });
-    const data = await response.json().catch(() => ({}));
-    return { ok: response.ok, status: response.status, data };
-  };
-
-  let result = await upload("/chat/uploads");
-  if (!result.ok && result.status === 404) {
-    result = await upload("/api/chat/uploads");
-  }
-  return result;
-};
 
 const getFileIcon = (mimeType = "", fileName = "") => {
   const lowerName = fileName.toLowerCase();
@@ -224,8 +116,10 @@ export default function HomeScreen({
     updateMessage,
     setConversations,
     upsertConversationLastMessage,
+    fetchConversations, // [ADDED] Rely on store's reconciliation logic
     userProfiles,
-    upsertProfiles
+    upsertProfiles,
+    unreadNotificationCount, // [NEW: NOTIFICATION FEATURE]
   } = useChatStore();
 
   const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
@@ -235,7 +129,6 @@ export default function HomeScreen({
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const [loadingConversations, setLoadingConversations] = useState(true);
-  const [readConversations, setReadConversations] = useState(new Set());
   const [friendships, setFriendships] = useState([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [friendSearchEmail, setFriendSearchEmail] = useState("");
@@ -257,24 +150,9 @@ export default function HomeScreen({
   const messagesScrollRef = useRef(null);
   const profileLoadingRef = useRef(new Set());
 
-  const normalizeConversation = useCallback((conv) => {
-    if (conv?.type !== "direct") return conv;
-    const partner =
-      conv.partner ||
-      (Array.isArray(conv.members)
-        ? conv.members.find((member) => member !== user?.email)
-        : undefined);
-
-    return {
-      ...conv,
-      partner,
-    };
-  }, [user?.email]);
-
   const safeConversations = useMemo(() => {
-    const raw = Array.isArray(conversations) ? conversations : [];
-    return raw.map(normalizeConversation);
-  }, [conversations, normalizeConversation]);
+    return Array.isArray(conversations) ? conversations : [];
+  }, [conversations]);
 
   const safeMessages = useMemo(() => {
     const raw = Array.isArray(messages) ? messages : [];
@@ -366,9 +244,8 @@ export default function HomeScreen({
   };
 
   const getConversationPreview = (conv) => {
-    const content = String(conv?.lastMessageContent || conv?.lastMessage || "");
+    const content = String(conv?.lastMessageContent || (String(conv?.lastMessage || "").startsWith("MSG#") ? "" : conv?.lastMessage) || "");
     if (!content) return "Chưa có tin nhắn";
-    if (content.startsWith("MSG#")) return "Đang tải nội dung...";
 
     const senderEmail = conv?.lastMessageSenderId;
     const isMe = senderEmail === user?.email;
@@ -380,7 +257,13 @@ export default function HomeScreen({
     if (content === "[Video]") return `${prefix}[Video]`;
     if (content === "[Tệp đính kèm]" || content === "[Tệp tin]") return `${prefix}[Tệp tin]`;
 
-    // Call pre-check: if it's already a formatted string from addMessage/socket
+    // [SENIOR 10/10] Smart Call Direction Detection
+    if (content === '[Cuộc gọi thoại]' || content === '[Cuộc gọi video]') {
+      const type = content.includes('video') ? 'video' : 'thoại';
+      return isMe ? `Cuộc gọi ${type} đi` : `Cuộc gọi ${type} đến`;
+    }
+
+    // Fallback for already formatted strings
     if (content.includes("Cuộc gọi")) return content;
 
     return `${prefix}${content}`;
@@ -403,65 +286,7 @@ export default function HomeScreen({
     }
   };
 
-  const loadConversations = async () => {
-    if (!user?.email) {
-      console.log("[Chat] Skip loading: No user email");
-      return;
-    }
-    console.log("[Chat] Fetching conversations for:", user.email);
-    setLoadingConversations(true);
-    try {
-      const res = await chatGet("/conversations");
-      console.log("[Chat] API Response Status:", res?.status);
 
-      // Robust data extraction: check res.data first, then fallback to numeric keys in res
-      let rawData = [];
-      if (Array.isArray(res?.data)) {
-        rawData = res.data;
-      } else if (res && typeof res === "object") {
-        const numericKeys = Object.keys(res)
-          .filter((key) => /^\d+$/.test(key))
-          .sort((a, b) => Number(a) - Number(b));
-        if (numericKeys.length > 0) {
-          rawData = numericKeys.map((key) => res[key]);
-        }
-      }
-
-      const normalized = rawData
-        .map(normalizeConversation)
-        .filter((c) => c !== null);
-
-      console.log(`[Chat] Successfully loaded ${normalized.length} conversations`);
-      setConversations(normalized);
-
-      setReadConversations(new Set());
-
-      normalized
-        .filter((conv) => !conv.lastMessageContent && String(conv.lastMessage || "").startsWith("MSG#"))
-        .forEach(async (conv) => {
-          try {
-            const latestRes = await chatGet(
-              `/conversations/${encodeURIComponent(conv.id)}/messages`,
-              { limit: 1 },
-            );
-            const latestMessages =
-              latestRes?.data || latestRes?.messages || [];
-            const latest = Array.isArray(latestMessages)
-              ? latestMessages[latestMessages.length - 1]
-              : null;
-            if (latest) {
-              upsertConversationLastMessage(conv.id, getMessagePreview(latest), latest.senderId, false, latest.id);
-            }
-          } catch (mErr) {
-            console.warn(`[Chat] Failed to load preview for ${conv.id}`, mErr);
-          }
-        });
-    } catch (err) {
-      console.error("[Chat] Fetch conversations failed", err);
-    } finally {
-      setLoadingConversations(false);
-    }
-  };
 
   const fetchFriendships = async () => {
     if (!user?.email) return;
@@ -574,21 +399,12 @@ export default function HomeScreen({
   };
 
   const handleSelectChat = async (chat) => {
-    const normalizedChat = normalizeConversation(chat);
-    if (!normalizedChat) return;
+    if (!chat?.id) return;
 
-    // Reset unread count locally
-    setConversations(prev => prev.map(c =>
-      c.id === normalizedChat.id ? { ...c, unreadCount: 0 } : c
-    ));
+    // Reset unread count locally for instant UI feedback (Optimistic UI)
+    useChatStore.getState().markReadLocal(chat.id);
 
-    setReadConversations(prev => {
-      const next = new Set(prev);
-      next.add(normalizedChat.id);
-      return next;
-    });
-
-    onNavigate('chat', { conversationId: normalizedChat.id });
+    onNavigate('chat', { conversationId: chat.id });
   };
 
   const handleOpenDirectChat = async (friendEmail) => {
@@ -1037,10 +853,17 @@ export default function HomeScreen({
         .reverse(),
     [messages],
   );
+  
+  const totalUnreadChatCount = useMemo(
+    () => safeConversations.reduce((acc, conv) => acc + (conv.unreadCount || 0), 0),
+    [safeConversations]
+  );
 
   useEffect(() => {
-    loadConversations();
-  }, [user?.email]);
+    if (user?.email) {
+      fetchConversations().finally(() => setLoadingConversations(false));
+    }
+  }, [user?.email, fetchConversations]);
 
   useEffect(() => {
     if (activeTab === "contacts") {
@@ -1073,22 +896,6 @@ export default function HomeScreen({
     const socket = SocketService.socket;
     if (!socket) return;
 
-    const handleReceiveMessage = (msg) => {
-      if (!msg?.id) return;
-
-      // [SENIOR] Centralized Logic in Store
-      // addMessage now handle Duplication, Jump to Top, and Unread Count
-      addMessage(msg);
-
-      const incomingConvId = msg.conversationId || msg.convId;
-      // Auto-scroll snap if receiving message in active chat
-      if (incomingConvId === selectedChat?.id) {
-        setTimeout(() => {
-          messagesScrollRef.current?.scrollToOffset({ offset: 0, animated: true });
-        }, 100);
-      }
-    };
-
     const handlePresenceUpdate = (data) => {
       setUserProfiles((prev) => {
         if (!prev[data.email]) return prev;
@@ -1114,16 +921,14 @@ export default function HomeScreen({
       });
     };
 
-    socket.on("receiveMessage", handleReceiveMessage);
-    socket.on("presence_update", handlePresenceUpdate);
-    socket.on("typing", handleTypingEvent);
+    SocketService.on("presence_update", handlePresenceUpdate);
+    SocketService.on("typing", handleTypingEvent);
 
     return () => {
-      socket.off("receiveMessage", handleReceiveMessage);
-      socket.off("presence_update", handlePresenceUpdate);
-      socket.off("typing", handleTypingEvent);
+      SocketService.off("presence_update", handlePresenceUpdate);
+      SocketService.off("typing", handleTypingEvent);
     };
-  }, [addMessage, selectedChat?.id]);
+  }, [addMessage, selectedChat?.id, user?.email]);
 
   const handleLogoutPress = () => {
     Alert.alert(
@@ -1200,9 +1005,7 @@ export default function HomeScreen({
               chat.type === "direct"
                 ? getDisplayAvatar(partnerEmail)
                 : chat.avatar || getDisplayAvatar();
-            const isUnread = chat.lastMessageSenderId &&
-              chat.lastMessageSenderId !== user?.email &&
-              !readConversations.has(chat.id);
+            const isUnread = (chat.unreadCount || 0) > 0;
             const partnerProfile = partnerEmail ? userProfiles[partnerEmail] : null;
             const isOnline = partnerProfile?.status === 'online';
 
@@ -1413,11 +1216,7 @@ export default function HomeScreen({
   );
 
   const renderAIView = () => (
-    <View style={styles.centeredView}>
-      <Text style={styles.aiIcon}>notifications</Text>
-      <Text style={styles.aiTitle}>Notifications</Text>
-      <Text style={styles.aiSubtitle}>Đang được nâng cấp. Sắp ra mắt!</Text>
-    </View>
+    <NotificationScreen onNavigate={onNavigate} />
   );
 
   const renderProfileView = () => (
@@ -1559,6 +1358,14 @@ export default function HomeScreen({
               >
                 Tin nhắn
               </Text>
+
+              {totalUnreadChatCount > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>
+                    {totalUnreadChatCount > 99 ? "99+" : totalUnreadChatCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1603,6 +1410,15 @@ export default function HomeScreen({
               >
                 Thông báo
               </Text>
+
+              {/* [NEW: NOTIFICATION BADGE] */}
+              {unreadNotificationCount > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>
+                    {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity

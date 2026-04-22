@@ -76,12 +76,12 @@ export default function LoginScreen({ onNavigate }) {
 
       if (isOtpRequired) {
         if (onNavigate) {
-          onNavigate('login-otp', 'messages', {
+          onNavigate('login-otp', {
             email,
             deviceId,
             deviceName,
             deviceType
-          });
+          }, 'messages');
         }
         return;
       }
