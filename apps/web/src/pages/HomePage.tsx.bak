@@ -5,7 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import ProfileModal from "../components/ProfileModal";
 import Swal from "sweetalert2";
 import { useChatStore } from "../store/chatStore";
-
+// File removed. No longer used.
 type Friendship = {
   sender_id: string;
   receiver_id: string;

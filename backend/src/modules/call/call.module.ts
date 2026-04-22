@@ -4,10 +4,12 @@ import { CallService } from './call.service';
 import { CallController } from './call.controller';
 import { CallGateway } from './call.gateway';
 import { AuthModule } from '../auth/auth.module';
+import { ChatModule } from '../chat/chat.module';
 
 @Module({
   imports: [
     forwardRef(() => AuthModule), // Dùng JwtAuthGuard trong CallController
+    forwardRef(() => ChatModule), // Để dùng MessageService
   ],
   providers: [
     {

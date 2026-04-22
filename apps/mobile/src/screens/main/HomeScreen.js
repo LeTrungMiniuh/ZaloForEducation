@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useCallback, useRef, useState } from "react";
+import { v4 as uuidv4 } from 'uuid';
 import {
   View,
   Text,
@@ -14,6 +15,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
+  PermissionsAndroid,
 } from "react-native";
 import {
   SafeAreaView,
@@ -24,7 +26,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { Audio } from "expo-av";
+import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
+import { FileSystemUploadType } from "expo-file-system";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Colors, Typography } from '../../constants/Theme';
 import Alert from '../../utils/Alert';
@@ -32,6 +36,7 @@ import { useAuth } from '../../context/AuthContext';
 import { apiRequest, API_URL } from '../../utils/api';
 import SocketService from '../../utils/socket';
 import { useChatStore } from '../../store/chatStore';
+import { useCallStore } from "../../store/callStore";
 import ContactsScreen from './ContactsScreen';
 import MessageBubble from '../../components/chat/MessageBubble';
 import ChatInput from '../../components/chat/ChatInput';
@@ -223,6 +228,7 @@ export default function HomeScreen({
     setConversations,
   } = useChatStore();
 
+  const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
   const [activeTab, setActiveTab] = useState(normalizeHomeTab(initialTab));
   const [inputText, setInputText] = useState("");
   const [attachments, setAttachments] = useState([]);
@@ -247,6 +253,7 @@ export default function HomeScreen({
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [messageToForward, setMessageToForward] = useState(null);
   const [sendImageAsHD, setSendImageAsHD] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   const typingTimeoutRef = useRef(null);
 
@@ -408,7 +415,6 @@ export default function HomeScreen({
       avatar: normalized.avatar || getDisplayAvatar(partner),
     };
   };
-
   const upsertConversationLastMessage = (convId, content, senderId, isNewMessage = false, msgId = null) => {
     setConversations((prev) => {
       const index = prev.findIndex((conv) => conv.id === convId);
@@ -784,10 +790,10 @@ export default function HomeScreen({
   };
 
   const handleForwardSelect = async (targetConvId) => {
-    if (!forwardTargetMessage || !targetConvId) return;
+    if (!messageToForward || !targetConvId) return;
 
     setIsForwardModalOpen(false);
-    const msg = forwardTargetMessage;
+    const msg = messageToForward;
 
     try {
       // Logic similar to Web: Send a new message to the target conversation
@@ -808,12 +814,12 @@ export default function HomeScreen({
       console.error("Forward failed", err);
       Alert.alert("Lỗi", "Không thể chuyển tiếp tin nhắn.");
     } finally {
-      setForwardTargetMessage(null);
+      setMessageToForward(null);
     }
   };
 
   const startForward = (message) => {
-    setForwardTargetMessage(message);
+    setMessageToForward(message);
     setIsForwardModalOpen(true);
     closeMessageAction();
   };
@@ -882,6 +888,31 @@ export default function HomeScreen({
         }));
         return [...prev, ...picked];
       });
+    }
+  };
+
+  const pickDocuments = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        multiple: true,
+        copyToCacheDirectory: true,
+      });
+      if (!result.canceled && result.assets?.length) {
+        setAttachments((prev) => {
+          const room = Math.max(0, MAX_ATTACHMENTS_PER_MESSAGE - prev.length);
+          const picked = result.assets.slice(0, room).map((asset) => ({
+            name: asset.name || `file-${Date.now()}`,
+            mimeType: asset.mimeType || 'application/octet-stream',
+            size: Number(asset.size || 0),
+            dataUrl: asset.uri,
+            file: asset,
+          }));
+          return [...prev, ...picked];
+        });
+      }
+    } catch (err) {
+      console.error('Pick documents failed', err);
     }
   };
 
@@ -972,6 +1003,7 @@ export default function HomeScreen({
       setSending(false);
     }
   };
+
 
   const sendMessage = async () => {
     if ((!inputText || !inputText.trim()) && attachments.length === 0) return;
@@ -1091,10 +1123,9 @@ export default function HomeScreen({
     setSending(true);
     try {
       const token = await AsyncStorage.getItem('token');
-      
       const uploadTask = await FileSystem.uploadAsync(`${API_URL}/chat/uploads`, pendingVoice.uri, {
         httpMethod: 'POST',
-        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        uploadType: FileSystemUploadType.MULTIPART,
         fieldName: 'file',
         mimeType: 'audio/m4a',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1265,6 +1296,92 @@ export default function HomeScreen({
       addMessage(sentMessage);
       setReplyTarget(null);
       upsertConversationLastMessage(selectedChat.id, '[Sticker]');
+    }
+  };
+
+  const handleStartCall = async (type) => {
+    if (!selectedChat || selectedChat.type !== 'direct') {
+      Alert.alert('Thất bại', 'Hiện tại chỉ hỗ trợ gọi 1:1');
+      return;
+    }
+    if (!selectedChat.id) {
+      Alert.alert('Thất bại', 'Không tìm thấy cuộc trò chuyện để gọi.');
+      return;
+    }
+
+    // [SENIOR] Permission Check - Request BOTH Audio & Video immediately on click
+    if (Platform.OS === 'android') {
+      console.log(`[Call] Requesting ALL permissions (Audio & Video) for ${type} call...`);
+      try {
+        const audioGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        const cameraGranted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+        
+        if (audioGranted !== PermissionsAndroid.RESULTS.GRANTED || cameraGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert(
+            'Thiếu quyền truy cập', 
+            'ZaloEdu cần cả quyền Microphone và Camera để thực hiện cuộc gọi. Vui lòng cấp quyền trong Cài đặt.'
+          );
+          return;
+        }
+      } catch (err) {
+        console.warn('[Call] Permission error:', err);
+        return;
+      }
+    } else {
+       // iOS handles permissions internally in Chime Native SDK, 
+       // but we allow the flow to continue.
+       console.log(`[Call] Initiating ${type} call on ${Platform.OS}...`);
+    }
+
+    const partnerEmail = selectedChat.partner;
+    const partnerProfile = userProfiles[partnerEmail] || { 
+      email: partnerEmail,
+      fullName: getDisplayName(partnerEmail)
+    };
+
+    const activeCallId = uuidv4(); // [SENIOR] Generate unique Call ID
+
+    // 1. Khởi tạo UI state
+    startOutgoingCall(partnerProfile, type, selectedChat.id, activeCallId);
+
+    try {
+      // 2. Tạo meeting qua API (Keep it for backward compatibility or Chime fallback)
+      const res = await apiRequest('/call/create', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          conversationId: selectedChat.id, 
+          callId: activeCallId,
+          type 
+        })
+      });
+
+      if (res.ok) {
+        // 3. Lưu thông tin meeting
+        setMeetingInfo(res.meeting, res.attendee);
+        
+        // 4. Gửi tín hiệu mời gọi qua Socket
+        SocketService.socket.emit('call:invite', {
+          convId: selectedChat.id,
+          callId: activeCallId, // [SENIOR]
+          fromEmail: user.email,
+          toEmail: partnerEmail,
+          callerProfile: {
+            email: user.email,
+            fullName: user.fullName || user.fullname || user.email,
+            avatarUrl: user.avatarUrl || user.avatar
+          },
+          callType: type
+        });
+      } else {
+        console.error('[CALL] Init failed:', res.message);
+        resetCall();
+        Alert.alert('Lỗi', res.message || 'Không thể khởi tạo cuộc gọi');
+      }
+    } catch (err) {
+      console.error('[CALL] UI Error:', err);
+      resetCall();
+      Alert.alert('Lỗi kết nối', 'Vui lòng kiểm tra lại mạng');
+
     }
   };
 
@@ -1524,10 +1641,16 @@ export default function HomeScreen({
             </View>
 
             <View style={styles.chatHeaderIcons}>
-              <TouchableOpacity style={styles.chatHeaderIconButton}>
+              <TouchableOpacity 
+                style={styles.chatHeaderIconButton}
+                onPress={() => handleStartCall('audio')}
+              >
                 <Text style={styles.chatHeaderIcon}>call</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.chatHeaderIconButton}>
+              <TouchableOpacity 
+                style={styles.chatHeaderIconButton}
+                onPress={() => handleStartCall('video')}
+              >
                 <Text style={styles.chatHeaderIcon}>videocam</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.chatHeaderIconButton}>
@@ -1838,63 +1961,32 @@ export default function HomeScreen({
             </View>
           )}
 
-          {/* Feature toolbar: sticker, GIF, location, voice */}
-          <View style={styles.featureToolbar}>
-            <TouchableOpacity onPress={() => { setShowStickerPicker(true); setShowGifPicker(false); setShowLocationMenu(false); }} style={styles.featureBtn}>
-              <Text style={styles.featureBtnIcon}>emoji_emotions</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setShowGifPicker(true); setShowStickerPicker(false); setShowLocationMenu(false); searchGif('funny'); }} style={styles.featureBtn}>
-              <Text style={styles.featureBtnIcon}>gif_box</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setShowLocationMenu(v => !v); setShowStickerPicker(false); setShowGifPicker(false); }} style={[styles.featureBtn, isLiveSharing && { backgroundColor: '#fce4e4' }]}>
-              <Text style={[styles.featureBtnIcon, isLiveSharing && { color: '#e53935' }]}>location_on</Text>
-            </TouchableOpacity>
-
-            <View style={{ flex: 1 }} />
-            
-            <TouchableOpacity 
-              style={[
-                { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, alignSelf: 'center', marginRight: 8 },
-                sendImageAsHD ? { backgroundColor: "#0058bc", borderColor: "#0058bc" } : { backgroundColor: "#f1f5fa", borderColor: "#e5eaf2" }
-              ]}
-              onPress={() => setSendImageAsHD(!sendImageAsHD)}
-            >
-              <Text style={[{ fontSize: 10, fontWeight: 'bold' }, sendImageAsHD ? { color: "#fff" } : { color: "#64748b" }]}>HD</Text>
-            </TouchableOpacity>
-
-            {showLocationMenu && (
-              <View style={styles.locationMenu}>
-                <TouchableOpacity onPress={sendCurrentLocation} style={styles.locationMenuItem}>
-                  <Text style={styles.locationMenuText}>📍 Gửi vị trí hiện tại</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={startLiveLocation} style={styles.locationMenuItem}>
-                  <Text style={styles.locationMenuText}>📡 Chia sẻ trực tiếp (5 phút)</Text>
-                </TouchableOpacity>
-                {isLiveSharing && (
-                  <TouchableOpacity onPress={stopLiveLocation} style={styles.locationMenuItem}>
-                    <Text style={[styles.locationMenuText, { color: '#e53935' }]}>⏹ Dừng chia sẻ</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
-          </View>
-
+          {/* ── Zalo-style bottom input bar ── */}
           <View style={styles.composer}>
-            <TouchableOpacity onPress={pickImages} style={styles.composerAction}>
-              <Text style={styles.composerActionIcon}>image</Text>
+            {/* Sticker/Emoji button */}
+            <TouchableOpacity onPress={() => { setShowStickerPicker(true); setShowGifPicker(false); setShowMoreMenu(false); }} style={styles.composerAction}>
+              <Text style={styles.composerActionIcon}>emoji_emotions</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={openContactPicker} style={styles.composerAction}>
-              <Text style={styles.composerActionIcon}>contact_page</Text>
-            </TouchableOpacity>
+
+            {/* Text Input */}
             <TextInput
               value={inputText}
-              onChangeText={setInputText}
-              placeholder="Nhập tin nhắn..."
+              onChangeText={(text) => { setInputText(text); if (showMoreMenu) setShowMoreMenu(false); }}
+              placeholder="Message"
               placeholderTextColor="#8a9099"
               style={styles.composerInput}
               multiline
             />
-            {/* Voice record button */}
+
+            {/* ••• More menu toggle */}
+            <TouchableOpacity 
+              onPress={() => { setShowMoreMenu(v => !v); setShowLocationMenu(false); setShowGifPicker(false); setShowStickerPicker(false); }}
+              style={styles.composerAction}
+            >
+              <Text style={[styles.composerActionIcon, showMoreMenu && { color: '#0058bc' }]}>more_horiz</Text>
+            </TouchableOpacity>
+
+            {/* Voice record / stop */}
             {isRecording ? (
               <View style={styles.recordingInline}>
                 <View style={styles.recordingDot} />
@@ -1910,18 +2002,72 @@ export default function HomeScreen({
                 <Text style={styles.composerActionIcon}>mic</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity
-              onPress={sendMessage}
-              style={[styles.sendButton, sending && { opacity: 0.6 }]}
-              disabled={sending}
-            >
-              {sending ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.sendButtonText}>send</Text>
-              )}
-            </TouchableOpacity>
+
+            {/* Image picker / Send toggle */}
+            {(inputText.trim().length > 0 || attachments.length > 0) ? (
+              <TouchableOpacity
+                onPress={sendMessage}
+                style={[styles.sendButton, sending && { opacity: 0.6 }]}
+                disabled={sending}
+              >
+                {sending ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.sendButtonText}>send</Text>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={pickImages} style={styles.composerAction}>
+                <Text style={styles.composerActionIcon}>image</Text>
+              </TouchableOpacity>
+            )}
           </View>
+
+          {/* Zalo-style grid menu */}
+          {showMoreMenu && (
+            <View style={styles.moreMenuGrid}>
+              <View style={styles.moreMenuRow}>
+                <TouchableOpacity style={styles.moreMenuItem} onPress={() => { setShowMoreMenu(false); sendCurrentLocation(); }}>
+                  <View style={[styles.moreMenuIconCircle, { backgroundColor: '#ef4444' }]}><Text style={styles.moreMenuIcon}>location_on</Text></View>
+                  <Text style={styles.moreMenuLabel}>Location</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.moreMenuItem} onPress={() => { setShowMoreMenu(false); pickDocuments(); }}>
+                  <View style={[styles.moreMenuIconCircle, { backgroundColor: '#f59e0b' }]}><Text style={styles.moreMenuIcon}>description</Text></View>
+                  <Text style={styles.moreMenuLabel}>Document</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.moreMenuItem} onPress={() => { setShowMoreMenu(false); openContactPicker(); }}>
+                  <View style={[styles.moreMenuIconCircle, { backgroundColor: '#10b981' }]}><Text style={styles.moreMenuIcon}>contact_page</Text></View>
+                  <Text style={styles.moreMenuLabel}>Name card</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.moreMenuItem} onPress={() => { setShowMoreMenu(false); setShowGifPicker(true); searchGif('funny'); }}>
+                  <View style={[styles.moreMenuIconCircle, { backgroundColor: '#3b82f6' }]}><Text style={styles.moreMenuIcon}>gif_box</Text></View>
+                  <Text style={styles.moreMenuLabel}>@GIF</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.moreMenuRow}>
+                <TouchableOpacity style={styles.moreMenuItem} onPress={() => { setShowMoreMenu(false); startLiveLocation(); }}>
+                  <View style={[styles.moreMenuIconCircle, { backgroundColor: '#8b5cf6' }]}><Text style={styles.moreMenuIcon}>share_location</Text></View>
+                  <Text style={styles.moreMenuLabel}>Live Loc.</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.moreMenuItem} onPress={() => setSendImageAsHD(!sendImageAsHD)}>
+                  <View style={[styles.moreMenuIconCircle, sendImageAsHD ? { backgroundColor: '#0058bc' } : { backgroundColor: '#64748b' }]}>
+                    <Text style={[styles.moreMenuIcon, { fontSize: 18, fontWeight: 'bold', fontFamily: undefined }]}>HD</Text>
+                  </View>
+                  <Text style={styles.moreMenuLabel}>{sendImageAsHD ? 'HD On' : 'HD Off'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.moreMenuItem} onPress={() => { setShowMoreMenu(false); setShowStickerPicker(true); }}>
+                  <View style={[styles.moreMenuIconCircle, { backgroundColor: '#ec4899' }]}><Text style={styles.moreMenuIcon}>emoji_emotions</Text></View>
+                  <Text style={styles.moreMenuLabel}>Sticker</Text>
+                </TouchableOpacity>
+                {isLiveSharing && (
+                  <TouchableOpacity style={styles.moreMenuItem} onPress={() => { setShowMoreMenu(false); stopLiveLocation(); }}>
+                    <View style={[styles.moreMenuIconCircle, { backgroundColor: '#e53935' }]}><Text style={styles.moreMenuIcon}>stop_circle</Text></View>
+                    <Text style={[styles.moreMenuLabel, { color: '#e53935' }]}>Stop Live</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
         </KeyboardAvoidingView>
       );
     }
@@ -3351,5 +3497,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-});
 
+  // ── ZALO-STYLE MORE MENU GRID ──────────────────────────────
+  moreMenuGrid: {
+    backgroundColor: '#f7f9fb',
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e5eaf2',
+  },
+  moreMenuRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    marginBottom: 16,
+  },
+  moreMenuItem: {
+    width: '25%',
+    alignItems: 'center',
+    gap: 6,
+  },
+  moreMenuIconCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moreMenuIcon: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 26,
+    color: '#fff',
+  },
+  moreMenuLabel: {
+    ...Typography.label,
+    fontSize: 11,
+    color: '#3c4a5a',
+    textAlign: 'center',
+  },
+});

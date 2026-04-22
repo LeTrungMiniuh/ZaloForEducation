@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/logo_white.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/logo_white.png",
       "resizeMode": "contain",
@@ -18,7 +18,8 @@
         "NSCameraUsageDescription": "Ứng dụng cần quyền camera để thực hiện cuộc gọi video.",
         "NSMicrophoneUsageDescription": "Ứng dụng cần quyền microphone để thực hiện cuộc gọi âm thanh và video.",
         "NSLocationWhenInUseUsageDescription": "Ứng dụng cần quyền truy cập vị trí để bạn có thể chia sẻ vị trí của mình với bạn bè trong đoạn chat."
-      }
+      },
+      "bitcode": false
     },
     "android": {
       "adaptiveIcon": {
@@ -31,8 +32,17 @@
         "RECORD_AUDIO",
         "MODIFY_AUDIO_SETTINGS",
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
-      ]
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_NETWORK_STATE",
+        "INTERNET",
+        "WAKE_LOCK",
+        "BLUETOOTH",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "SYSTEM_ALERT_WINDOW"
+      ],
+      "package": "com.lechung.zaloedu",
+      "newArchEnabled": false
     },
     "web": {
       "favicon": "./assets/logo_white.png"
@@ -41,7 +51,9 @@
       "expo-camera",
       "expo-local-authentication",
       "expo-location",
-      "expo-av"
+      "expo-av",
+      "expo-image-picker",
+      "expo-document-picker"
     ]
   }
 }

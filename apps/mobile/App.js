@@ -1,35 +1,33 @@
-import React, { useState, useEffect } from 'react';
-import { Platform, View, Text } from 'react-native';
-import * as Font from 'expo-font';
-import { 
-  PlusJakartaSans_300Light, 
-  PlusJakartaSans_400Regular, 
-  PlusJakartaSans_500Medium, 
-  PlusJakartaSans_600SemiBold, 
-  PlusJakartaSans_700Bold, 
-  PlusJakartaSans_800ExtraBold 
+import {
+  PlusJakartaSans_300Light,
+  PlusJakartaSans_400Regular,
+  PlusJakartaSans_500Medium,
+  PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold
 } from '@expo-google-fonts/plus-jakarta-sans';
+import * as Font from 'expo-font';
+import React, { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 
+import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
-import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
-import HomeScreen from './src/screens/main/HomeScreen';
+// import HomeScreen from './src/screens/main/HomeScreen';
+import SplashScreen from './src/components/SplashScreen';
+import CallOverlay from './src/components/chat/CallOverlay';
+import LoginOtpScreen from './src/screens/auth/LoginOtpScreen';
 import SessionsScreen from './src/screens/main/SessionsScreen';
+import ChangePasswordScreen from './src/screens/profile/ChangePasswordScreen';
+import ProfileMoreScreen from './src/screens/profile/ProfileMoreScreen';
 import ProfileScreen from './src/screens/profile/ProfileScreen';
 import QRScannerScreen from './src/screens/profile/QRScannerScreen';
-import StatusPickerScreen from './src/screens/profile/StatusPickerScreen';
-import ProfileMoreScreen from './src/screens/profile/ProfileMoreScreen';
 import SettingsScreen from './src/screens/profile/SettingsScreen';
-import ChangePasswordScreen from './src/screens/profile/ChangePasswordScreen';
-import LoginOtpScreen from './src/screens/auth/LoginOtpScreen';
-import SplashScreen from './src/components/SplashScreen';
+import StatusPickerScreen from './src/screens/profile/StatusPickerScreen';
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import Alert from './src/utils/Alert';
-import SocketService from './src/utils/socket';
-import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
 
 function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, params, setParams }) {
   const { logout } = useAuth();
@@ -146,7 +144,7 @@ function MainApp({ user, authLoading, screen, setScreen, homeTab, setHomeTab, pa
     case 'reset-password': return <ResetPasswordScreen onNavigate={navigate} />;
     case 'sessions': return <SessionsScreen onNavigate={navigate} goBack={goBack} />;
     case 'profile': return <ProfileScreen onNavigate={navigate} onLogout={handleLogout} goBack={goBack} />;
-    case 'home': return <HomeScreen onNavigate={navigate} onLogout={handleLogout} initialTab={homeTab} goBack={goBack} onTabChange={handleTabChange} />;
+    // case 'home': return <HomeScreen onNavigate={navigate} onLogout={handleLogout} initialTab={homeTab} goBack={goBack} onTabChange={handleTabChange} />;
     case 'qr-scanner': return <QRScannerScreen onNavigate={navigate} goBack={goBack} />;
     case 'status-picker': return <StatusPickerScreen onNavigate={navigate} goBack={goBack} />;
     case 'profile-more': return <ProfileMoreScreen onNavigate={navigate} goBack={goBack} />;
@@ -193,6 +191,7 @@ export default function App() {
           params={params}
           setParams={setParams}
         />
+        <CallOverlay />
       </AuthProvider>
     </SafeAreaProvider>
   );

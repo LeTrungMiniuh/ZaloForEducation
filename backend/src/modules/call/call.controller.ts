@@ -23,15 +23,15 @@ export class CallController {
    */
   @Post('create')
   async createMeeting(
-    @Body() body: { conversationId: string; type?: 'audio' | 'video' },
+    @Body() body: { conversationId: string; callId: string; type?: 'audio' | 'video' },
     @Request() req: any,
   ) {
     const userEmail: string = req.user?.email;
     if (!userEmail) throw new BadRequestException('User email not found in token');
-    if (!body.conversationId) throw new BadRequestException('conversationId is required');
+    if (!body.conversationId || !body.callId) throw new BadRequestException('conversationId and callId are required');
 
-    this.logger.log(`[API] Create: convId=${body.conversationId}, type=${body.type}, user=${userEmail}`);
-    return this.callService.createMeeting(body.conversationId, userEmail, body.type || 'video');
+    this.logger.log(`[API] Create: convId=${body.conversationId}, callId=${body.callId}, type=${body.type}, user=${userEmail}`);
+    return this.callService.createMeeting(body.conversationId, body.callId, userEmail, body.type || 'video');
   }
 
   /**
@@ -39,15 +39,15 @@ export class CallController {
    */
   @Post('join')
   async joinMeeting(
-    @Body() body: { conversationId: string },
+    @Body() body: { conversationId: string; callId: string },
     @Request() req: any,
   ) {
     const userEmail: string = req.user?.email;
     if (!userEmail) throw new BadRequestException('User email not found in token');
-    if (!body.conversationId) throw new BadRequestException('conversationId is required');
+    if (!body.conversationId || !body.callId) throw new BadRequestException('conversationId and callId are required');
 
-    this.logger.log(`[API] Join: convId=${body.conversationId}, user=${userEmail}`);
-    return this.callService.joinMeeting(body.conversationId, userEmail);
+    this.logger.log(`[API] Join: convId=${body.conversationId}, callId=${body.callId}, user=${userEmail}`);
+    return this.callService.joinMeeting(body.conversationId, body.callId, userEmail);
   }
 
   /**
@@ -55,13 +55,14 @@ export class CallController {
    */
   @Post('hangup')
   async hangupMeeting(
-    @Body() body: { conversationId: string },
+    @Body() body: { conversationId: string; callId: string },
     @Request() req: any,
   ) {
     const userEmail: string = req.user?.email;
     if (!userEmail) throw new BadRequestException('User email not found in token');
+    if (!body.callId) throw new BadRequestException('callId is required for hangup');
 
-    this.logger.log(`[API] Hangup: convId=${body.conversationId}, user=${userEmail}`);
-    return this.callService.hangupMeeting(body.conversationId, userEmail);
+    this.logger.log(`[API] Hangup: convId=${body.conversationId}, callId=${body.callId}, user=${userEmail}`);
+    return this.callService.hangupMeeting(body.conversationId, body.callId, userEmail);
   }
 }

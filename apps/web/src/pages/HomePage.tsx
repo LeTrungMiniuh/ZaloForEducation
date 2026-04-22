@@ -1,9 +1,9 @@
-import React, { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import Swal from "sweetalert2";
+import ProfileModal from "../components/ProfileModal";
 import { useAuth } from "../context/AuthContext";
 import api from "../services/api";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import ProfileModal from "../components/ProfileModal";
-import Swal from "sweetalert2";
 import { useChatStore } from "../store/chatStore";
 
 type Friendship = {
@@ -3114,3 +3114,4 @@ const HomePage: React.FC = () => {
 };
 
 export default HomePage;
+// File removed. No longer used.
