@@ -27,7 +27,6 @@ import { ChatService } from "./chat.service";
 import { FriendshipService } from "./friendship.service";
 import { MessageService } from "./message.service";
 import { NotificationService } from "./notification.service";
-import { S3Service } from "../../infrastructure/s3.service";
 import { BotService } from "../bot/bot.service";
 import { BOT_EMAIL } from '@zalo-edu/shared';
 
@@ -48,7 +47,7 @@ export class ChatController {
     private readonly chatGateway: ChatGateway,
     private readonly notificationService: NotificationService,
     private readonly botService: BotService,
-  ) {}
+  ) { }
 
   // --- CONVERSATIONS ---
   @Get("conversations")
@@ -234,27 +233,27 @@ export class ChatController {
 
     // BROADCAST REAL-TIME VIA SOCKET
     if (body.action === 'react') {
-      this.chatGateway.server.to(convId).emit('message_reaction', { 
-        messageId, 
-        reactions: res.reactions 
+      this.chatGateway.server.to(convId).emit('message_reaction', {
+        messageId,
+        reactions: res.reactions
       });
     } else if (body.action === 'recall') {
-      this.chatGateway.server.to(convId).emit('message_recalled', { 
-        messageId, 
+      this.chatGateway.server.to(convId).emit('message_recalled', {
+        messageId,
         conversationId: convId,
-        recalledBy: email 
+        recalledBy: email
       });
     } else if (body.action === 'pin' || body.action === "unpin") {
-      this.chatGateway.server.to(convId).emit('PIN_UPDATE', { 
+      this.chatGateway.server.to(convId).emit('PIN_UPDATE', {
         conversationId: convId,
         pinnedMessageIds: res.pinnedMessageIds
       });
       // Legacy support if needed
-      this.chatGateway.server.to(convId).emit('message_pinned', { 
-        messageId, 
+      this.chatGateway.server.to(convId).emit('message_pinned', {
+        messageId,
         conversationId: convId,
         pinned: body.action === 'pin',
-        pinnedBy: email 
+        pinnedBy: email
       });
     }
 
@@ -301,10 +300,10 @@ export class ChatController {
         user: profile.profile,
         friendship: friendship
           ? {
-              senderEmail: friendship.sender_id,
-              receiverEmail: friendship.receiver_id,
-              status: friendship.status,
-            }
+            senderEmail: friendship.sender_id,
+            receiverEmail: friendship.receiver_id,
+            status: friendship.status,
+          }
           : null,
       };
     } catch (error) {
