@@ -199,6 +199,22 @@ export const useSocketListeners = () => {
       } as any);
     };
 
+    const handleMessagePatched = (data: { convId: string; message: any }) => {
+      console.log('[SOCKET] message_patched received:', data);
+      if (data.message?.id) {
+        updateMessage(data.message.id, data.message);
+      }
+      
+      // If it contains pinned status change, we might need to update conversation too
+      if (data.message?.pinnedMessageIds) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === data.convId ? { ...c, pinnedMessageIds: data.message.pinnedMessageIds } : c
+          )
+        );
+      }
+    };
+
     const handlePinUpdate = (data: { conversationId?: string; convId?: string; pinnedMessageIds: string[] }) => {
       const convId = data.conversationId || data.convId;
       if (!convId) return;
@@ -401,6 +417,7 @@ export const useSocketListeners = () => {
     socket.on('message_reaction', handleMessageReaction);
     socket.on('message_recalled', handleMessageRecalled);
     socket.on('message_pinned', handleMessagePinned);
+    socket.on('message_patched', handleMessagePatched);
     socket.on('pin_update', handlePinUpdate);
     socket.on('PIN_UPDATE', handlePinUpdate);
     socket.on('group_update', handleGroupUpdate);
@@ -427,6 +444,7 @@ export const useSocketListeners = () => {
       socket.off('message_reaction', handleMessageReaction);
       socket.off('message_recalled', handleMessageRecalled);
       socket.off('message_pinned', handleMessagePinned);
+      socket.off('message_patched', handleMessagePatched);
       socket.off('pin_update', handlePinUpdate);
       socket.off('PIN_UPDATE', handlePinUpdate);
       socket.off('group_update', handleGroupUpdate);

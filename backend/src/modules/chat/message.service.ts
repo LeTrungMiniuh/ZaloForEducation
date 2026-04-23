@@ -481,6 +481,22 @@ export class MessageService {
     return { ...msg, seen, status: "seen" };
   }
 
+  async getMessage(convId: string, messageId: string, userEmail: string) {
+    await this.ensureConversationMember(convId, userEmail);
+
+    const res = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: convId, SK: messageId },
+      }),
+    );
+
+    const msg = res.Item as any;
+    if (!msg) return null;
+
+    return { ...msg, id: msg.id || msg.SK };
+  }
+
   /**
    * GET MESSAGES FOR CONVERSATION
    */

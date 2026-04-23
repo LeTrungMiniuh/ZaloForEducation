@@ -21,7 +21,8 @@ const PinnedHeader: React.FC = () => {
     conversations, 
     messages, 
     jumpToMessage,
-    patchMessageOptimistic 
+    patchMessageOptimistic,
+    fetchMessage 
   } = useChatStore();
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -35,6 +36,16 @@ const PinnedHeader: React.FC = () => {
       return msg ? { id: msg.id, content: msg.content, createdAt: msg.createdAt } : { id, content: 'Đang tải tin nhắn...', isPlaceholder: true };
     });
   }, [pinnedIds, messages]);
+
+  // [NEW] Fetch missing pinned messages
+  React.useEffect(() => {
+    if (!activeConvId) return;
+    pinnedMessages.forEach(pm => {
+      if (pm.isPlaceholder) {
+        fetchMessage(activeConvId, pm.id);
+      }
+    });
+  }, [activeConvId, pinnedMessages, fetchMessage]);
 
   if (pinnedIds.length === 0) return null;
 

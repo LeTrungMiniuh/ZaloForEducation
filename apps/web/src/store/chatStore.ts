@@ -152,6 +152,7 @@ interface ChatState {
     convId: string,
     days: 1 | 7 | 30 | null,
   ) => Promise<void>;
+  fetchMessage: (convId: string, messageId: string) => Promise<void>;
 
   // Tagging
   tags: Array<{ id: string; name: string; color?: string }>;
@@ -373,21 +374,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setHighlightedMessageId: (id) => set({ highlightedMessageId: id }),
 
-  jumpToMessage: (messageId: string) => {
-    setTimeout(() => {
-      const el = document.getElementById(`msg-${messageId}`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        set({ highlightedMessageId: messageId });
+  jumpToMessage: async (messageId: string) => {
+    const el = document.getElementById(`msg-${messageId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      set({ highlightedMessageId: messageId });
+      setTimeout(() => {
+        if (get().highlightedMessageId === messageId) {
+          set({ highlightedMessageId: null });
+        }
+      }, 2000);
+      return;
+    }
+
+    // Message not found, fetch context
+    const activeConvId = get().activeConvId;
+    if (!activeConvId) return;
+
+    try {
+      set({ isLoadingMessages: true });
+      const res = await api.get(`/chat/conversations/${encodeURIComponent(activeConvId)}/messages-context/${encodeURIComponent(messageId)}`);
+      if (res.data?.messages) {
+        set({ 
+          messages: res.data.messages, 
+          nextCursor: res.data.nextCursor,
+          isLoadingMessages: false 
+        });
+        
+        // Wait for render then scroll
         setTimeout(() => {
-          if (get().highlightedMessageId === messageId) {
-            set({ highlightedMessageId: null });
+          const newEl = document.getElementById(`msg-${messageId}`);
+          if (newEl) {
+            newEl.scrollIntoView({ behavior: "smooth", block: "center" });
+            set({ highlightedMessageId: messageId });
+            setTimeout(() => {
+              if (get().highlightedMessageId === messageId) {
+                set({ highlightedMessageId: null });
+              }
+            }, 2000);
           }
-        }, 2000);
-      } else {
-        console.warn("Message not found in current view.");
+        }, 500);
       }
-    }, 300);
+    } catch (err) {
+      console.error("Failed to jump to message context", err);
+      set({ isLoadingMessages: false });
+    }
   },
 
   fetchConversations: async () => {
@@ -862,6 +893,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ isSearching: false, searchQuery: "" });
     } catch (err) {
       console.error("Failed start direct chat", err);
+    }
+  },
+
+  fetchMessage: async (convId, messageId) => {
+    try {
+      const res = await api.get(`/chat/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`);
+      if (res.data) {
+        set((state) => {
+          const exists = state.messages.find(m => m.id === messageId);
+          if (exists) return state;
+          return { messages: [...state.messages, res.data] };
+        });
+      }
+    } catch (err) {
+      console.error("Failed to fetch single message", err);
     }
   },
 

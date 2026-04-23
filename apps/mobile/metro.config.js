@@ -21,6 +21,9 @@ config.resolver.nodeModulesPaths = [
 config.resolver.blockList = [
   /.*\.gradle.*/,
   /.*node_modules\/.*\/build\/.*/,
+  /.*node_modules\/.*\/ios\/.*/,
+  /.*node_modules\/.*\/android\/.*/,
+  /.*\.expo-.*/,
 ];
 
 // 6. Đảm bảo hỗ trợ New Architecture nếu cần

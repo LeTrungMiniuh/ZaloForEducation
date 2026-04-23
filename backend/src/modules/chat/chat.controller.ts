@@ -44,7 +44,7 @@ export class ChatController {
     @Inject(forwardRef(() => ChatGateway))
     private readonly chatGateway: ChatGateway,
     private readonly notificationService: NotificationService,
-  ) {}
+  ) { }
 
   // --- CONVERSATIONS ---
   @Get("conversations")
@@ -121,6 +121,26 @@ export class ChatController {
     );
   }
 
+  @Get("conversations/:convId/messages/:messageId")
+  async getMessage(
+    @Param("convId") convId: string,
+    @Param("messageId") messageId: string,
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.messageService.getMessage(convId, messageId, email);
+  }
+
+  @Get("conversations/:convId/messages-context/:messageId")
+  async getMessagesContext(
+    @Param("convId") convId: string,
+    @Param("messageId") messageId: string,
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.messageService.getMessagesContext(convId, messageId, email);
+  }
+
   @Post("conversations/:convId/messages")
   async sendMessage(
     @Param("convId") convId: string,
@@ -166,7 +186,7 @@ export class ChatController {
 
     const normalizedConvId = convId.toLowerCase();
     const convMetadata = await this.chatService.getConversationMetadata(convId);
-    
+
     // 1. BROADCAST REAL-TIME VIA SOCKET
     if (this.chatGateway?.server) {
       this.chatGateway.server.to(normalizedConvId).emit("receiveMessage", res);
@@ -206,7 +226,7 @@ export class ChatController {
           ? '[Danh thiếp]'
           : body.type === 'location'
             ? '[Vị trí]'
-          : (body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]')),
+            : (body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]')),
         data: { convId, messageId: res.id }
       });
     }
@@ -283,10 +303,28 @@ export class ChatController {
     if (this.chatGateway?.server) {
       // [BACKWARD COMPATIBILITY] Specialized events
       if (body.action === 'react') {
-        this.chatGateway.server.to(convId).emit('message_reaction', { 
-          messageId, 
-          reactions: res.reactions 
+        this.chatGateway.server.to(convId).emit('message_reaction', {
+          messageId,
+          reactions: res.reactions
         });
+
+        // [SENIOR] Emit a virtual system message for the reaction notification
+        const emoji = body.emoji || '❤️';
+        const senderProfile = await this.userService.getUserProfile(email);
+        const senderName = senderProfile?.profile?.fullName || email;
+        const systemMsg = {
+          id: `SYS_REACT_${Date.now()}_${messageId}`,
+          conversationId: convId,
+          senderId: 'system',
+          type: 'system',
+          content: `${senderName} đã thả cảm xúc ${emoji} về một tin nhắn`,
+          createdAt: new Date().toISOString(),
+          metadata: {
+            targetMessageId: messageId,
+            type: 'reaction_notification'
+          }
+        };
+        this.chatGateway.server.to(convId).emit("receiveMessage", systemMsg);
       } else if (body.action === "recall") {
         this.chatGateway.server.to(convId).emit("message_recalled", {
           messageId,
@@ -351,10 +389,10 @@ export class ChatController {
         user: profile.profile,
         friendship: friendship
           ? {
-              senderEmail: friendship.sender_id,
-              receiverEmail: friendship.receiver_id,
-              status: friendship.status,
-            }
+            senderEmail: friendship.sender_id,
+            receiverEmail: friendship.receiver_id,
+            status: friendship.status,
+          }
           : null,
       };
     } catch (error) {
