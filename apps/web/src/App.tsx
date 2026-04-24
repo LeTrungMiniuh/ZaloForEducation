@@ -35,12 +35,11 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 // Import Layouts & Pages
-import MainLayout from "./components/layout/MainLayout";
-import ChatPage from "./pages/chat/ChatPage";
-import {
-  NotificationPage,
-  CloudPage,
-} from "./pages/notifications/NotificationPage";
+import MainLayout from './components/layout/MainLayout';
+import ChatPage from './pages/chat/ChatPage';
+import ContactPage from './pages/contacts/ContactPage';
+import { NotificationPage, CloudPage } from './pages/notifications/NotificationPage';
+import BotChatPanel from './components/chat/BotChatPanel';
 
 const AppContent: React.FC = () => {
   const { loading } = useAuth();
@@ -103,6 +102,9 @@ const AppContent: React.FC = () => {
             <Route path="/friends" element={<Navigate to="/contacts" />} />
             <Route path="/notifications" element={<NotificationPage />} />
             <Route path="/cloud" element={<CloudPage />} />
+            <Route path="/bot" element={<BotChatPanel />} />
+            
+            {/* These pages now have the Sidebar too */}
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/settings" element={<SettingsPage />} />
