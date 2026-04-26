@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import Swal from 'sweetalert2';
 import { useOtpCountdown } from '../hooks/useOtpCountdown';
@@ -6,7 +6,6 @@ import {
   ShieldCheck, 
   Eye, 
   EyeOff, 
-  X,
   Loader2
 } from 'lucide-react';
 
@@ -21,7 +20,7 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
   
   const [formData, setFormData] = useState({
     password: '',
-    fullName: pendingGoogleUser?.name || '',
+    fullName: String(pendingGoogleUser?.name || ''),
     gender: true,
     dataOfBirth: '',
     phone: '',
@@ -34,11 +33,13 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
   const [loading, setLoading] = useState(false);
   const { countdown, startCountdown, syncWithServer } = useOtpCountdown(email);
 
-  useEffect(() => {
-    if (pendingGoogleUser?.name && !formData.fullName) {
-      setFormData(prev => ({ ...prev, fullName: pendingGoogleUser.name }));
-    }
-  }, [pendingGoogleUser]);
+  // Sync fullName from pendingGoogleUser (store prev value as state)
+  const [prevGoogleName, setPrevGoogleName] = useState(String(pendingGoogleUser?.name || ''));
+  const currentGoogleName = String(pendingGoogleUser?.name || '');
+  if (currentGoogleName && currentGoogleName !== prevGoogleName && !formData.fullName) {
+    setPrevGoogleName(currentGoogleName);
+    setFormData(prev => ({ ...prev, fullName: currentGoogleName }));
+  }
 
   const validatePhone = (phone: string) => {
     return /^0[0-9]{9}$/.test(phone);
@@ -62,11 +63,12 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
         timer: 3000,
         showConfirmButton: false
       });
-    } catch (err: any) {
-      if (err.response?.status === 429 && err.response?.data?.retryAfter) {
-        syncWithServer(err.response.data.retryAfter);
+    } catch (err: unknown) {
+      const error = err as { response?: { status?: number; data?: { retryAfter?: number; message?: string } } };
+      if (error.response?.status === 429 && error.response?.data?.retryAfter) {
+        syncWithServer(error.response.data.retryAfter);
       }
-      Swal.fire('Lỗi', err.response?.data?.message || 'Không thể gửi OTP.', 'error');
+      Swal.fire('Lỗi', error.response?.data?.message || 'Không thể gửi OTP.', 'error');
     } finally {
       setLoading(false);
     }
@@ -101,8 +103,9 @@ const ProfileCompletionModal: React.FC<ProfileCompletionModalProps> = ({ isOpen,
       }).then(() => {
         window.location.href = '/chat';
       });
-    } catch (err: any) {
-      Swal.fire('Lỗi', err.response?.data?.message || 'Hoàn thiện hồ sơ thất bại.', 'error');
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } };
+      Swal.fire('Lỗi', error.response?.data?.message || 'Hoàn thiện hồ sơ thất bại.', 'error');
     } finally {
       setLoading(false);
     }

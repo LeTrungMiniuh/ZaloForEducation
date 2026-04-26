@@ -3,6 +3,13 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
 
+type UploadedFile = {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
+
 @Injectable()
 export class S3Service {
   private s3Client: S3Client;
@@ -18,7 +25,7 @@ export class S3Service {
     });
   }
 
-  async uploadFile(file: Express.Multer.File, folder: string = 'avatars'): Promise<string> {
+  async uploadFile(file: UploadedFile, folder: string = 'avatars'): Promise<string> {
     const bucketName = this.configService.get<string>('S3_BUCKET_NAME');
     const region = this.configService.get<string>('AWS_REGION') || 'ap-southeast-1';
     

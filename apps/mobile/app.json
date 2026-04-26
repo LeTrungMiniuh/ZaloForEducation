@@ -48,7 +48,12 @@
       "expo-camera",
       "expo-image-picker",
       "expo-document-picker",
-      "expo-local-authentication"
+      "expo-local-authentication",
+      "expo-av",
+      "expo-notifications",
+      "expo-location",
+      "expo-font",
+      "expo-sharing"
     ]
   }
 }

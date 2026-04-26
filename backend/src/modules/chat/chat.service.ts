@@ -1,4 +1,4 @@
-import { BatchGetCommand, GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { BadRequestException, Inject, Injectable, forwardRef } from '@nestjs/common';
 import { Conversation } from '@zalo-edu/shared';
 import { v4 as uuidv4 } from 'uuid';
@@ -14,14 +14,14 @@ export class ChatService {
     private readonly chatGateway: ChatGateway,
     @Inject(forwardRef(() => FriendshipService))
     private readonly friendshipService: FriendshipService,
-  ) {}
+  ) { }
 
   /**
    * CREATE DIRECT CONVERSATION (1-1)
    */
   async createDirectConversation(email1: string, email2: string) {
     if (email1 === email2) throw new BadRequestException('Cannot create chat with yourself');
-    
+
     // Create a predictable conversation ID for 1-1 chats (e.g. sorted emails)
     const sorted = [email1, email2].sort();
     const convId = `CONV#DIRECT#${sorted[0]}#${sorted[1]}`;
@@ -41,7 +41,7 @@ export class ChatService {
         ...exists.Item,
         lastReadAt: userMapping.Item?.lastReadAt || 0
       } as Conversation;
-      
+
       const lastClearedAt = userMapping.Item?.lastClearedAt;
       if (lastClearedAt && conv.lastMessageTimestamp) {
         const clearTime = new Date(lastClearedAt).getTime();
@@ -126,7 +126,6 @@ export class ChatService {
       updatedAt: new Date().toISOString()
     };
 
-    // Construct TransactItems (Max 100 items per request in DynamoDB)
     const transactItems: any[] = [
       {
         Put: {
@@ -189,7 +188,7 @@ export class ChatService {
 
     // Chunk arrays if > 100 max per Dynamo BatchGet
     const results: Conversation[] = [];
-    
+
     // For simplicity, assuming < 100 conversations for MVP
     const batchResult = await this.db.docClient.send(new BatchGetCommand({
       RequestItems: {
@@ -200,8 +199,9 @@ export class ChatService {
     }));
 
     const convs = batchResult.Responses?.[this.db.tableName] as Conversation[] || [];
-    
-    // Create lookups for mapping data
+
+    // Create lookups for mapping data (now includes unreadCount from Mapping)
+    const countMap = new Map(mappings.map(m => [m.SK as string, m.unreadCount || 0]));
     const clearMap = new Map(mappings.map(m => [m.SK as string, m.lastClearedAt || ""]));
     const readMap = new Map(mappings.map(m => [m.SK as string, m.lastReadAt || 0]));
 
@@ -210,8 +210,9 @@ export class ChatService {
       .map((c) => {
         const lastClearedAt = clearMap.get(c.id);
         const lastReadAt = readMap.get(c.id) || 0;
-        
-        const sanitizedConv = { ...c, lastReadAt };
+        const unreadCount = countMap.get(c.id) || 0;
+
+        const sanitizedConv = { ...c, lastReadAt, unreadCount };
 
         if (sanitizedConv.autoDeleteDays && sanitizedConv.lastMessageTimestamp) {
           const expireMs = Number(sanitizedConv.autoDeleteDays) * 24 * 60 * 60 * 1000;
@@ -239,19 +240,63 @@ export class ChatService {
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
-  async markConversationAsRead(convId: string, email: string) {
-    await this.db.docClient.send(new UpdateCommand({
-      TableName: this.db.tableName,
-      Key: { PK: `USER#${email}`, SK: convId },
-      UpdateExpression: 'SET lastReadAt = :ts',
-      ExpressionAttributeValues: {
-        ':ts': Date.now()
-      }
+  async markConversationAsRead(email: string, convId: string, messageId?: string) {
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata || !Array.isArray(metadata.members) || !metadata.members.includes(email)) {
+      throw new BadRequestException('You are not a member of this conversation');
+    }
+
+    const timestamp = new Date().toISOString();
+    
+    // Use Transaction to reset unreadCount and update Read Marker
+    await this.db.docClient.send(new TransactWriteCommand({
+      TransactItems: [
+        // 1. Reset Unread Count for this User-Conv mapping
+        {
+          Update: {
+            TableName: this.db.tableName,
+            Key: { PK: `USER#${email}`, SK: convId },
+            UpdateExpression: 'SET lastReadAt = :ts, unreadCount = :zero',
+            ExpressionAttributeValues: {
+              ':ts': timestamp,
+              ':zero': 0
+            }
+          }
+        },
+        // 2. [PRODUCTION] Update Global Read Marker for this member
+        {
+          Put: {
+            TableName: this.db.tableName,
+            Item: {
+              PK: convId,
+              SK: `READ#${email}`,
+              lastReadAt: timestamp,
+              lastReadMessageId: messageId || null,
+              updatedAt: timestamp
+            }
+          }
+        }
+      ]
     }));
 
     // Notify all devices of this user
     this.chatGateway.emitConversationRead(email, convId);
 
+    return { success: true };
+  }
+
+  async markAsDelivered(email: string, convId: string, messageId: string) {
+    const timestamp = new Date().toISOString();
+    await this.db.docClient.send(new PutCommand({
+      TableName: this.db.tableName,
+      Item: {
+        PK: convId,
+        SK: `DELIVERED#${email}`,
+        lastDeliveredMessageId: messageId,
+        deliveredAt: timestamp,
+        updatedAt: timestamp
+      }
+    }));
     return { success: true };
   }
 
@@ -359,10 +404,10 @@ export class ChatService {
           status: u.status || 'offline'
         }));
     }
-    
+
     // 3. Search Messages & Files (REFACTORED: Parallel Query + Depth Limit)
     // We Query the latest 100 messages from each of the user's conversations
-    const messageQueries = myConvIds.map(convId => 
+    const messageQueries = myConvIds.map(convId =>
       this.db.docClient.send(new QueryCommand({
         TableName: this.db.tableName,
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
@@ -382,10 +427,10 @@ export class ChatService {
     const matchedMessages = allMessages.filter(m => {
       const content = (m.content || '').toLowerCase();
       const hasTextMatch = content.includes(q);
-      
+
       const media = Array.isArray(m.media) ? m.media : [];
       const files = Array.isArray(m.files) ? m.files : [];
-      const hasFileMatch = [...media, ...files].some(f => 
+      const hasFileMatch = [...media, ...files].some(f =>
         (f.name || f.fileName || '').toLowerCase().includes(q)
       );
 
@@ -393,13 +438,15 @@ export class ChatService {
     });
 
     // Sort globally by newest
-    matchedMessages.sort((a, b) => 
+    matchedMessages.sort((a, b) =>
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
 
     // Filter into text-only messages vs files for the response
+    // [SENIOR] EXCLUDE ALL SYSTEM-GENERATED MESSAGES (system, call logs, etc.)
+    const EXCLUDED_MESSAGE_TYPES = ['system', 'SYSTEM_CALL'];
     const searchMessages = matchedMessages
-      .filter(m => (m.content || '').toLowerCase().includes(q))
+      .filter(m => !EXCLUDED_MESSAGE_TYPES.includes(m.type) && (m.content || '').toLowerCase().includes(q))
       .map(m => ({
         id: m.SK,
         convId: m.PK,
@@ -409,10 +456,11 @@ export class ChatService {
       }));
 
     const searchFiles = matchedMessages.flatMap(m => {
+      if (EXCLUDED_MESSAGE_TYPES.includes(m.type)) return [];
       const media = Array.isArray(m.media) ? m.media : [];
       const files = Array.isArray(m.files) ? m.files : [];
       const allItems = [...media, ...files];
-      
+
       return allItems
         .filter(f => (f.name || f.fileName || '').toLowerCase().includes(q))
         .map(f => ({
@@ -425,10 +473,77 @@ export class ChatService {
         }));
     });
 
-    return {
-      contacts: contactResults,
-      messages: searchMessages,
-      files: searchFiles
+    // [SENIOR] HYDRATE SENDER PROFILES
+    const uniqueSenders = new Set([
+      ...searchMessages.map(m => m.senderId),
+      ...searchFiles.map(f => f.senderId)
+    ].filter(Boolean));
+
+    const senderProfiles = {};
+    if (uniqueSenders.size > 0) {
+      const senderEmails = Array.from(uniqueSenders);
+      const profileResults = await Promise.all(
+        senderEmails.map(email =>
+          this.db.docClient.send(new GetCommand({
+            TableName: this.db.tableName,
+            Key: { PK: `USER#${email}`, SK: 'METADATA' }
+          }))
+        )
+      );
+
+      profileResults.forEach((res, idx) => {
+        const p = res.Item;
+        const email = senderEmails[idx];
+        if (p) {
+          senderProfiles[email] = {
+            name: p.fullName || p.fullname || email,
+            avatar: p.avatarUrl || p.urlAvatar || ''
+          };
+        } else {
+          senderProfiles[email] = {
+            name: email,
+            avatar: ''
+          };
+        }
+      });
+    }
+
+    // Standardize for Search V2: type/id/conversationId/sender
+    const standardized = {
+      contacts: contactResults.slice(0, 50).map(c => ({
+        type: 'CONTACT',
+        id: c.email,
+        userId: c.email,
+        email: c.email,
+        fullName: c.fullName,
+        avatarUrl: c.avatar,
+        content: c.fullName || c.email,
+        sender: {
+          name: c.fullName || c.email,
+          avatar: c.avatar
+        }
+      })),
+      messages: searchMessages.slice(0, 50).map(m => ({
+        type: 'MESSAGE',
+        id: m.id,
+        conversationId: m.convId,
+        senderId: m.senderId,
+        content: m.content,
+        createdAt: m.createdAt,
+        sender: senderProfiles[m.senderId] || { name: m.senderId, avatar: '' }
+      })),
+      files: searchFiles.slice(0, 50).map(f => ({
+        type: 'FILE',
+        id: f.messageId,
+        messageId: f.messageId,
+        conversationId: f.convId,
+        senderId: f.senderId,
+        name: f.name,
+        size: f.size,
+        createdAt: f.createdAt,
+        sender: senderProfiles[f.senderId] || { name: f.senderId, avatar: '' }
+      }))
     };
+    return standardized;
   }
 }

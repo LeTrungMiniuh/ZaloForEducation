@@ -1,33 +1,84 @@
-import {
-    BellOff,
-    Clock3,
-    FileDigit,
-    FileImage,
-    FileText,
-    Link as LinkIcon,
-    Music,
-    Trash2,
-    Video,
-    X
-} from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { 
+  BellOff, 
+  Bell,
+  Clock3, 
+  FileDigit, 
+  FileImage, 
+  FileText, 
+  Link as LinkIcon, 
+  Music, 
+  Trash2, 
+  Video, 
+  X,
+  Check,
+  ChevronDown
+} from 'lucide-react';
+import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
 import { useChatStore } from '../../store/chatStore';
-import { formatFileSize, getDisplayAvatar, getDisplayName, normalizeAttachment } from '../../utils/chatUtils';
+import { 
+  formatFileSize, 
+  getDisplayAvatar, 
+  getDisplayName, 
+  normalizeAttachment,
+  clearConversationMuteSchedule,
+  createConversationMuteScheduleFromDuration,
+  createConversationMuteScheduleUntilMorning,
+  formatMuteScheduleLabel,
+  getConversationMuteSchedule,
+  setConversationMuteSchedule,
+  type ConversationMuteSchedule
+} from '../../utils/chatUtils';
 
 const ChatInfoSidebar: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { conversations, activeConvId, userProfiles, messages, setConversationAutoDelete } = useChatStore();
+  const {
+    conversations,
+    activeConvId,
+    userProfiles,
+    messages,
+    setConversationAutoDelete,
+    setPreviewImage,
+    clearHistory,
+    mutedConversations,
+    muteConversationFor,
+    clearConversationMuted,
+    isConversationMuted,
+  } = useChatStore();
 
   const activeChat = conversations.find(c => c.id === activeConvId);
+
+  // HEAD States
   const [activeStorageTab, setActiveStorageTab] = useState<'media' | 'file' | 'link'>('media');
   const [senderFilter, setSenderFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
   const [showAutoDeleteModal, setShowAutoDeleteModal] = useState(false);
   const [pendingAutoDeleteDays, setPendingAutoDeleteDays] = useState<1 | 7 | 30 | null>(null);
   const [savingAutoDelete, setSavingAutoDelete] = useState(false);
+
+  // tin_notification States
+  const [showMutePanel, setShowMutePanel] = useState(false);
+  const [showCustomMuteInputs, setShowCustomMuteInputs] = useState(false);
+  const [muteStartTime, setMuteStartTime] = useState('22:00');
+  const [muteEndTime, setMuteEndTime] = useState('07:00');
+  const [muteSummary, setMuteSummary] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeChat) return;
+    const schedule = getConversationMuteSchedule(activeChat.id);
+    if (schedule) {
+      setMuteStartTime(schedule.startTime);
+      setMuteEndTime(schedule.endTime);
+      setMuteSummary(formatMuteScheduleLabel(schedule));
+    } else {
+      setMuteSummary(null);
+    }
+    setShowMutePanel(false);
+    setShowCustomMuteInputs(false);
+  }, [activeChat]);
 
   if (!activeChat) return null;
 
@@ -44,6 +95,23 @@ const ChatInfoSidebar: React.FC = () => {
     : (activeChat.avatar || '/logo_blue.png');
 
   const currentAutoDeleteDays = activeChat.autoDeleteDays ?? null;
+  const muted = !!(activeConvId && isConversationMuted(activeConvId));
+  const muteSetting = activeConvId ? mutedConversations[activeConvId] : undefined;
+
+  const getMuteStatusLabel = () => {
+    if (!activeConvId || !muted) return 'ĐANG BẬT';
+    if (muteSetting === 'until-open') return 'ĐẾN KHI MỞ LẠI';
+    if (muteSetting === true) return 'VĨNH VIỄN';
+    if (typeof muteSetting === 'number') {
+      const diff = muteSetting - Date.now();
+      if (diff <= 0) return 'ĐANG BẬT';
+      const hours = Math.floor(diff / (60 * 60 * 1000));
+      const minutes = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
+      if (hours > 0) return `${hours}G ${minutes}P`;
+      return `${Math.max(1, minutes)} PHÚT`;
+    }
+    return 'ĐANG TẮT';
+  };
 
   const autoDeleteLabel = (days: 1 | 7 | 30 | null) => {
     if (days === 1) return '1 ngày';
@@ -70,7 +138,39 @@ const ChatInfoSidebar: React.FC = () => {
     }
   };
 
-  // Helper to render file icon components
+  const applyMuteSchedule = (schedule: {
+    enabled: boolean;
+    startTime: string;
+    endTime: string;
+  }) => {
+    if (!activeChat) return;
+
+    setConversationMuteSchedule(activeChat.id, schedule as ConversationMuteSchedule);
+    setMuteSummary(formatMuteScheduleLabel(schedule as ConversationMuteSchedule));
+    setShowMutePanel(false);
+    setShowCustomMuteInputs(false);
+    
+    // Also trigger store-level mute (manual) to be safe or just rely on scheduler
+    // For now, let's keep schedule as a separate UI/UX enhancement
+  };
+
+  const handleSaveMuteSchedule = () => {
+    applyMuteSchedule({
+      enabled: true,
+      startTime: muteStartTime,
+      endTime: muteEndTime,
+    });
+  };
+
+  const handleClearMuteSchedule = () => {
+    if (!activeChat) return;
+
+    clearConversationMuteSchedule(activeChat.id);
+    setMuteSummary(null);
+    setShowMutePanel(false);
+    setShowCustomMuteInputs(false);
+  };
+
   const FileIconComponent = ({ fileName }: { fileName: string }) => {
     if (fileName.match(/\.(jpg|jpeg|png|gif|webp)$/i)) return <FileImage size={20} className="text-primary" />;
     if (fileName.match(/\.(mp4|mov|avi|wmv)$/i)) return <Video size={20} className="text-primary" />;
@@ -79,16 +179,30 @@ const ChatInfoSidebar: React.FC = () => {
     return <FileText size={20} className="text-primary" />;
   };
 
-  // Combine all attachments and store senderId for filtering
   const allAttachments = messages.flatMap(m => {
     const arr = [...(m.media || []), ...(m.files || [])];
-    return arr.map(a => ({ ...a, senderId: m.senderId }));
-  }).map(f => ({ ...normalizeAttachment(f), senderId: f.senderId })).reverse();
+    return arr.map(a => ({ ...a, senderId: m.senderId, createdAt: m.createdAt }));
+  }).map(f => ({ ...normalizeAttachment(f), senderId: f.senderId, createdAt: f.createdAt })).reverse();
 
-  const isMedia = (f: any) => 
-    f.mimeType?.startsWith('image/') || 
-    f.mimeType?.startsWith('video/') ||
-    f.name?.match(/\.(jpg|jpeg|png|gif|webp|mp4|mov|avi|wmv)$/i);
+  const isStickerOrGif = (f: any) => {
+    const mime = String(f?.mimeType || '').toLowerCase();
+    const name = String(f?.name || '').toLowerCase();
+    return (
+      mime.includes('sticker') ||
+      mime === 'image/gif' ||
+      /^sticker-/.test(name) ||
+      /\.gif(\?.*)?$/.test(name)
+    );
+  };
+
+  const isMedia = (f: any) => {
+    if (isStickerOrGif(f)) return false;
+    return (
+      f.mimeType?.startsWith('image/') ||
+      f.mimeType?.startsWith('video/') ||
+      f.name?.match(/\.(jpg|jpeg|png|webp|mp4|mov|avi|wmv)$/i)
+    );
+  };
 
   const isVideoMedia = (f: any) => {
     const mime = String(f?.mimeType || '').toLowerCase();
@@ -96,7 +210,6 @@ const ChatInfoSidebar: React.FC = () => {
     return mime.startsWith('video/') || /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name);
   };
 
-  // Apply filters to files
   let filteredAttachments = allAttachments;
   if (senderFilter !== 'all') {
     filteredAttachments = filteredAttachments.filter(f => f.senderId === senderFilter);
@@ -110,15 +223,15 @@ const ChatInfoSidebar: React.FC = () => {
     }
   }
 
-  const sharedMedia = filteredAttachments.filter(isMedia);
-  const sharedFiles = filteredAttachments.filter(f => !isMedia(f));
+  const storageAttachments = filteredAttachments.filter((f) => !isStickerOrGif(f));
+  const sharedMedia = storageAttachments.filter(isMedia);
+  const sharedFiles = storageAttachments.filter((f) => !isMedia(f));
 
-  // Extract links and apply filters
   const urlRegex = /(https?:\/\/[^\s]+)/g;
   let allLinks = messages
-    .filter(m => m.content && typeof m.content === 'string' && m.content.match(urlRegex))
+    .filter(m => m.content && typeof m.content === 'string' && (m.content as string).match(urlRegex))
     .flatMap(m => {
-      const urls = m.content.match(urlRegex) || [];
+      const urls = (m.content as string).match(urlRegex) || [];
       return urls.map(url => ({ url, messageId: m.id, senderId: m.senderId, createdAt: m.createdAt }));
     })
     .reverse();
@@ -143,6 +256,86 @@ const ChatInfoSidebar: React.FC = () => {
     navigate(`/profile?email=${encodeURIComponent(partnerEmail)}`);
   };
 
+  const handleToggleMute = async () => {
+    if (!activeConvId) return;
+
+    if (muted) {
+      clearConversationMuted(activeConvId);
+      await Swal.fire({
+        icon: 'success',
+        title: 'Đã bật lại thông báo',
+        timer: 1300,
+        showConfirmButton: false,
+      });
+      return;
+    }
+
+    const choice = await Swal.fire({
+      title: 'Xác nhận',
+      html: `
+        <div style="text-align:left; margin-top:8px; font-size:18px; color:#1f2a44;">
+          Bạn có chắc muốn tắt thông báo hội thoại này:
+        </div>
+        <div style="margin-top:12px; display:flex; flex-direction:column; gap:12px; text-align:left; font-size:16px;">
+          <label><input type="radio" name="mute-option" value="1h" checked /> Trong 1 giờ</label>
+          <label><input type="radio" name="mute-option" value="4h" /> Trong 4 giờ</label>
+          <label><input type="radio" name="mute-option" value="until-8am" /> Cho đến 8:00 AM</label>
+          <label><input type="radio" name="mute-option" value="until-open" /> Cho đến khi được mở lại</label>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Đồng ý',
+      cancelButtonText: 'Hủy',
+      focusConfirm: false,
+      preConfirm: () => {
+        const selected = document.querySelector('input[name="mute-option"]:checked') as HTMLInputElement | null;
+        return selected?.value || '1h';
+      },
+    });
+
+    if (!choice.isConfirmed || !choice.value) return;
+
+    muteConversationFor(activeConvId, choice.value as '1h' | '4h' | 'until-8am' | 'until-open');
+    await Swal.fire({
+      icon: 'success',
+      title: 'Đã tắt thông báo',
+      timer: 1300,
+      showConfirmButton: false,
+    });
+  };
+
+  const handleClearConversationOneSide = async () => {
+    if (!activeConvId) return;
+
+    const confirm = await Swal.fire({
+      icon: 'warning',
+      title: 'Xóa cuộc trò chuyện phía bạn?',
+      text: 'Tin nhắn sẽ bị xóa ở tài khoản của bạn, phía đối phương vẫn giữ nguyên.',
+      showCancelButton: true,
+      confirmButtonText: 'Xóa',
+      cancelButtonText: 'Hủy',
+      confirmButtonColor: '#d93025',
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    try {
+      await clearHistory(activeConvId);
+      await Swal.fire({
+        icon: 'success',
+        title: 'Đã xóa cuộc trò chuyện',
+        timer: 1400,
+        showConfirmButton: false,
+      });
+    } catch {
+      await Swal.fire({
+        icon: 'error',
+        title: 'Không thể xóa cuộc trò chuyện',
+        text: 'Vui lòng thử lại sau.',
+      });
+    }
+  };
+
   return (
     <div className="w-[320px] h-full border-l border-outline-variant/30 dark:border-outline-variant/30 bg-white dark:bg-surface-container flex flex-col shrink-0 animate-in slide-in-from-right-4 duration-300">
       <div className="p-6 border-b border-outline-variant/10 flex flex-col items-center">
@@ -163,7 +356,6 @@ const ChatInfoSidebar: React.FC = () => {
         <div className="py-2">
           {/* Section: Kho lưu trữ Tabs & Filters */}
           <div className="border-b border-outline-variant/10 pb-4">
-            {/* Tabs */}
             <div className="flex px-4 pt-2 mb-3 border-b border-outline-variant/10">
               <button 
                 className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === 'media' ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}
@@ -185,7 +377,6 @@ const ChatInfoSidebar: React.FC = () => {
               </button>
             </div>
 
-            {/* Filters */}
             <div className="flex gap-2 px-4 mb-4">
               <select 
                 value={senderFilter}
@@ -207,7 +398,6 @@ const ChatInfoSidebar: React.FC = () => {
               />
             </div>
 
-            {/* Content Rendering based on Tab */}
             <div className="px-4 space-y-2">
               {activeStorageTab === 'media' && (
                 sharedMedia.length === 0 ? (
@@ -215,7 +405,7 @@ const ChatInfoSidebar: React.FC = () => {
                 ) : (
                   <div className="grid grid-cols-3 gap-1">
                     {sharedMedia.map((m, i) => (
-                      <a key={i} href={m.dataUrl} target="_blank" rel="noreferrer" className="relative group block">
+                      <div key={i} className="relative group block">
                         {isVideoMedia(m) ? (
                           <video
                             src={m.dataUrl}
@@ -225,14 +415,19 @@ const ChatInfoSidebar: React.FC = () => {
                             playsInline
                           />
                         ) : (
-                          <img src={m.dataUrl} className="w-full aspect-square object-cover rounded-lg border border-outline-variant/10 cursor-alias hover:opacity-80 transition-opacity" alt="" />
+                          <img
+                            src={m.dataUrl}
+                            className="w-full aspect-square object-cover rounded-lg border border-outline-variant/10 cursor-pointer hover:opacity-80 transition-opacity"
+                            alt=""
+                            onClick={() => setPreviewImage(m.dataUrl, m.name || `image-${i + 1}.png`)}
+                          />
                         )}
                         <div className="absolute inset-x-0 bottom-0 pointer-events-none bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-b-lg p-1 flex justify-end">
                            <span className="text-[9px] font-medium text-white/90">
                              {m.createdAt ? new Date(m.createdAt).toLocaleDateString('vi-VN') : ''}
                            </span>
                         </div>
-                      </a>
+                      </div>
                     ))}
                   </div>
                 )
@@ -293,11 +488,124 @@ const ChatInfoSidebar: React.FC = () => {
               </span>
               <span className="text-[12px] font-bold text-primary">{autoDeleteLabel(currentAutoDeleteDays as 1 | 7 | 30 | null)}</span>
             </button>
-            <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all">
-              <BellOff size={20} className="text-on-surface-variant" />
-              Tắt thông báo
+
+            {/* Mute Setting (HEAD Quick Toggle) */}
+            <button
+              onClick={handleToggleMute}
+              className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all ${muted ? 'bg-surface-container/70' : ''}`}
+            >
+              <span className="flex items-center gap-3">
+                <BellOff size={20} className={muted ? 'text-primary' : 'text-on-surface-variant'} />
+                {muted ? 'Bật lại thông báo' : 'Tắt thông báo'}
+              </span>
+              <span className={`text-[11px] font-bold ${muted ? 'text-primary' : 'text-on-surface-variant/70'}`}>
+                {getMuteStatusLabel()}
+              </span>
             </button>
-            <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-error dark:text-[#eef3fb] font-bold text-[13px] transition-all">
+
+            {/* Custom Mute Schedule (tin_notification) */}
+            <button
+              onClick={() => setShowMutePanel((prev) => !prev)}
+              className="w-full flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all"
+            >
+              <span className="flex items-center gap-3">
+                <Bell size={20} className="text-on-surface-variant" />
+                Khung giờ tắt thông báo
+              </span>
+              <div className="flex items-center gap-1">
+                {muteSummary && <span className="text-[11px] font-medium text-primary">{muteSummary}</span>}
+                <ChevronDown size={14} className={`text-on-surface-variant transition-transform ${showMutePanel ? 'rotate-180' : ''}`} />
+              </div>
+            </button>
+
+            {showMutePanel && (
+              <div className="mx-2 my-2 rounded-2xl border border-outline-variant/20 bg-surface-container/90 p-3 space-y-3 shadow-lg">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-[12px] font-semibold text-on-surface">
+                    <Bell size={16} className="text-primary" />
+                    Thiết lập khung giờ
+                  </div>
+                  <button
+                    onClick={handleClearMuteSchedule}
+                    className="inline-flex items-center justify-center gap-1 rounded-full border border-outline-variant/20 px-2.5 py-1 text-[11px] font-semibold text-on-surface"
+                  >
+                    <X size={14} />
+                    Xóa
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(1))}
+                    className="rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high px-2 py-2 text-[12px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    1 tiếng
+                  </button>
+                  <button
+                    onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(4))}
+                    className="rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high px-2 py-2 text-[12px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    4 tiếng
+                  </button>
+                  <button
+                    onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(8))}
+                    className="rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high px-2 py-2 text-[12px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    8 tiếng
+                  </button>
+                  <button
+                    onClick={() => applyMuteSchedule(createConversationMuteScheduleUntilMorning(8))}
+                    className="rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high px-2 py-2 text-[12px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    Đến 8:00 AM
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setShowCustomMuteInputs((prev) => !prev)}
+                  className="w-full rounded-xl bg-primary/10 px-3 py-2 text-[12px] font-semibold text-primary"
+                >
+                  {showCustomMuteInputs ? 'Ẩn khung giờ tuỳ chỉnh' : 'Chọn khung giờ tuỳ chỉnh'}
+                </button>
+
+                {showCustomMuteInputs && (
+                  <div className="space-y-3 rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high p-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="space-y-1">
+                        <span className="block text-[10px] text-on-surface-variant">Từ</span>
+                        <input
+                          type="time"
+                          value={muteStartTime}
+                          onChange={(event) => setMuteStartTime(event.target.value)}
+                          className="w-full rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container px-2 py-1.5 text-[12px] outline-none focus:border-primary"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="block text-[10px] text-on-surface-variant">Đến</span>
+                        <input
+                          type="time"
+                          value={muteEndTime}
+                          onChange={(event) => setMuteEndTime(event.target.value)}
+                          className="w-full rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container px-2 py-1.5 text-[12px] outline-none focus:border-primary"
+                        />
+                      </label>
+                    </div>
+                    <button
+                      onClick={handleSaveMuteSchedule}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2 text-[12px] font-semibold text-white"
+                    >
+                      <Check size={16} />
+                      Lưu khung giờ
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              onClick={handleClearConversationOneSide}
+              className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-container text-error dark:text-[#eef3fb] font-bold text-[13px] transition-all"
+            >
               <Trash2 size={20} />
               Xóa lịch sử trò chuyện
             </button>

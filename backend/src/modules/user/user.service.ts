@@ -150,7 +150,7 @@ export class UserService {
     return profileData;
   }
 
-  async uploadAvatar(email: string, file: Express.Multer.File) {
+  async uploadAvatar(email: string, file: any) {
     if (!file) {
       throw new BadRequestException('Vui lòng chọn một ảnh đại diện hợp lệ.');
     }
@@ -180,7 +180,7 @@ export class UserService {
     return { message: 'Avatar updated successfully', profile };
   }
 
-  async uploadBackground(email: string, file: Express.Multer.File) {
+  async uploadBackground(email: string, file: any) {
     if (!file) {
       throw new BadRequestException('Vui lòng chọn một ảnh nền hợp lệ.');
     }

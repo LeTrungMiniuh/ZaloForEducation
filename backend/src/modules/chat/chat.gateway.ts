@@ -33,6 +33,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly redisService: RedisService,
   ) {}
 
+  private async isConversationMember(convId: string, email: string) {
+    const metadata = await this.chatService.getConversationMetadata(convId);
+    if (!metadata || !Array.isArray(metadata.members)) return false;
+
+    const normalizedEmail = email.toLowerCase();
+    return metadata.members.some(
+      (member) => String(member).toLowerCase() === normalizedEmail,
+    );
+  }
+
   async handleConnection(client: Socket) {
     // Note: Guards don't automatically run on handleConnection in NestJS
     // We handle identification via join_identity for now, but presence starts here if possible
@@ -63,11 +73,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage("join_room")
-  handleJoinRoom(
+  async handleJoinRoom(
     @MessageBody() data: { convId: string },
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     if (!data.convId) return;
+    const user = client['user'];
+    const email = user?.email;
+    if (!email) return;
+
+    const allowed = await this.isConversationMember(data.convId, email);
+    if (!allowed) {
+      this.logger.warn(
+        `[SOCKET] Denied join_room for ${email} on conversation ${data.convId}`,
+      );
+      return;
+    }
+
     const room = data.convId.toLowerCase(); // Chuẩn hóa room
     client.join(room);
     this.logger.log(`[SOCKET] Client ${client.id} joined room: ${room}`);
@@ -116,14 +138,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage("typing")
-  handleTyping(
+  async handleTyping(
     @MessageBody() data: { convId: string; isTyping: boolean },
     @ConnectedSocket() client: Socket,
-  ): void {
+  ): Promise<void> {
     const user = client['user'];
     if (!user || !data.convId) return;
 
-    client.to(data.convId).emit("typing_update", {
+    const allowed = await this.isConversationMember(data.convId, user.email);
+    if (!allowed) return;
+
+    const room = data.convId.toLowerCase();
+
+    client.to(room).emit("typing_update", {
       convId: data.convId,
       email: user.email,
       isTyping: data.isTyping,
@@ -131,13 +158,93 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @UseGuards(WsJwtGuard)
+  @SubscribeMessage("leave_room")
+  async handleLeaveRoom(
+    @MessageBody() data: { convId: string },
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    if (!data?.convId) return;
+    const room = data.convId.toLowerCase();
+    client.leave(room);
+    this.logger.log(`[SOCKET] Client ${client.id} left room: ${room}`);
+  }
+
+  @UseGuards(WsJwtGuard)
   @SubscribeMessage("sendMessage")
-  handleMessage(
+  async handleMessage(
     @MessageBody() data: { convId: string; message: any },
     @ConnectedSocket() socket: Socket,
-  ): void {
-    // Broadcast message to everyone in the conversation room EXCEPT the sender
-    socket.to(data.convId).emit("receiveMessage", data.message);
+  ): Promise<void> {
+    const user = socket['user'];
+    if (!user || !data?.convId || !data?.message) return;
+
+    const allowed = await this.isConversationMember(data.convId, user.email);
+    if (!allowed) return;
+
+    const room = data.convId.toLowerCase();
+    const safeMessage = {
+      ...data.message,
+      conversationId: data.message.conversationId || data.convId,
+      senderId: data.message.senderId || user.email,
+    };
+
+    // 1. Broadcast message to everyone in the conversation room (for active chat UI)
+    socket.to(room).emit("receiveMessage", safeMessage);
+
+    // 2. [SENIOR] Broadcast to user-specific rooms (for Inbox/HomeScreen update & Notifications)
+    const metadata = await this.chatService.getConversationMetadata(data.convId);
+    if (metadata && Array.isArray(metadata.members)) {
+      const senderEmail = user.email.toLowerCase();
+      for (const member of metadata.members) {
+        const memberEmail = String(member).toLowerCase();
+        const userRoom = `user#${memberEmail}`;
+        
+        // Emit to user room so Inbox updates even if they are NOT in the chat room
+        // We use this.server.to() to ensure ALL devices (including sender's other devices) get it.
+        this.server.to(userRoom).emit("receiveMessage", safeMessage);
+
+        // Also trigger a formal notification event for the Store (only for others)
+        if (memberEmail !== senderEmail) {
+          this.server.to(userRoom).emit("notification:new", {
+            id: `NOTIF#${safeMessage.id || Date.now()}`,
+            title: metadata.name || (metadata.type === 'direct' ? user.fullName || user.email : 'Tin nhắn mới'),
+            message: typeof safeMessage.content === 'string' ? safeMessage.content : (safeMessage.content?.text || 'Bạn có tin nhắn mới'),
+            at: safeMessage.createdAt || new Date().toISOString(),
+            read: false,
+            metadata: {
+              conversationId: data.convId,
+              messageId: safeMessage.id,
+              senderId: user.email
+            }
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * [SENIOR] Notify members when a message is updated (Recall/React/Pin)
+   */
+  emitMessagePatched(convId: string, message: any) {
+    const room = convId.toLowerCase();
+    // Broadcast to the room so active viewers see it
+    this.server.to(room).emit("message_patched", { convId, message });
+    this.logger.log(`[SOCKET] Broadcasted message_patched for ${message.id} in ${convId}`);
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage("message_delivered")
+  async handleMessageDelivered(
+    @MessageBody() data: { convId: string; messageId: string },
+    @ConnectedSocket() socket: Socket,
+  ): Promise<void> {
+    const user = socket['user'];
+    if (!user || !data?.convId || !data?.messageId) return;
+    
+    // Asynchronously mark as delivered to avoid blocking socket thread
+    this.chatService.markAsDelivered(user.email, data.convId, data.messageId).catch(err => {
+      this.logger.error(`[SOCKET] Failed to mark message as delivered: ${err.message}`);
+    });
   }
 
   notifyFriendRequest(email: string, payload: any) {
@@ -159,7 +266,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userRoom = `user#${email.toLowerCase()}`;
     this.server.to(userRoom).emit("conversation_marked_read", { convId });
     // Tell the room that this user has read the chat
-    this.server.to(convId).emit("participant_read", { convId, email, timestamp: Date.now() });
+    this.server.to(convId.toLowerCase()).emit("participant_read", { convId, email, timestamp: Date.now() });
     this.logger.log(`Notified user ${email} that conversation ${convId} was read`);
   }
 
@@ -211,6 +318,27 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.server.to(userRoom).emit("profile_update", { profile });
     console.log(`Sent profile_update to room ${userRoom}`);
   }
+
+  notifySecurityAlert(
+    email: string,
+    payload: {
+      type: "NEW_DEVICE_LOGIN" | "PASSWORD_CHANGED";
+      title: string;
+      message: string;
+      at?: string;
+      metadata?: Record<string, any>;
+    },
+  ) {
+    const userRoom = `user#${email.toLowerCase()}`;
+    this.server.to(userRoom).emit("security_alert", {
+      ...payload,
+      at: payload.at || new Date().toISOString(),
+    });
+    this.logger.warn(
+      `[SOCKET] security_alert emitted to ${userRoom}: ${payload.type}`,
+    );
+  }
+
 
   notifyHistoryCleared(email: string, convId: string) {
     const userRoom = `user#${email.toLowerCase()}`;

@@ -1,27 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useChatStore } from '../../store/chatStore';
-import { useAuth } from '../../context/AuthContext';
-import InboxList from '../../components/chat/InboxList';
-import ChatHeader from '../../components/chat/ChatHeader';
-import ChatInput from '../../components/chat/ChatInput';
-import MessageBubble from '../../components/chat/MessageBubble';
-import ChatInfoSidebar from '../../components/chat/ChatInfoSidebar';
-import ImageModal from '../../components/chat/ImageModal';
-import ForwardModal from '../../components/chat/ForwardModal';
-import { getMessageTimeContext } from '../../utils/chatUtils';
-import type { Attachment } from '../../utils/chatUtils';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+import { useLocation, useNavigate } from "react-router-dom";
+import { useChatStore } from "../../store/chatStore";
+import { useAuth } from "../../context/AuthContext";
+import InboxList from "../../components/chat/InboxList";
+import ChatHeader from "../../components/chat/ChatHeader";
+import ChatInput from "../../components/chat/ChatInput";
+import MessageBubble from "../../components/chat/MessageBubble";
+import ChatInfoSidebar from "../../components/chat/ChatInfoSidebar";
+import ImageModal from "../../components/chat/ImageModal";
+import ForwardModal from "../../components/chat/ForwardModal";
+import TagManagerModal from "../../components/chat/TagManagerModal";
+import { getMessageTimeContext, getDisplayName } from "../../utils/chatUtils";
+import type { Attachment } from "../../utils/chatUtils";
+import type { Message } from "@zalo-edu/shared";
 
-import { 
-  Copy, 
-  Pin, 
-  Star, 
-  ListChecks, 
-  Info, 
-  LayoutGrid, 
-  ChevronRight, 
-  RotateCcw, 
-  Trash2 
+import {
+  Copy,
+  Pin,
+  Star,
+  ListChecks,
+  Info,
+  LayoutGrid,
+  ChevronRight,
+  RotateCcw,
+  Trash2,
+  ArrowDown
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 
@@ -35,8 +38,14 @@ const ChatPage: React.FC = () => {
     startDirectChat,
     setActiveConversation,
     userProfiles,
+    loadUserProfile,
     markAsRead,
-    fetchMessages
+    highlightedMessageId,
+    jumpToMessage,
+    fetchMessages,
+    loadMoreMessages,
+    isLoadingMessages,
+    nextCursor
   } = useChatStore();
   const location = useLocation();
   const navigate = useNavigate();
@@ -49,25 +58,105 @@ const ChatPage: React.FC = () => {
   const prevRoomRef = useRef<string | null>(null);
   const prevMessagesLengthRef = useRef(0);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const prevScrollHeightRef = useRef(0);
+  const isPrependingRef = useRef(false);
+  const lastCursorRef = useRef<string | null>(null);
+  const isLoadingMoreRef = useRef(false);
 
   // Utility to scroll to bottom
   const scrollToBottom = (instant = false) => {
-    setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({
-        behavior: instant ? 'auto' : 'smooth',
-        block: 'end'
-      });
-    }, 100);
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: instant ? 'auto' : 'smooth'
+    });
   };
 
+  // Handle scroll for Infinite Load and Scroll Bottom Button
+  const handleScroll = () => {
+    if (!scrollRef.current || !activeConvId) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    
+    // Show/Hide Scroll to Bottom button (threshold 300px from bottom)
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 300;
+    setShowScrollBottom(!isNearBottom);
+
+    // [SENIOR] Improved Trigger: Check Cursor lock to avoid spam
+    if (
+      scrollTop < 100 && 
+      nextCursor && 
+      nextCursor !== lastCursorRef.current && 
+      !isLoadingMessages && 
+      !isLoadingMoreRef.current
+    ) {
+      lastCursorRef.current = nextCursor;
+      isLoadingMoreRef.current = true;
+      isPrependingRef.current = true;
+      prevScrollHeightRef.current = scrollHeight;
+      
+      // Fire-and-forget async call
+      void (async () => {
+        try {
+          await loadMoreMessages(activeConvId);
+        } finally {
+          isLoadingMoreRef.current = false;
+        }
+      })();
+    }
+  };
+
+  // Adjust scroll position after loading more messages (Prepend logic)
+  useLayoutEffect(() => {
+    if (isPrependingRef.current && prevScrollHeightRef.current > 0 && scrollRef.current) {
+      const newScrollHeight = scrollRef.current.scrollHeight;
+      const heightDiff = newScrollHeight - prevScrollHeightRef.current;
+      if (heightDiff > 0) {
+        // [SENIOR] Precise scroll restoration to avoid "jumps" when loading old messages
+        scrollRef.current.scrollTop += heightDiff;
+      }
+      prevScrollHeightRef.current = 0;
+      isPrependingRef.current = false;
+    }
+  }, [messages.length]);
+
+  // Reset scroll state when room changes
+  useEffect(() => {
+    prevMessagesLengthRef.current = 0;
+    prevScrollHeightRef.current = 0;
+    isLoadingMoreRef.current = false;
+    isPrependingRef.current = false;
+    lastCursorRef.current = null;
+  }, [activeConvId]);
+
   // Scroll to bottom when messages change
+  const IS_NEAR_BOTTOM_THRESHOLD = 150;
+
   useEffect(() => {
     if (messages.length > 0) {
-      // Only scroll if it's the initial load or a new message was added
-      if (prevMessagesLengthRef.current === 0 || messages.length > prevMessagesLengthRef.current) {
-        // Option: Check if user is near bottom to avoid force-scroll when reading old messages.
-        // For now, we fix the specific issue where *reactions* cause forced scroll down.
-        scrollToBottom();
+      // [SENIOR FIX] Không bao giờ tự cuộn khi đang tải lịch sử (prepending)
+      if (isPrependingRef.current) {
+        prevMessagesLengthRef.current = messages.length;
+        // Reset prepending flag AFTER the messages have been rendered and scroll adjusted
+        const timer = setTimeout(() => { isPrependingRef.current = false; }, 100);
+        return () => clearTimeout(timer);
+      }
+
+      const isInitialLoad = prevMessagesLengthRef.current === 0;
+      const isNewMessage = messages.length > prevMessagesLengthRef.current;
+
+      if (isInitialLoad) {
+        scrollToBottom(true); // Cuộn tức thì khi mới vào phòng
+      } else if (isNewMessage) {
+        // [SENIOR FIX] Chỉ tự động cuộn xuống nếu người dùng đang ở gần đáy
+        const el = scrollRef.current;
+        if (el) {
+          const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+          if (distanceToBottom < IS_NEAR_BOTTOM_THRESHOLD) {
+            scrollToBottom();
+          }
+        }
       }
       prevMessagesLengthRef.current = messages.length;
     } else {
@@ -79,52 +168,62 @@ const ChatPage: React.FC = () => {
   useEffect(() => {
     if (activeConvId) {
       fetchMessages(activeConvId);
-      
+
       // Join Socket Room for Real-time
       if (socket) {
         // Leave previous room if exists
         if (prevRoomRef.current && prevRoomRef.current !== activeConvId) {
-          socket.emit('leave_room', { convId: prevRoomRef.current });
+          socket.emit("leave_room", { convId: prevRoomRef.current });
         }
-        
+
         socket.emit('join_room', { convId: activeConvId });
         prevRoomRef.current = activeConvId;
       }
     }
-    
+
     return () => {
       // Cleanup: leave room on unmount
       if (activeConvId && socket) {
-        socket.emit('leave_room', { convId: activeConvId });
+        socket.emit("leave_room", { convId: activeConvId });
       }
     };
   }, [activeConvId, fetchMessages, socket]);
 
+  // Reset typing users when room changes (store prev value as state)
+  const [prevActiveConvId, setPrevActiveConvId] = useState(activeConvId);
+  if (activeConvId !== prevActiveConvId) {
+    setPrevActiveConvId(activeConvId);
+    setTypingUsers(new Set());
+  }
+
   // Handle typing indicator via CustomEvent from useSocketListeners
   useEffect(() => {
     setTypingUsers(new Set()); // Reset when changing room
-    
+
     const handleTypingEvent = (e: any) => {
       const data = e.detail;
-      if (data.convId === activeConvId && data.email !== user?.email) {
+      if (!data?.email || !data?.convId) return;
+      const email = data.email;
+      const convId = data.convId;
+      if (convId === activeConvId && email !== user?.email) {
         if (data.isTyping) {
-          setTypingUsers(prev => {
+          setTypingUsers((prev) => {
             const next = new Set(prev);
-            next.add(data.email);
+            next.add(email);
             return next;
           });
           // Remove after 5 seconds to prevent stuck indicator
           setTimeout(() => {
-            setTypingUsers(prev => {
+            setTypingUsers((prev) => {
               const next = new Set(prev);
-              next.delete(data.email);
+              next.delete(email);
               return next;
             });
           }, 5000);
         } else {
-          setTypingUsers(prev => {
+          setTypingUsers((prev) => {
             const next = new Set(prev);
-            next.delete(data.email);
+            next.delete(email);
             return next;
           });
         }
@@ -135,12 +234,39 @@ const ChatPage: React.FC = () => {
     return () => document.removeEventListener('chat_typing_update', handleTypingEvent);
   }, [activeConvId, user]);
 
+  // [SENIOR] Auto-load profiles for all message senders to ensure names/avatars display
+  useEffect(() => {
+    if (messages.length > 0) {
+      const uniqueSenders = new Set<string>();
+      messages.forEach(m => {
+        if (m.senderId) {
+          const normalizedSender = String(m.senderId).trim().toLowerCase();
+          const normalizedMe = String(user?.email || "").trim().toLowerCase();
+          if (normalizedSender !== normalizedMe) {
+            uniqueSenders.add(m.senderId);
+          }
+        }
+      });
+      uniqueSenders.forEach(email => loadUserProfile(email));
+    }
+  }, [messages, user?.email, loadUserProfile]);
+
   // Mark as read when messages change or room opens
   useEffect(() => {
     if (activeConvId) {
       markAsRead(activeConvId);
     }
   }, [activeConvId, messages.length, markAsRead]);
+
+  // Jump to highlighted message if it exists
+  useEffect(() => {
+    if (highlightedMessageId && messages.length > 0) {
+      const el = document.getElementById(`msg-${highlightedMessageId}`);
+      if (el) {
+        jumpToMessage(highlightedMessageId);
+      }
+    }
+  }, [highlightedMessageId, messages, jumpToMessage]);
 
   const handleSendMessage = async (text: string, attachments: Attachment[]) => {
     if (!activeConvId || !user?.email) return;
@@ -150,14 +276,69 @@ const ChatPage: React.FC = () => {
       activeConvId,
       user.email,
       text,
-      'text',
+      "text",
       attachments,
-      replyTarget
+      replyTarget,
     );
     setReplyTarget(null);
   };
 
-  const [contextMenu, setContextMenu] = useState<{ message: any; x: number; y: number } | null>(null);
+  const handleSendContactCard = async (card: {
+    email: string;
+    fullName?: string;
+    avatarUrl?: string;
+    phone?: string;
+  }) => {
+    if (!activeConvId || !user?.email) return;
+
+    await sendMessageOptimistic(
+      activeConvId,
+      user.email,
+      '[Danh thiếp]',
+      'contact_card',
+      [],
+      replyTarget,
+      { contactCard: card },
+    );
+    setReplyTarget(null);
+  };
+
+  const handleSendLocation = async (location: {
+    latitude: number;
+    longitude: number;
+    label?: string;
+    isLive?: boolean;
+    liveSessionId?: string;
+    sentAt?: string;
+    expiresAt?: string;
+  }) => {
+    if (!activeConvId || !user?.email) return;
+
+    await sendMessageOptimistic(
+      activeConvId,
+      user.email,
+      location.isLive ? '[Vị trí trực tiếp]' : '[Vị trí]',
+      'location',
+      [],
+      null,
+      { location },
+    );
+  };
+
+  const [contextMenu, setContextMenu] = useState<{
+    message: Message;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+
+  useEffect(() => {
+    const openTagManager: EventListener = () => setIsTagManagerOpen(true);
+    window.addEventListener("open-chat-tag-manager", openTagManager);
+    return () => {
+      window.removeEventListener("open-chat-tag-manager", openTagManager);
+    };
+  }, []);
 
   useEffect(() => {
     const navState = (location.state || null) as {
@@ -165,8 +346,10 @@ const ChatPage: React.FC = () => {
       openDirectChatEmail?: string;
     } | null;
 
-    const requestedConvId = String(navState?.openConversationId || '').trim();
-    const requestedEmail = String(navState?.openDirectChatEmail || '').trim().toLowerCase();
+    const requestedConvId = String(navState?.openConversationId || "").trim();
+    const requestedEmail = String(navState?.openDirectChatEmail || "")
+      .trim()
+      .toLowerCase();
 
     if (!requestedConvId && !requestedEmail) return;
 
@@ -178,13 +361,19 @@ const ChatPage: React.FC = () => {
           return;
         }
 
-        const normalizedMe = String(user?.email || '').trim().toLowerCase();
+        const normalizedMe = String(user?.email || "")
+          .trim()
+          .toLowerCase();
         const existingDirect = conversations.find((conversation) => {
-          if (conversation?.type !== 'direct') return false;
+          if (conversation?.type !== "direct") return false;
           const members = Array.isArray(conversation.members)
-            ? conversation.members.map((item) => String(item || '').toLowerCase())
+            ? conversation.members.map((item) =>
+                String(item || "").toLowerCase(),
+              )
             : [];
-          return members.includes(normalizedMe) && members.includes(requestedEmail);
+          return (
+            members.includes(normalizedMe) && members.includes(requestedEmail)
+          );
         });
 
         if (existingDirect?.id) {
@@ -197,13 +386,13 @@ const ChatPage: React.FC = () => {
         }
       } finally {
         if (!cancelled) {
-          navigate('/chat', { replace: true, state: null });
+          navigate("/chat", { replace: true, state: null });
         }
       }
     };
 
     run().catch((error) => {
-      console.error('Failed to open chat from navigation state', error);
+      console.error("Failed to open chat from navigation state", error);
     });
 
     return () => {
@@ -235,23 +424,43 @@ const ChatPage: React.FC = () => {
             <div
               ref={scrollRef}
               className="flex-1 overflow-y-auto p-4 hide-scrollbar flex flex-col"
+              onScroll={handleScroll}
             >
+              {/* Infinite Load Indicator */}
+              {isLoadingMessages && nextCursor && (
+                <div className="flex justify-center py-4">
+                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+
               {/* Spacer để đẩy tin nhắn xuống dưới cùng */}
               <div className="flex-1" />
 
-
+              {/* Nút cuộn xuống dưới cùng (Floating Action Button) */}
+              {showScrollBottom && (
+                <button
+                  onClick={() => scrollToBottom(true)}
+                  className="fixed bottom-32 right-12 md:right-80 z-[40] w-10 h-10 bg-white dark:bg-surface-container-high rounded-full shadow-lg border border-outline-variant/10 flex items-center justify-center text-primary hover:bg-surface-container transition-all animate-in fade-in zoom-in duration-200"
+                  title="Cuộn xuống dưới cùng"
+                >
+                  <ArrowDown size={20} strokeWidth={2.5} className="text-primary" />
+                </button>
+              )}
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center opacity-40 py-20">
-                  <p className="text-[14px]">Chưa có tin nhắn nào. Gửi lời chào ngay!</p>
+                  <p className="text-[14px]">
+                    Chưa có tin nhắn nào. Gửi lời chào ngay!
+                  </p>
                 </div>
               ) : (
                 <div className="flex flex-col">
                   {messages.map((m, index) => {
                     const prevMsg = index > 0 ? messages[index - 1] : undefined;
-                    const { dateHeader, showTimeHeader, formattedTime } = getMessageTimeContext(
-                      new Date(m.createdAt),
-                      prevMsg ? new Date(prevMsg.createdAt) : undefined
-                    );
+                    const { dateHeader, showTimeHeader, formattedTime } =
+                      getMessageTimeContext(
+                        new Date(m.createdAt),
+                        prevMsg ? new Date(prevMsg.createdAt) : undefined,
+                      );
 
                     return (
                       <React.Fragment key={m.id}>
@@ -269,12 +478,18 @@ const ChatPage: React.FC = () => {
                             </span>
                           </div>
                         )}
-                        <div className={!dateHeader && !showTimeHeader ? 'mt-1' : 'mt-4'}>
+                        <div
+                          className={
+                            !dateHeader && !showTimeHeader ? "mt-1" : "mt-4"
+                          }
+                        >
                           <MessageBubble
                             message={m}
                             userProfiles={userProfiles}
                             hideTime={!showTimeHeader}
-                            onContextMenu={(msg, x, y) => setContextMenu({ message: msg, x, y })}
+                            onContextMenu={(msg, x, y) =>
+                              setContextMenu({ message: msg, x, y })
+                            }
                             onReply={(msg) => setReplyTarget(msg)}
                             onForward={(msg) => setForwardMessage(msg)}
                           />
@@ -287,16 +502,19 @@ const ChatPage: React.FC = () => {
 
               {/* Typing Indicator */}
               {typingUsers.size > 0 && (
-                <div className="absolute bottom-[95px] left-8 z-[10] shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="absolute bottom-24 left-8 z-10 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <div className="bg-white dark:bg-surface-container-high rounded-full px-4 py-2 border border-outline-variant/10 flex items-center gap-3">
-                     <div className="flex gap-1.5 items-center">
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                        <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce"></div>
-                     </div>
-                     <span className="text-[12px] font-bold text-on-surface-variant italic">
-                       {Array.from(typingUsers).map(email => userProfiles[email]?.fullName || email.split('@')[0]).join(', ')} đang soạn tin...
-                     </span>
+                    <div className="flex gap-1.5 items-center">
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                      <div className="w-1.5 h-1.5 bg-primary/60 rounded-full animate-bounce"></div>
+                    </div>
+                    <span className="text-[12px] font-bold text-on-surface-variant italic">
+                      {Array.from(typingUsers)
+                        .map((email) => getDisplayName(email, user, userProfiles))
+                        .join(", ")}{" "}
+                      đang soạn tin...
+                    </span>
                   </div>
                 </div>
               )}
@@ -306,25 +524,57 @@ const ChatPage: React.FC = () => {
 
             <ChatInput
               onSendMessage={handleSendMessage}
+              onSendContactCard={handleSendContactCard}
+              onSendLocation={handleSendLocation}
               replyTarget={replyTarget}
               onClearReply={() => setReplyTarget(null)}
             />
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
-            <div className="w-48 h-48 bg-primary/5 rounded-full flex items-center justify-center mb-8 animate-float">
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-gradient-to-br from-surface-container-lowest to-surface-container-low">
+            <div className="w-48 h-48 bg-primary/5 rounded-full flex items-center justify-center mb-8 animate-float relative">
               <img src="/logo_blue.png" className="w-24 grayscale opacity-20" alt="" />
+              <div className="absolute -top-2 -right-2 w-12 h-12 bg-white dark:bg-surface-container rounded-2xl shadow-xl flex items-center justify-center animate-bounce duration-3000">
+                <LayoutGrid size={24} className="text-primary/40" />
+              </div>
             </div>
-            <h2 className="text-2xl font-extrabold text-on-surface mb-2">Chào mừng đến với Zalo Edu</h2>
-            <p className="text-on-surface-variant max-w-sm">Chọn một cuộc trò chuyện để bắt đầu trao đổi công việc và học tập hiệu quả.</p>
+            
+            <h1 className="text-2xl font-extrabold text-on-surface mb-3">Chào mừng đến với ZaloEdu</h1>
+            <p className="text-on-surface-variant max-w-md mb-10 leading-relaxed font-medium">
+              Khám phá trải nghiệm làm việc và học tập hiện đại. Chọn một cuộc hội thoại bên trái để bắt đầu nhắn tin hoặc thực hiện cuộc gọi.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl w-full">
+              <div className="bg-white dark:bg-surface-container border border-outline-variant/10 p-4 rounded-3xl flex items-center gap-4 hover:shadow-lg transition-all group cursor-pointer active:scale-95">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center text-amber-600">
+                  <Star size={24} />
+                </div>
+                <div className="flex-1 text-left">
+                  <h3 className="font-bold text-[15px]">Tin nhắn ưu tiên</h3>
+                  <p className="text-[12px] text-on-surface-variant/70">Đánh dấu và theo dõi các tin nhắn quan trọng.</p>
+                </div>
+                <ChevronRight size={18} className="text-outline/30 group-hover:text-primary transition-colors" />
+              </div>
+
+              <div className="bg-white dark:bg-surface-container border border-outline-variant/10 p-4 rounded-3xl flex items-center gap-4 hover:shadow-lg transition-all group cursor-pointer active:scale-95">
+                <div className="w-12 h-12 rounded-2xl bg-primary/5 flex items-center justify-center text-primary">
+                  <LayoutGrid size={24} />
+                </div>
+                <div className="flex-1 text-left">
+                  <h3 className="font-bold text-[15px]">Tiện ích mở rộng</h3>
+                  <p className="text-[12px] text-on-surface-variant/70">Sử dụng các công cụ hỗ trợ giảng dạy và học tập.</p>
+                </div>
+                <ChevronRight size={18} className="text-outline/30 group-hover:text-primary transition-colors" />
+              </div>
+            </div>
           </div>
         )}
       </div>
 
-      <ForwardModal 
-        isOpen={!!forwardMessage} 
-        onClose={() => setForwardMessage(null)} 
-        message={forwardMessage} 
+      <ForwardModal
+        isOpen={!!forwardMessage}
+        onClose={() => setForwardMessage(null)}
+        message={forwardMessage}
       />
 
       {/* 3. Info Sidebar */}
@@ -333,15 +583,18 @@ const ChatPage: React.FC = () => {
       {/* Context Menu Overlay (Zalo Style Redesign) */}
       {contextMenu && (
         <div
-          className="fixed inset-0 z-[110]"
+          className="fixed inset-0 z-110"
           onClick={() => setContextMenu(null)}
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu(null);
+          }}
         >
           <div
             className="absolute bg-white dark:bg-surface-container rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.2)] border border-outline-variant/10 dark:border-outline-variant/30 py-1.5 w-64 animate-in fade-in zoom-in-95 duration-200"
-            style={{ 
-              left: Math.min(contextMenu.x, window.innerWidth - 270), 
-              top: Math.min(contextMenu.y, window.innerHeight - 400) 
+            style={{
+              left: Math.min(contextMenu.x, window.innerWidth - 270),
+              top: Math.min(contextMenu.y, window.innerHeight - 400),
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -358,24 +611,26 @@ const ChatPage: React.FC = () => {
             </button>
             <button
               onClick={() => {
-                useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, { 
-                  action: contextMenu.message.pinned ? 'unpin' : 'pin' 
+                useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, {
+                  action: contextMenu.message.pinned ? 'unpin' : 'pin'
                 });
                 setContextMenu(null);
               }}
               className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-container text-[14px] font-medium text-on-surface transition-colors"
             >
               <Pin size={18} className="text-on-surface-variant" />
-              {contextMenu.message.pinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'}
+              {contextMenu.message.pinned
+                ? "Bỏ ghim tin nhắn"
+                : "Ghim tin nhắn"}
             </button>
-            <button 
+            <button
               onClick={() => {
                 Swal.fire({
-                  title: 'Đánh dấu tin nhắn',
-                  text: 'Tin nhắn đã được đánh dấu và lưu vào Cloud của bạn!',
-                  icon: 'success',
+                  title: "Đánh dấu tin nhắn",
+                  text: "Tin nhắn đã được đánh dấu và lưu vào Cloud của bạn!",
+                  icon: "success",
                   timer: 2000,
-                  showConfirmButton: false
+                  showConfirmButton: false,
                 });
                 setContextMenu(null);
               }}
@@ -388,13 +643,13 @@ const ChatPage: React.FC = () => {
             <div className="h-px bg-outline-variant/10 my-1 mx-2" />
 
             {/* Group 2: Advanced Actions */}
-            <button 
+            <button
               onClick={() => {
                 Swal.fire({
-                  title: 'Chọn nhiều tin nhắn',
-                  text: 'Chức năng chọn nhiều tin nhắn đang được phát triển.',
-                  icon: 'info',
-                  confirmButtonColor: '#00418f'
+                  title: "Chọn nhiều tin nhắn",
+                  text: "Chức năng chọn nhiều tin nhắn đang được phát triển.",
+                  icon: "info",
+                  confirmButtonColor: "#00418f",
                 });
                 setContextMenu(null);
               }}
@@ -403,21 +658,23 @@ const ChatPage: React.FC = () => {
               <ListChecks size={18} className="text-on-surface-variant" />
               Chọn nhiều tin nhắn
             </button>
-            <button 
+            <button
               onClick={() => {
-                const date = new Date(contextMenu.message.createdAt).toLocaleString();
+                const date = new Date(
+                  contextMenu.message.createdAt,
+                ).toLocaleString();
                 Swal.fire({
-                  title: 'Chi tiết tin nhắn',
+                  title: "Chi tiết tin nhắn",
                   html: `
                     <div class="text-left space-y-2 mt-4 text-sm text-on-surface">
-                      <p><strong>Người gửi:</strong> ${contextMenu.message.senderId}</p>
+                      <p><strong>Người gửi:</strong> ${getDisplayName(contextMenu.message.senderId, user, userProfiles)}</p>
                       <p><strong>Đã gửi lúc:</strong> ${date}</p>
                       <p><strong>Trạng thái:</strong> ${contextMenu.message.status}</p>
                       <p><strong>Mã tin nhắn:</strong> <span class="text-xs text-outline font-mono">${contextMenu.message.id}</span></p>
                     </div>
                   `,
-                  icon: 'info',
-                  confirmButtonColor: '#00418f'
+                  icon: "info",
+                  confirmButtonColor: "#00418f",
                 });
                 setContextMenu(null);
               }}
@@ -431,23 +688,23 @@ const ChatPage: React.FC = () => {
 
             {/* Group 3: Destructive Actions */}
             {contextMenu.message.senderId === user?.email && !contextMenu.message.recalled && (
-               <button
-                 onClick={() => {
-                   useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, { action: 'recall' });
-                   setContextMenu(null);
-                 }}
-                 className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
-               >
-                 <RotateCcw size={18} />
-                 Thu hồi
-               </button>
+              <button
+                onClick={() => {
+                  useChatStore.getState().patchMessageOptimistic(activeConvId!, contextMenu.message.id, { action: 'recall' });
+                  setContextMenu(null);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
+              >
+                <RotateCcw size={18} />
+                Thu hồi
+              </button>
             )}
             <button
-               onClick={() => {
-                 useChatStore.getState().deleteMessageOptimistic(activeConvId!, contextMenu.message.id);
-                 setContextMenu(null);
-               }}
-               className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
+              onClick={() => {
+                useChatStore.getState().deleteMessageOptimistic(activeConvId!, contextMenu.message.id);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-error/5 text-error text-[14px] font-bold transition-colors"
             >
               <Trash2 size={18} />
               Xóa chỉ ở phía tôi
@@ -457,6 +714,10 @@ const ChatPage: React.FC = () => {
       )}
       {/* Image Preview Modal (Lightbox) */}
       <ImageModal />
+      <TagManagerModal
+        isOpen={isTagManagerOpen}
+        onClose={() => setIsTagManagerOpen(false)}
+      />
     </div>
   );
 };

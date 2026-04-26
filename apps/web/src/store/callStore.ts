@@ -63,6 +63,8 @@ interface CallStore {
   setIncomingUpgradeRequest: (incoming: boolean) => void;
   setUpgradeRequesterEmail: (email: string | null) => void;
   setRemoteTiles: (tiles: any[]) => void;
+  isPeerJoined: boolean;
+  setPeerJoined: (joined: boolean) => void;
   isMinimized: boolean;
   setMinimized: (minimized: boolean) => void;
 }
@@ -89,6 +91,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
   upgradeRequesterEmail: null,
   engine: null,
   callOffer: null,
+  isPeerJoined: false,
   isMinimized: false,
   
   setMinimized: (isMinimized) => set({ isMinimized }),
@@ -170,13 +173,16 @@ export const useCallStore = create<CallStore>((set, get) => ({
 
   acceptCall: (meetingInfo) => {
     clearInternalTimeout();
+    const current = get();
     set({ 
       callState: 'CONNECTED', 
       isConnecting: false, 
       connectionError: null,
-      meetingData: meetingInfo?.Meeting || get().meetingData,
-      attendeeData: meetingInfo?.Attendee || get().attendeeData,
-      startTime: Date.now(),
+      // [CRITICAL FIX] Only update meetingData if new info is provided.
+      // The Web caller already has meetingData from /call/create — don't overwrite with undefined.
+      meetingData: meetingInfo?.Meeting || meetingInfo?.meeting || current.meetingData,
+      attendeeData: meetingInfo?.Attendee || meetingInfo?.attendee || current.attendeeData,
+      startTime: current.startTime || Date.now(),
     });
   },
 
@@ -220,6 +226,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
   setIncomingUpgradeRequest: (incomingUpgradeRequest: boolean) => set({ incomingUpgradeRequest }),
   setUpgradeRequesterEmail: (upgradeRequesterEmail: string | null) => set({ upgradeRequesterEmail }),
   setRemoteTiles: (remoteTiles: any[]) => set({ remoteTiles }),
+  setPeerJoined: (isPeerJoined: boolean) => set({ isPeerJoined }),
 
   resetCall: () => {
     clearInternalTimeout();
@@ -243,6 +250,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
       upgradeRequesterEmail: null,
       engine: null,
       callOffer: null,
+      isPeerJoined: false,
       remoteTiles: [],
       isMinimized: false,
     });

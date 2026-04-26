@@ -70,6 +70,17 @@
   --animate-pulse-highlight: pulseHighlight 2s ease-in-out;
 }
 
+@keyframes highlight-fade {
+  0% { background-color: rgba(245, 158, 11, 0.4); transform: scale(1.02); }
+  100% { background-color: transparent; transform: scale(1); }
+}
+
+.message-highlighted {
+  animation: highlight-fade 2s ease-in-out;
+  border: 2px solid #f59e0b !important;
+  z-index: 10;
+}
+
 .typing-dot {
   width: 8px;
   height: 8px;

@@ -1,25 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 
 const SessionsPage: React.FC = () => {
   const navigate = useNavigate();
   const { getSessions, logout, logoutAll, revokeSession, socket, deviceId, user } = useAuth();
   const { isDark } = useTheme();
-  const [activeSessions, setActiveSessions] = useState<any[]>([]);
-  const [loginHistory, setLoginHistory] = useState<any[]>([]);
+  const [activeSessions, setActiveSessions] = useState<{ deviceId: string; deviceName?: string; deviceType?: string; loginAt?: string; lastActiveAt?: string }[]>([]);
+  const [loginHistory, setLoginHistory] = useState<{ deviceId?: string; deviceName?: string; deviceType?: string; logoutAt?: string; updatedAt?: string }[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchSessions = async () => {
+  const fetchSessions = useCallback(async () => {
     try {
       const data = await getSessions();
       if (data.activeDevices) {
-        setActiveSessions(data.activeDevices);
-        setLoginHistory(data.loginHistory || []);
+        setActiveSessions(data.activeDevices as typeof activeSessions);
+        setLoginHistory((data.loginHistory || []) as typeof loginHistory);
       } else {
-        setActiveSessions(data);
+        setActiveSessions(data as typeof activeSessions);
         setLoginHistory([]);
       }
     } catch (err) {
@@ -27,10 +27,10 @@ const SessionsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [getSessions]);
 
   useEffect(() => {
-    fetchSessions();
+    const timeoutId = setTimeout(() => fetchSessions(), 0);
 
     if (socket) {
       socket.on('sessions_update', () => {
@@ -40,11 +40,12 @@ const SessionsPage: React.FC = () => {
     }
 
     return () => {
+      clearTimeout(timeoutId);
       if (socket) {
         socket.off('sessions_update');
       }
     };
-  }, [socket]);
+  }, [socket, fetchSessions]);
 
   const handleRevoke = async (targetDeviceId: string, name: string) => {
     const result = await Swal.fire({
@@ -62,7 +63,7 @@ const SessionsPage: React.FC = () => {
         await revokeSession(targetDeviceId);
         Swal.fire('Đã đăng xuất', 'Thiết bị đã bị đăng xuất thành công.', 'success');
         fetchSessions(); // Refresh list
-      } catch (err) {
+      } catch {
         Swal.fire('Lỗi', 'Không thể đăng xuất thiết bị lúc này.', 'error');
       }
     }

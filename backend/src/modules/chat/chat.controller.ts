@@ -83,6 +83,13 @@ export class ChatController {
     );
   }
 
+  @Get("conversations/:convId/metadata")
+  async getMetadata(@Param("convId") convId: string) {
+    const res = await this.chatService.getConversationMetadata(convId);
+    if (!res) throw new NotFoundException("Conversation metadata not found");
+    return res;
+  }
+
   // --- MESSAGES ---
   @Get("conversations/:convId/messages")
   async getMessages(
@@ -90,17 +97,51 @@ export class ChatController {
     @Req() req: any,
     @Query("limit", new ParseIntPipe({ optional: true })) limit?: number,
     @Query("cursor") cursor?: string,
+    @Query("targetId") targetId?: string,
   ) {
     const email = req.user.email;
+
+    if (targetId) {
+      // Use a larger limit for context fetch (100 older)
+      return await this.messageService.getMessagesContext(convId, targetId, email, 100);
+    }
+
     let lastEvaluatedKey = undefined;
     if (cursor) {
       try {
-        lastEvaluatedKey = JSON.parse(Buffer.from(cursor, 'base64').toString('utf-8'));
+        lastEvaluatedKey = JSON.parse(
+          Buffer.from(cursor, "base64").toString("utf-8"),
+        );
       } catch (e) {
-        throw new BadRequestException('Invalid pagination cursor');
+        throw new BadRequestException("Invalid pagination cursor");
       }
     }
-    return await this.messageService.getMessages(convId, email, limit || 50, lastEvaluatedKey);
+    return await this.messageService.getMessages(
+      convId,
+      email,
+      limit || 50,
+      lastEvaluatedKey,
+    );
+  }
+
+  @Get("conversations/:convId/messages/:messageId")
+  async getMessage(
+    @Param("convId") convId: string,
+    @Param("messageId") messageId: string,
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.messageService.getMessage(convId, messageId, email);
+  }
+
+  @Get("conversations/:convId/messages-context/:messageId")
+  async getMessagesContext(
+    @Param("convId") convId: string,
+    @Param("messageId") messageId: string,
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    return await this.messageService.getMessagesContext(convId, messageId, email);
   }
 
   @Post("conversations/:convId/messages")
@@ -113,6 +154,21 @@ export class ChatController {
       media?: any[];
       files?: any[];
       replyTo?: any;
+      contactCard?: {
+        email: string;
+        fullName?: string;
+        avatarUrl?: string;
+        phone?: string;
+      };
+      location?: {
+        latitude: number;
+        longitude: number;
+        label?: string;
+        isLive?: boolean;
+        liveSessionId?: string;
+        sentAt?: string;
+        expiresAt?: string;
+      };
     },
     @Req() req: any,
   ) {
@@ -125,37 +181,55 @@ export class ChatController {
       body.media,
       body.files,
       body.replyTo,
+      {
+        ...(body.contactCard ? { contactCard: body.contactCard } : {}),
+        ...(body.location ? { location: body.location } : {}),
+      },
     );
 
     const normalizedConvId = convId.toLowerCase();
+    const convMetadata = await this.chatService.getConversationMetadata(convId);
 
     // 1. BROADCAST REAL-TIME VIA SOCKET
-    this.chatGateway.server.to(normalizedConvId).emit('receiveMessage', res);
-    console.log(`[SOCKET] Broadcasted to room: ${normalizedConvId}`);
+    if (this.chatGateway?.server) {
+      this.chatGateway.server.to(normalizedConvId).emit("receiveMessage", res);
+      console.log(`[SOCKET] Broadcasted to room: ${normalizedConvId}`);
 
-    // 2. BROADCAST REAL-TIME TO ALL MEMBERS' PERSONAL ROOMS (For conversation list updates)
-    const convMetadata = await this.chatService.getConversationMetadata(convId);
-    if (convMetadata && convMetadata.members) {
-      for (const member of convMetadata.members) {
-        // Emit to user#email room so all their devices update the "tab" preview
-        const userRoom = `user#${member.toLowerCase()}`;
-        this.chatGateway.server.to(userRoom).emit('receiveMessage', res);
-        console.log(`[SOCKET] Broadcasted to user room: ${userRoom}`);
+      // 2. BROADCAST REAL-TIME TO ALL MEMBERS' PERSONAL ROOMS (For conversation list updates)
+      if (convMetadata && convMetadata.members) {
+        for (const member of convMetadata.members) {
+          // Emit to user#email room so all their devices update the "tab" preview
+          const userRoom = `user#${member.toLowerCase()}`;
+          this.chatGateway.server.to(userRoom).emit("receiveMessage", res);
+          console.log(`[SOCKET] Broadcasted to user room: ${userRoom}`);
+        }
       }
+    } else {
+      console.warn(`[SOCKET] Skipping real-time broadcast for ${normalizedConvId} - Gateway server not initialized`);
     }
 
     // 3. SEND PUSH NOTIFICATION (FRAMEWORK READY)
     if (convMetadata) {
-      const recipients = convMetadata.members.filter(m => m !== email);
-      const hasSticker = Array.isArray(body.media) && body.media.some((item: any) => {
-        const mime = String(item?.mimeType || item?.fileType || '').toLowerCase();
-        return mime.includes('sticker') || item?.isSticker === true;
-      });
-      const hasHDImage = Array.isArray(body.media) && body.media.some((item: any) => item?.isHD === true);
+      const recipients = convMetadata.members.filter((m) => m !== email);
+      const hasSticker =
+        Array.isArray(body.media) &&
+        body.media.some((item: any) => {
+          const mime = String(
+            item?.mimeType || item?.fileType || "",
+          ).toLowerCase();
+          return mime.includes("sticker") || item?.isSticker === true;
+        });
+      const hasHDImage =
+        Array.isArray(body.media) &&
+        body.media.some((item: any) => item?.isHD === true);
 
       this.notificationService.broadcastNotification(recipients, {
         title: convMetadata.name || 'Tin nhắn mới',
-        body: body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]'),
+        body: body.type === 'contact_card'
+          ? '[Danh thiếp]'
+          : body.type === 'location'
+            ? '[Vị trí]'
+            : (body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]')),
         data: { convId, messageId: res.id }
       });
     }
@@ -176,7 +250,7 @@ export class ChatController {
       limits: { fileSize: 100 * 1024 * 1024 }, // Max 100MB for the interceptor
     }),
   )
-  async uploadChatFile(@UploadedFile() file: Express.Multer.File) {
+  async uploadChatFile(@UploadedFile() file: any) {
     if (!file) {
       throw new BadRequestException("File is required");
     }
@@ -191,7 +265,9 @@ export class ChatController {
     }
 
     // Fix encoding for Vietnamese filenames
-    const correctName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const correctName = Buffer.from(file.originalname, "latin1").toString(
+      "utf8",
+    );
     file.originalname = correctName;
 
     const folder = file.mimetype?.startsWith("image/")
@@ -231,30 +307,53 @@ export class ChatController {
       body,
     );
 
-    // BROADCAST REAL-TIME VIA SOCKET
-    if (body.action === 'react') {
-      this.chatGateway.server.to(convId).emit('message_reaction', {
-        messageId,
-        reactions: res.reactions
-      });
-    } else if (body.action === 'recall') {
-      this.chatGateway.server.to(convId).emit('message_recalled', {
-        messageId,
-        conversationId: convId,
-        recalledBy: email
-      });
-    } else if (body.action === 'pin' || body.action === "unpin") {
-      this.chatGateway.server.to(convId).emit('PIN_UPDATE', {
-        conversationId: convId,
-        pinnedMessageIds: res.pinnedMessageIds
-      });
-      // Legacy support if needed
-      this.chatGateway.server.to(convId).emit('message_pinned', {
-        messageId,
-        conversationId: convId,
-        pinned: body.action === 'pin',
-        pinnedBy: email
-      });
+    // [SENIOR] BROADCAST REAL-TIME VIA SOCKET (Unified event for Store sync)
+    this.chatGateway.emitMessagePatched(convId, res);
+
+    if (this.chatGateway?.server) {
+      // [BACKWARD COMPATIBILITY] Specialized events
+      if (body.action === 'react') {
+        this.chatGateway.server.to(convId).emit('message_reaction', {
+          messageId,
+          reactions: res.reactions
+        });
+
+        // [SENIOR] Emit a virtual system message for the reaction notification
+        const emoji = body.emoji || '❤️';
+        const senderProfile = await this.userService.getUserProfile(email);
+        const senderName = senderProfile?.profile?.fullName || email;
+        const systemMsg = {
+          id: `SYS_REACT_${Date.now()}_${messageId}`,
+          conversationId: convId,
+          senderId: 'system',
+          type: 'system',
+          content: `${senderName} đã thả cảm xúc ${emoji} về một tin nhắn`,
+          createdAt: new Date().toISOString(),
+          metadata: {
+            targetMessageId: messageId,
+            type: 'reaction_notification'
+          }
+        };
+        this.chatGateway.server.to(convId).emit("receiveMessage", systemMsg);
+      } else if (body.action === "recall") {
+        this.chatGateway.server.to(convId).emit("message_recalled", {
+          messageId,
+          conversationId: convId,
+          recalledBy: email,
+        });
+      } else if (body.action === "pin" || body.action === "unpin") {
+        this.chatGateway.server.to(convId).emit("PIN_UPDATE", {
+          conversationId: convId,
+          pinnedMessageIds: res.pinnedMessageIds,
+        });
+        // Legacy support if needed
+        this.chatGateway.server.to(convId).emit("message_pinned", {
+          messageId,
+          conversationId: convId,
+          pinned: body.action === "pin",
+          pinnedBy: email,
+        });
+      }
     }
 
     return res;
@@ -322,7 +421,7 @@ export class ChatController {
   @Post("friends/request")
   async sendFriendRequest(
     @Body() body: { targetEmail: string },
-    @Req() req: any,
+    @Req() req: any
   ) {
     const email = req.user.email;
     return await this.friendshipService.sendRequest(email, body.targetEmail);
@@ -331,7 +430,7 @@ export class ChatController {
   @Post("friends/accept")
   async acceptFriendRequest(
     @Body() body: { senderEmail: string },
-    @Req() req: any,
+    @Req() req: any
   ) {
     const email = req.user.email;
     return await this.friendshipService.acceptRequest(email, body.senderEmail);
@@ -347,7 +446,7 @@ export class ChatController {
 
   @Patch("conversations/:id/read")
   async markAsRead(@Param("id") id: string, @Req() req: any) {
-    return await this.chatService.markConversationAsRead(id, req.user.email);
+    return await this.chatService.markConversationAsRead(req.user.email, id);
   }
 
   @Patch("conversations/:id/auto-delete")
@@ -357,18 +456,24 @@ export class ChatController {
     @Req() req: any,
   ) {
     const email = req.user.email;
-    const result = await this.chatService.setConversationAutoDelete(id, email, body?.days ?? null);
+    const result = await this.chatService.setConversationAutoDelete(
+      id,
+      email,
+      body?.days ?? null,
+    );
 
     const metadata = await this.chatService.getConversationMetadata(id);
-    if (metadata?.members?.length) {
+    if (metadata?.members?.length && this.chatGateway?.server) {
       for (const member of metadata.members) {
         const userRoom = `user#${member.toLowerCase()}`;
-        this.chatGateway.server.to(userRoom).emit('conversation_auto_delete_updated', {
-          convId: id,
-          autoDeleteDays: result.autoDeleteDays,
-          autoDeleteUpdatedAt: result.autoDeleteUpdatedAt,
-          updatedBy: email,
-        });
+        this.chatGateway.server
+          .to(userRoom)
+          .emit("conversation_auto_delete_updated", {
+            convId: id,
+            autoDeleteDays: result.autoDeleteDays,
+            autoDeleteUpdatedAt: result.autoDeleteUpdatedAt,
+            updatedBy: email,
+          });
       }
     }
 
@@ -394,6 +499,12 @@ export class ChatController {
   async blockUser(@Body() body: { targetEmail: string }, @Req() req: any) {
     const email = req.user.email;
     return await this.friendshipService.blockUser(email, body.targetEmail);
+  }
+
+  @Post("friends/unblock")
+  async unblockUser(@Body() body: { targetEmail: string }, @Req() req: any) {
+    const email = req.user.email;
+    return await this.friendshipService.unblockUser(email, body.targetEmail);
   }
 
   @Patch("friends/nickname")
@@ -425,7 +536,12 @@ export class ChatController {
   // Backward-compatible alias route
   @Patch("friends/closeFriend")
   async setCloseFriendAlias(
-    @Body() body: { friendEmail: string; isCloseFriend?: boolean; closeFriend?: boolean },
+    @Body()
+    body: {
+      friendEmail: string;
+      isCloseFriend?: boolean;
+      closeFriend?: boolean;
+    },
     @Req() req: any,
   ) {
     const email = req.user.email;

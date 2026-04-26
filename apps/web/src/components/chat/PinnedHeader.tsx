@@ -1,4 +1,11 @@
 import React, { useState, useMemo } from 'react';
+
+interface PinnedMessage {
+  id: string;
+  content: string;
+  createdAt?: string;
+  isPlaceholder?: boolean;
+}
 import { useChatStore } from '../../store/chatStore';
 import { 
   Pin, 
@@ -14,20 +21,31 @@ const PinnedHeader: React.FC = () => {
     conversations, 
     messages, 
     jumpToMessage,
-    patchMessageOptimistic 
+    patchMessageOptimistic,
+    fetchMessage 
   } = useChatStore();
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const activeChat = conversations.find(c => c.id === activeConvId) as any;
-  const pinnedIds = activeChat?.pinnedMessageIds || [];
+  const activeChat = conversations.find(c => c.id === activeConvId) as { pinnedMessageIds?: string[] } | undefined;
+  const pinnedIds = useMemo(() => activeChat?.pinnedMessageIds || [], [activeChat?.pinnedMessageIds]);
 
   // Find message objects for the pinned IDs
-  const pinnedMessages = useMemo(() => {
+  const pinnedMessages = useMemo((): PinnedMessage[] => {
     return pinnedIds.map(id => {
       const msg = messages.find(m => m.id === id);
-      return msg || { id, content: 'Đang tải tin nhắn...', isPlaceholder: true };
+      return msg ? { id: msg.id, content: msg.content, createdAt: msg.createdAt } : { id, content: 'Đang tải tin nhắn...', isPlaceholder: true };
     });
   }, [pinnedIds, messages]);
+
+  // [NEW] Fetch missing pinned messages
+  React.useEffect(() => {
+    if (!activeConvId) return;
+    pinnedMessages.forEach(pm => {
+      if (pm.isPlaceholder) {
+        fetchMessage(activeConvId, pm.id);
+      }
+    });
+  }, [activeConvId, pinnedMessages, fetchMessage]);
 
   if (pinnedIds.length === 0) return null;
 
@@ -61,7 +79,7 @@ const PinnedHeader: React.FC = () => {
               <div className="flex flex-col">
                 <p className="text-[10px] font-black text-amber-600/70 dark:text-primary/70 uppercase tracking-widest leading-none mb-0.5">Tin nhắn đã ghim</p>
                 <p className="text-[13px] text-on-surface/80 truncate font-medium">
-                  {(latestPin as any).content}
+                  {latestPin.content}
                 </p>
               </div>
             )}
@@ -89,7 +107,7 @@ const PinnedHeader: React.FC = () => {
       {isExpanded && pinnedIds.length > 1 && (
         <div className="absolute top-full left-0 right-0 bg-white/95 dark:bg-surface-container/95 backdrop-blur-2xl shadow-2xl border-b border-outline-variant/20 dark:border-outline-variant/40 animate-in slide-in-from-top-2 duration-200 rounded-b-3xl overflow-hidden">
           <div className="max-h-64 overflow-y-auto py-2">
-            {pinnedMessages.map((msg: any, index) => (
+            {pinnedMessages.map((msg, index) => (
               <div 
                 key={msg.id}
                 className="group flex items-center justify-between px-6 py-3 hover:bg-primary/5 transition-all cursor-pointer border-b border-outline-variant/10 last:border-0"

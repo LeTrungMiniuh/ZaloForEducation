@@ -1,11 +1,10 @@
 import React from 'react';
 import { useGoogleOneTapLogin } from '@react-oauth/google';
 import { useAuth } from '../context/AuthContext';
-import Swal from 'sweetalert2';
 
 interface GoogleOneTapPromptProps {
-  onSuccess?: (response: any) => void;
-  onError?: (error: any) => void;
+  onSuccess?: (response: unknown) => void;
+  onError?: (error: unknown) => void;
 }
 
 const GoogleOneTapPrompt: React.FC<GoogleOneTapPromptProps> = ({ onSuccess, onError }) => {
@@ -22,7 +21,7 @@ const GoogleOneTapPrompt: React.FC<GoogleOneTapPromptProps> = ({ onSuccess, onEr
         } else if (onSuccess) {
           onSuccess(res);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Google One Tap Login Error:', err);
         if (onError) onError(err);
       }

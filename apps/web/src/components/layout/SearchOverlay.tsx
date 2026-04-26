@@ -3,7 +3,7 @@ import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import { getDisplayName, getDisplayAvatar, highlightText, getFileIcon } from '../../utils/chatUtils';
 
-import { X, Search, ArrowRight } from 'lucide-react';
+import { Search } from 'lucide-react';
 
 const SearchOverlay: React.FC = () => {
   const { user } = useAuth();
@@ -19,25 +19,26 @@ const SearchOverlay: React.FC = () => {
     clearSearchHistory,
     setActiveConversation,
     userProfiles,
-    loadUserProfile
+    loadUserProfile,
+    jumpToMessage
   } = useChatStore();
 
   const [searchTab, setSearchTab] = useState<'all' | 'contacts' | 'messages' | 'files'>('all');
   const [showAllContacts, setShowAllContacts] = useState(false);
   const [showAllMessages, setShowAllMessages] = useState(false);
-  const [showAllFiles, setShowAllFiles] = useState(false);
+  const [showAllFiles] = useState(false);
 
   // Auto-load profiles for message senders and contacts in search results
   useEffect(() => {
     // Scan messages
     if (searchResults.messages.length > 0) {
-      searchResults.messages.forEach((msg: any) => {
+      searchResults.messages.forEach((msg: { senderId?: string }) => {
         if (msg.senderId) loadUserProfile(msg.senderId);
       });
     }
     // Scan contacts
     if (searchResults.contacts.length > 0) {
-      searchResults.contacts.forEach((contact: any) => {
+      searchResults.contacts.forEach((contact: { email?: string }) => {
         if (contact.email) loadUserProfile(contact.email);
       });
     }
@@ -54,6 +55,17 @@ const SearchOverlay: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [setIsSearching, setSearchQuery]);
+
+  // [SENIOR] Debounced search logic
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q) {
+      const timer = setTimeout(() => {
+        performGlobalSearch(q);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [searchQuery, performGlobalSearch]);
 
   if (!isSearching) return null;
 
@@ -77,12 +89,7 @@ const SearchOverlay: React.FC = () => {
                   autoFocus
                   value={searchQuery}
                   onChange={(e) => {
-                    const q = e.target.value;
-                    setSearchQuery(q);
-                    if (q.trim()) {
-                      const timer = setTimeout(() => performGlobalSearch(q), 300);
-                      return () => clearTimeout(timer);
-                    }
+                    setSearchQuery(e.target.value);
                   }}
                   className="w-full bg-surface-container border-none rounded-[24px] py-4 pl-[60px] pr-12 text-[16px] outline-none text-on-surface placeholder:text-on-surface-variant transition-all font-medium shadow-inner"
                   placeholder="Tìm bạn bè, tin nhắn, tệp tin..."
@@ -110,7 +117,7 @@ const SearchOverlay: React.FC = () => {
             {['all', 'contacts', 'messages', 'files'].map((tab) => (
               <button
                 key={tab}
-                onClick={() => setSearchTab(tab as any)}
+                onClick={() => setSearchTab(tab as 'all' | 'contacts' | 'messages' | 'files')}
                 className={`px-5 py-2.5 rounded-[14px] text-[13px] font-extrabold transition-all duration-300 ${
                   searchTab === tab 
                     ? 'bg-white text-primary shadow-sm ring-1 ring-black/5 dark:bg-primary/20 dark:text-on-surface' 
@@ -164,7 +171,7 @@ const SearchOverlay: React.FC = () => {
                   <section className="space-y-4">
                     <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Người dùng & Liên hệ</p>
                     <div className="bg-white rounded-[24px] p-2 shadow-sm border border-outline-variant/10">
-                       {(showAllContacts ? searchResults.contacts : searchResults.contacts.slice(0, 5)).map((contact: any) => (
+                       {(showAllContacts ? searchResults.contacts : searchResults.contacts.slice(0, 5)).map((contact: { email: string; fullName?: string }) => (
                          <div 
                            key={contact.email} 
                            onClick={() => startDirectChat(contact.email)}
@@ -194,10 +201,16 @@ const SearchOverlay: React.FC = () => {
                    <section className="space-y-4">
                       <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Nội dung tin nhắn</p>
                       <div className="space-y-2">
-                         {(showAllMessages ? searchResults.messages : searchResults.messages.slice(0, 5)).map((msg: any) => (
+                         {(showAllMessages ? searchResults.messages : searchResults.messages.slice(0, 5)).map((msg: { id: string; senderId?: string; content?: string; createdAt?: string; conversationId?: string; convId?: string }) => (
                            <div 
                              key={msg.id} 
-                             onClick={() => { setActiveConversation(msg.conversationId || msg.convId); setIsSearching(false); setSearchQuery(''); }}
+                             onClick={() => { 
+                               setActiveConversation(msg.conversationId || msg.convId); 
+                               setIsSearching(false); 
+                               setSearchQuery(''); 
+                               // Jump to message after a short delay for room switch
+                               setTimeout(() => jumpToMessage(msg.id), 300);
+                             }}
                              className="bg-white p-5 rounded-[24px] hover:bg-primary/5 cursor-pointer transition-all group border border-outline-variant/10 hover:border-primary/10 shadow-sm"
                            >
                               <div className="flex items-start gap-4">
@@ -205,7 +218,9 @@ const SearchOverlay: React.FC = () => {
                                 <div className="flex-1 min-w-0">
                                    <div className="flex justify-between items-center mb-1.5">
                                       <p className="text-[14px] font-extrabold text-on-surface truncate group-hover:text-primary transition-colors">{getDisplayName(msg.senderId, user, userProfiles)}</p>
-                                      <span className="text-[10px] text-on-surface-variant/60 font-bold bg-surface-container px-2.5 py-1 rounded-full">{new Date(msg.createdAt).toLocaleDateString('vi-VN')}</span>
+                                      <span className="text-[10px] text-on-surface-variant/60 font-bold bg-surface-container px-2.5 py-1 rounded-full">
+                                         {new Date(msg.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} • {new Date(msg.createdAt).toLocaleDateString('vi-VN')}
+                                      </span>
                                    </div>
                                    <p className="text-[14px] text-on-surface-variant line-clamp-2 leading-relaxed opacity-90 italic">
                                       "{highlightText(msg.content, searchQuery)}"
@@ -228,10 +243,15 @@ const SearchOverlay: React.FC = () => {
                   <section className="space-y-4">
                      <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Tệp tin & Đa phương tiện</p>
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {(showAllFiles ? searchResults.files : searchResults.files.slice(0, 6)).map((f: any) => (
+                        {(showAllFiles ? searchResults.files : searchResults.files.slice(0, 6)).map((f: { messageId: string; name: string; size: number; senderId?: string; convId?: string; conversationId?: string; createdAt?: string }) => (
                           <div 
                             key={f.messageId} 
-                            onClick={() => { setActiveConversation(f.convId || f.conversationId); setIsSearching(false); setSearchQuery(''); }}
+                            onClick={() => { 
+                               setActiveConversation(f.convId || f.conversationId); 
+                               setIsSearching(false); 
+                               setSearchQuery(''); 
+                               setTimeout(() => jumpToMessage(f.messageId), 300);
+                            }}
                             className="bg-white flex items-center gap-4 p-4 rounded-[22px] cursor-pointer transition-all group border border-outline-variant/10 hover:border-primary/20 shadow-sm hover:shadow-md"
                           >
                              <div className="w-12 h-12 bg-primary/5 rounded-[16px] flex items-center justify-center shrink-0 group-hover:bg-primary/20 transition-all scale-100 group-hover:scale-110">
@@ -242,7 +262,7 @@ const SearchOverlay: React.FC = () => {
                              <div className="flex-1 min-w-0">
                                 <p className="text-[14px] font-extrabold text-on-surface truncate group-hover:text-primary transition-colors">{highlightText(f.name, searchQuery)}</p>
                                 <p className="text-[12px] text-on-surface-variant/60 font-medium truncate italic">
-                                   {(f.size / 1024 / 1024).toFixed(1)} MB • {getDisplayName(f.senderId, user, userProfiles)}
+                                   {(f.size / 1024 / 1024).toFixed(1)} MB • {getDisplayName(f.senderId, user, userProfiles)} • {f.createdAt ? new Date(f.createdAt).toLocaleDateString('vi-VN') : ''}
                                 </p>
                              </div>
                           </div>
