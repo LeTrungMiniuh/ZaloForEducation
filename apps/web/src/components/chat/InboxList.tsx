@@ -93,8 +93,6 @@ const InboxList: React.FC = () => {
     setSearchQuery(e.target.value);
     setIsSearching(false);
   };
-
-<<<<<<< HEAD
   const normalizedSearch = String(searchQuery || '').trim().toLowerCase();
 
   const conversationMatchesSearch = (conv: any) => {
