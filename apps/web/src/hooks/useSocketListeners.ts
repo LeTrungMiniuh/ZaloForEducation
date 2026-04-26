@@ -282,10 +282,13 @@ export const useSocketListeners = () => {
     };
 
     const handleCallAccept = (data: CallEventData) => {
-      const { activeCallId, acceptCall } = useCallStore.getState();
+      const { activeCallId, acceptCall, meetingData } = useCallStore.getState();
       if (data.callId === activeCallId) {
         console.log('[Socket] call:accept — Peer accepted. Starting media.');
-        acceptCall(data.meetingInfo || {});
+        // [CRITICAL FIX] Web is the CALLER: preserve existing meetingData.
+        // Do NOT overwrite with meetingInfo from Mobile (which is Mobile's own attendee data).
+        // The Web's meeting session was already set up when it called /call/create.
+        acceptCall(meetingData ? undefined : (data.meetingInfo || {}));
       }
     };
 
@@ -318,7 +321,7 @@ export const useSocketListeners = () => {
       // Handle both callId based (Chime) and convId based (generic) hangup
       if ((data.callId && data.callId === activeCallId) || (data.convId && data.convId === currentConvId) || (!data.callId && !data.convId)) {
         console.log('[Socket] call:hangup — cleaning up');
-        await leaveCurrentSession();
+        await leaveCurrentSession('Socket-hangup');
         hangupCall();
       }
     };
@@ -327,7 +330,7 @@ export const useSocketListeners = () => {
       const { activeCallId, rejectCall } = useCallStore.getState();
       if (!data?.callId || data.callId === activeCallId) {
         console.log('[Socket] call:reject — cleaning up');
-        await leaveCurrentSession();
+        await leaveCurrentSession('Socket-reject');
         rejectCall();
       }
     };

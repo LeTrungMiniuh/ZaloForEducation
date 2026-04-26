@@ -47,8 +47,10 @@ class SocketService {
     this.currentEmail = email;
     this.socket = io(API_URL, {
       transports: ["websocket"],
-      reconnectionAttempts: 10,
-      reconnectionDelay: 2000,
+      reconnectionAttempts: 15,
+      reconnectionDelay: 1000,
+      timeout: 20000, // Tăng timeout lên 20s
+      forceNew: true,
       auth: { deviceId, token },
       extraHeaders: { Authorization: `Bearer ${token}` },
     });

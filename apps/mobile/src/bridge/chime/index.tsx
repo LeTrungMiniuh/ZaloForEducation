@@ -1,8 +1,9 @@
 import React from 'react';
-import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
+import { NativeModules, DeviceEventEmitter, Platform } from 'react-native';
 
 const { ChimeModule } = NativeModules;
-const eventEmitter = Platform.OS !== 'web' && ChimeModule ? new NativeEventEmitter(ChimeModule) : null;
+// [SENIOR] Switching to DeviceEventEmitter for maximum reliability with custom native bridges
+const eventEmitter = DeviceEventEmitter;
 
 // [SENIOR] Tránh đăng ký trùng lặp khi Hot Reload
 let NativeChimeView: any;

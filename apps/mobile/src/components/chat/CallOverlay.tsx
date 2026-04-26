@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  View, Text, Image, TouchableOpacity, SafeAreaView, 
+  View, Text, Image, TouchableOpacity, 
   Vibration, StyleSheet, PanResponder, Animated, Dimensions, Alert 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCallStore } from '../../store/callStore';
 import { useAuth } from '../../context/AuthContext';
 import { useChime } from '../../hooks/useChime';
@@ -126,6 +127,28 @@ const CallOverlay = () => {
   const ringtoneSound = useRef<any>(null);
   const ringbackSound = useRef<any>(null);
 
+  const stopRingtone = useCallback(async () => {
+    if (ringtoneSound.current) {
+      console.log('[CallOverlay] Manual Stop: Ringtone');
+      try {
+        await ringtoneSound.current.stopAsync();
+        await ringtoneSound.current.unloadAsync();
+      } catch (e) {}
+      ringtoneSound.current = null;
+    }
+  }, []);
+
+  const stopRingback = useCallback(async () => {
+    if (ringbackSound.current) {
+      console.log('[CallOverlay] Manual Stop: Ringback');
+      try {
+        await ringbackSound.current.stopAsync();
+        await ringbackSound.current.unloadAsync();
+      } catch (e) {}
+      ringbackSound.current = null;
+    }
+  }, []);
+
   // Handle Duration Timer
   useEffect(() => {
     if (callState === 'CONNECTED' && startTime) {
@@ -194,7 +217,8 @@ const CallOverlay = () => {
 
           // Ensure any previous instance is cleared
           if (ringtoneSound.current) {
-            await ringtoneSound.current.unloadAsync();
+            try { await ringtoneSound.current.unloadAsync(); } catch(e) {}
+            ringtoneSound.current = null;
           }
           
           const { sound } = await Audio.Sound.createAsync(
@@ -212,7 +236,7 @@ const CallOverlay = () => {
             await ringtoneSound.current.stopAsync();
             await ringtoneSound.current.unloadAsync();
           } catch (e) {
-            console.warn('[Mobile-Call] Ringtone cleanup error:', e);
+            // Ignore "not loaded" errors
           }
           ringtoneSound.current = null;
         }
@@ -235,7 +259,8 @@ const CallOverlay = () => {
         try {
           console.log('[Mobile-Call] 🛰️ Starting ringback tone...');
           if (ringbackSound.current) {
-            await ringbackSound.current.unloadAsync();
+            try { await ringbackSound.current.unloadAsync(); } catch(e) {}
+            ringbackSound.current = null;
           }
 
           const { sound } = await Audio.Sound.createAsync(
@@ -253,7 +278,7 @@ const CallOverlay = () => {
             await ringbackSound.current.stopAsync();
             await ringbackSound.current.unloadAsync();
           } catch (e) {
-            console.warn('[Mobile-Call] Ringback cleanup error:', e);
+            // Ignore "not loaded" errors
           }
           ringbackSound.current = null;
         }
@@ -313,20 +338,29 @@ const CallOverlay = () => {
   useEffect(() => {
     return () => {
       console.log('[CallOverlay] Unmounting... triggering cleanup');
-      cleanup();
+      cleanup('Overlay-Unmount');
     };
   }, [cleanup]);
+
+  const isAcceptingRef = useRef(false);
 
   if (callState === 'IDLE') return null;
 
   const handleAccept = async () => {
-    if (!activeCallId) return;
+    if (isAcceptingRef.current) return;
+    if (!activeCallId || useCallStore.getState().callState !== 'RINGING') return;
     
+    isAcceptingRef.current = true;
     console.log(`[CallOverlay] handleAccept clicked. callType: ${callType}`);
 
     // [SENIOR] Luôn xin đủ cả 2 quyền (Audio & Video) khi nghe máy sếp nhé!
     const hasPermission = await requestPermissions();
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      isAcceptingRef.current = false;
+      return;
+    }
+
+    await stopRingtone();
 
     try {
       const res = await apiRequest('/call/join', { 
@@ -338,7 +372,7 @@ const CallOverlay = () => {
       });
       
       if (!res.ok) throw new Error(res.message || 'Không thể tham gia cuộc gọi');
-      // [FIX] Support both nested data (Axios style) and flat responses (Fetch style)
+      
       const meetingData = res.data || res;
       const { meeting, attendee } = meetingData;
       
@@ -355,7 +389,7 @@ const CallOverlay = () => {
           callId: activeCallId,
           fromEmail: user.email,
           toEmail: caller?.email,
-          meetingInfo: meetingData // [FIX] Gửi thông tin meeting cho bên gọi
+          meetingInfo: meetingData 
         });
       }
 
@@ -363,8 +397,24 @@ const CallOverlay = () => {
         setIsSpeakerOn(true);
         switchAudioOutput(true);
       }
+
+      // [STABLE PATTERN] metadata update in store will trigger setupSession in useChime automatically
+      isAcceptingRef.current = false;
+
+      // [FALLBACK] Force media activation after 2.5s if signaling event is missed
+      setTimeout(() => {
+        const state = useCallStore.getState();
+        if (state.callState === 'CONNECTED') {
+          console.log('[CallOverlay] 🛡️ Fallback: Forcing media activation');
+          toggleMicChime(true);
+          if (callType === 'video') {
+            toggleCameraChime(true);
+          }
+        }
+      }, 2500);
     } catch (err) {
       console.error('Error accepting call:', err);
+      isAcceptingRef.current = false;
       resetCall();
     }
   };
@@ -379,15 +429,31 @@ const CallOverlay = () => {
         reason: 'NO_ANSWER'
       });
     }
-    cleanup();
+    cleanup('Overlay-Reject');
     rejectCall();
   };
 
   const handleHangup = async () => {
+    const currentStore = useCallStore.getState();
+    const now = Date.now();
+    const start = currentStore.startTime;
+
+    console.log('[Mobile-Hangup] 🛡️ Guard Check:', { 
+      now, 
+      start, 
+      diff: start ? now - start : 'N/A',
+      callState: currentStore.callState 
+    });
+
+    if (start && (now - start) < 5000) {
+      console.warn('[Mobile-Hangup] 🛡️ BLOCKED — call just started', now - start, 'ms ago');
+      return;
+    }
+
+    console.log('[Mobile-Hangup] 🚀 handleHangup executing...');
     try {
-      // [FIX] Lấy thời lượng thực tế từ đồng hồ CallOverlay
-      const durationSec = (callState === 'CONNECTED' && startTime) 
-        ? Math.floor((Date.now() - startTime) / 1000) 
+      const durationSec = (currentStore.callState === 'CONNECTED' && start) 
+        ? Math.floor((now - start) / 1000) 
         : 0;
 
       if (SocketService.socket) {
@@ -396,8 +462,8 @@ const CallOverlay = () => {
           callId: activeCallId,
           fromEmail: user.email,
           toEmail: isIncoming ? caller.email : receiver.email,
-          duration: durationSec, // Gửi thời lượng thực tế
-          callType: callType     // Gửi loại cuộc gọi thực tế
+          duration: durationSec,
+          callType: callType
         });
       }
       
@@ -411,11 +477,11 @@ const CallOverlay = () => {
         }) 
       });
       
-      cleanup();
+      cleanup('Overlay-Hangup');
       hangupCall();
     } catch (err) {
       console.error('Error hanging up:', err);
-      cleanup();
+      cleanup('Overlay-Hangup-Error');
       hangupCall();
     }
   };
@@ -642,7 +708,7 @@ const CallOverlay = () => {
             <Text style={[styles.mediaIcon, !isCameraOn && styles.mediaIconActive]}>{isCameraOn ? 'videocam' : 'videocam_off'}</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.hangupButton} onPress={handleHangup} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.hangupButton} onPress={() => handleHangup()} activeOpacity={0.7}>
           <Text style={styles.actionIcon}>call_end</Text>
         </TouchableOpacity>
       </View>
@@ -693,7 +759,7 @@ const CallOverlay = () => {
             <Text style={[styles.mediaIcon]}>{upgradeRequestPending ? 'hourglass_empty' : 'videocam'}</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.hangupButton} onPress={handleHangup} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.hangupButton} onPress={() => handleHangup()} activeOpacity={0.7}>
           <Text style={styles.actionIcon}>call_end</Text>
         </TouchableOpacity>
       </View>
@@ -707,7 +773,7 @@ const CallOverlay = () => {
         <Text style={styles.name}>{displayName}</Text>
         <Text style={styles.status}>Đang kết nối...</Text>
       </View>
-      <TouchableOpacity style={styles.hangupButton} onPress={handleHangup} activeOpacity={0.7}>
+      <TouchableOpacity style={styles.hangupButton} onPress={() => handleHangup()} activeOpacity={0.7}>
         <Text style={styles.actionIcon}>call_end</Text>
       </TouchableOpacity>
     </View>

@@ -23,6 +23,7 @@ export const useChime = () => {
   const [localTileId, setLocalTileId] = useState<number | null>(null);
   const isStarted = useRef(false);
   const localTileIdRef = useRef<number | null>(null);
+  const startTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
     localTileIdRef.current = localTileId;
@@ -70,8 +71,13 @@ export const useChime = () => {
     }
   };
 
-  const cleanup = useCallback(async () => {
-    console.log('[Chime-Bridge] Cleaning up session');
+  const cleanup = useCallback(async (reason: string = 'unknown') => {
+    console.log(`[Chime-Bridge] Cleaning up session. Reason: ${reason}`);
+    if (startTimeoutRef.current) {
+      clearTimeout(startTimeoutRef.current);
+      startTimeoutRef.current = null;
+    }
+
     ChimeModuleBridge.stopMeeting();
     ChimeModuleBridge.removeAllListeners('onVideoTileAdded');
     ChimeModuleBridge.removeAllListeners('onVideoTileRemoved');
@@ -90,9 +96,21 @@ export const useChime = () => {
   }, [cleanup]);
 
   const setupSession = useCallback(async () => {
-    if (isStarted.current || !meetingData || !attendeeData) return;
+    const { meetingData: md, attendeeData: ad } = metadataRef.current;
+    
+    // [CRITICAL] Block redundant setup calls immediately
+    if (isStarted.current) {
+      console.log('[Chime-Bridge] Setup session skipped - already started or starting');
+      return;
+    }
+    
+    if (!md || !ad) {
+      console.warn('[Chime-Bridge] Setup session skipped - missing metadata');
+      return;
+    }
 
-    console.log('[Chime-Bridge] V10.0 Setup Starting...');
+    isStarted.current = true; // Lock immediately
+    console.log(`[Chime-Bridge] V10.0 Setup Starting (Meeting: ${md.MeetingId})...`);
     const hasPermission = await requestPermissions();
     if (!hasPermission) {
       Alert.alert(
@@ -106,11 +124,6 @@ export const useChime = () => {
       ChimeModuleBridge.addListener('onVideoTileAdded', (tile: any) => {
         const tileId = tile?.tileId;
         if (tileId === undefined || tileId === null) return;
-
-        // [V10.0] ABSOLUTE TRUST: The native SDK's isLocalTile() computed from actual SFU
-        // media flow is the ONLY valid classification source. Attendee ID comparison
-        // has been permanently removed — it is unreliable when both peers share the
-        // same Chime account (IDs are identical, breaking any comparison logic).
         const isLocal = !!tile?.isLocal;
 
         console.log(`[Chime-Bridge] 🎥 tileId=${tileId} isLocal=${isLocal} attendeeId=${tile?.attendeeId}`);
@@ -120,14 +133,10 @@ export const useChime = () => {
           setLocalTileId(tileId);
         } else {
           console.log(`[Chime-Bridge] 🌐 REMOTE tile: ${tileId} → pushing to store`);
-          // getState() reads+writes atomically — eliminates ALL closure stale-state risk
           const store = useCallStore.getState();
           const currentTiles = store.remoteTiles;
           if (!currentTiles.find(t => t.tileId === tileId)) {
             store.setRemoteTiles([...currentTiles, { ...tile, tileId }]);
-            console.log(`[Chime-Bridge] 📡 Store updated. remoteTiles count: ${currentTiles.length + 1}`);
-          } else {
-            console.log(`[Chime-Bridge] ℹ️ tileId=${tileId} already in store.`);
           }
         }
       });
@@ -140,21 +149,21 @@ export const useChime = () => {
         if (tileId === localTileIdRef.current) {
           setLocalTileId(null);
         } else {
-          // Use getState() for atomic read+write, no stale closure
           const store = useCallStore.getState();
           const nextTiles = store.remoteTiles.filter(t => t.tileId !== tileId);
           store.setRemoteTiles(nextTiles);
         }
       });
 
-      ChimeModuleBridge.addListener('onMeetingStart', () => {
-        console.log('[Chime-Bridge] 🌍 SIGNALING CONNECTED');
-        // [SENIOR] Ensure Audio and Video are active as soon as signaled
+      ChimeModuleBridge.addListener('onMeetingConnecting', (data) => {
+        console.log('[Chime-Bridge] 📡 Signaling CONNECTING...', data);
+      });
+
+      ChimeModuleBridge.addListener('onMeetingStart', (data) => {
+        console.log('[Chime-Bridge] 🌍 SIGNALING CONNECTED (onMeetingStart)', data);
+        // [STABLE PATTERN] Re-verify media activation after signaling is established
         setTimeout(() => {
-          console.log('[Chime-Bridge] 🔊 Unmuting and starting media streams');
-          if (ChimeModuleBridge.switchAudioOutput) {
-            ChimeModuleBridge.switchAudioOutput(callType === 'video'); // Force speaker for video
-          }
+          console.log('[Chime-Bridge] 🔊 Re-confirming media activation');
           ChimeModuleBridge.toggleMic(true);
           if (callType === 'video') {
             ChimeModuleBridge.toggleCamera(true);
@@ -162,19 +171,35 @@ export const useChime = () => {
         }, 500);
       });
 
-      console.log('[Chime-Bridge] 🚀 Triggering Native StartMeeting...');
-      await ChimeModuleBridge.startMeeting(metadataRef.current.meetingData, metadataRef.current.attendeeData);
-      
-      await ChimeModuleBridge.toggleMic(true);
-      if (callType === 'video') {
-        await ChimeModuleBridge.toggleCamera(true);
-      }
+      ChimeModuleBridge.addListener('onMeetingEnd', (data) => {
+        console.log('[Chime-Bridge] 🏁 Meeting ended/failed', data);
+      });
 
-      isStarted.current = true;
+      console.log(`[Chime-Bridge] 🚀 Calling Native StartMeeting (ID: ${md.MeetingId}) in 500ms...`);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await ChimeModuleBridge.startMeeting(md, ad);
+        console.log('[Chime-Bridge] 🏁 Native StartMeeting CALLED');
+        
+        // [STABLE PATTERN] Double-toggle: once immediately after start returns
+        console.log('[Chime-Bridge] 🎙️ Pre-emptive media activation');
+        await ChimeModuleBridge.toggleMic(true);
+        if (callType === 'video') {
+          await ChimeModuleBridge.toggleCamera(true);
+        }
+      } catch (e) {
+        console.error('[Chime-Bridge] Setup failed:', e);
+        isStarted.current = false;
+      }
     } catch (err) {
-      console.error('[Chime-Bridge] Setup failed:', err);
+      console.error('[Chime-Bridge] Setup CRASHED:', err);
+      isStarted.current = false;
     }
-  }, [meetingData, attendeeData, callType]);
+  }, [callType]);
+
+  // [CLEANUP] Remove the automatic useEffect trigger to prevent double-joins
+  // Mobile session should be triggered MANUALLY from CallOverlay once
+  // we are absolutely sure the previous session (if any) is dead.
 
   const isCameraUserEnabled = useRef(callType === 'video');
 
@@ -197,7 +222,11 @@ export const useChime = () => {
     if (meetingData && attendeeData) {
       setupSession();
     }
-  }, [meetingData, attendeeData, setupSession]);
+    // [CRITICAL FIX] Do NOT include setupSession in deps — it changes on every render
+    // because it's a useCallback that closes over meetingData/attendeeData/callType.
+    // Including it causes setupSession() to run twice, registering duplicate listeners.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingData, attendeeData]);
 
   return {
     localTileId,

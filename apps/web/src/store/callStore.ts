@@ -173,13 +173,16 @@ export const useCallStore = create<CallStore>((set, get) => ({
 
   acceptCall: (meetingInfo) => {
     clearInternalTimeout();
+    const current = get();
     set({ 
       callState: 'CONNECTED', 
       isConnecting: false, 
       connectionError: null,
-      meetingData: meetingInfo?.Meeting || get().meetingData,
-      attendeeData: meetingInfo?.Attendee || get().attendeeData,
-      startTime: Date.now(),
+      // [CRITICAL FIX] Only update meetingData if new info is provided.
+      // The Web caller already has meetingData from /call/create — don't overwrite with undefined.
+      meetingData: meetingInfo?.Meeting || meetingInfo?.meeting || current.meetingData,
+      attendeeData: meetingInfo?.Attendee || meetingInfo?.attendee || current.attendeeData,
+      startTime: current.startTime || Date.now(),
     });
   },
 

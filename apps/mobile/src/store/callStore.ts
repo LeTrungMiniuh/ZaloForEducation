@@ -1,10 +1,15 @@
 import { create } from 'zustand';
 
 let callTimeout: any = null;
+let resetTimeout: any = null;
 const clearInternalTimeout = () => {
   if (callTimeout) {
     clearTimeout(callTimeout);
     callTimeout = null;
+  }
+  if (resetTimeout) {
+    clearTimeout(resetTimeout);
+    resetTimeout = null;
   }
 };
 
@@ -144,19 +149,6 @@ export const useCallStore = create<CallStore>((set, get) => ({
     });
   },
 
-  rejectCall: () => {
-    clearInternalTimeout();
-    set({ 
-      callState: 'ENDED',
-      activeCallId: null,
-      meetingData: null,
-      attendeeData: null,
-    });
-    setTimeout(() => {
-      get().resetCall();
-    }, 1000);
-  },
-
   hangupCall: () => {
     clearInternalTimeout();
     set({
@@ -165,8 +157,23 @@ export const useCallStore = create<CallStore>((set, get) => ({
       meetingData: null,
       attendeeData: null,
     });
-    setTimeout(() => {
+    resetTimeout = setTimeout(() => {
       get().resetCall();
+      resetTimeout = null;
+    }, 1000);
+  },
+
+  rejectCall: () => {
+    clearInternalTimeout();
+    set({ 
+      callState: 'ENDED',
+      activeCallId: null,
+      meetingData: null,
+      attendeeData: null,
+    });
+    resetTimeout = setTimeout(() => {
+      get().resetCall();
+      resetTimeout = null;
     }, 1000);
   },
 

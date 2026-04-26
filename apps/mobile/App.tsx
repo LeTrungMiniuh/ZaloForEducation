@@ -53,13 +53,13 @@ function MainApp() {
     loadFonts();
   }, []);
 
-  if (!fontsLoaded || authLoading || !isSplashTimeout) {
-    return <SplashScreen />;
-  }
-
   return (
     <NavigationContainer>
-      <RootNavigator user={user} onLogout={logout} />
+      {(!fontsLoaded || authLoading || !isSplashTimeout) ? (
+        <SplashScreen />
+      ) : (
+        <RootNavigator user={user} onLogout={logout} />
+      )}
       <CallOverlay />
     </NavigationContainer>
   );

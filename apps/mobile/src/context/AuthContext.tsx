@@ -227,12 +227,13 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       if (state.activeCallId === data.callId) {
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
-        chimeRef.current?.cleanup();
+        chimeRef.current?.cleanup('Socket-call:dismiss');
         useCallStore.getState().resetCall();
       }
     });
 
     SocketService.on('call:accept', (data: any) => {
+      console.log('[SOCKET] call:accept received:', data);
       const state = useCallStore.getState();
       if (state.activeCallId === data.callId) {
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
@@ -242,21 +243,23 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
     });
 
     SocketService.on('call:reject', (data: any) => {
+      console.log('[SOCKET] call:reject received:', data);
       const state = useCallStore.getState();
       if (state.activeCallId === data.callId) {
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
-        chimeRef.current?.cleanup();
+        chimeRef.current?.cleanup('Socket-call:reject');
         useCallStore.getState().rejectCall();
       }
     });
 
     SocketService.on('call:hangup', (data: any) => {
+      console.log('[SOCKET] call:hangup received:', data);
       const state = useCallStore.getState();
       if (state.activeCallId === data.callId) {
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
-        chimeRef.current?.cleanup();
+        chimeRef.current?.cleanup('Socket-call:hangup');
         useCallStore.getState().hangupCall();
       }
     });
@@ -267,7 +270,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
         if (state.callState === 'CONNECTED' || state.callState === 'JOINING') return;
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
-        chimeRef.current?.cleanup();
+        chimeRef.current?.cleanup('Socket-call:timeout');
         useCallStore.getState().rejectCall();
       }
     });

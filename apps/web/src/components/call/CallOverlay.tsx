@@ -141,14 +141,25 @@ const CallOverlay: React.FC = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleHangup = async () => {
+  const handleHangup = async (reason: string = 'manual') => {
+    // [DEBUG] Trace who is calling hangup
+    console.trace(`[Web-Call] handleHangup called. Reason: ${reason}, callState: ${useCallStore.getState().callState}`);
+    
+    // [GUARD] Never send hangup if we're the callee in RINGING state
+    const currentState = useCallStore.getState().callState;
+    if (currentState === 'RINGING' && useCallStore.getState().isIncoming) {
+      console.warn('[Web-Call] BLOCKED hangup — we are RINGING as callee. Use handleDecline instead.');
+      return;
+    }
+    
     if (socket && conversationId && toEmail && activeCallId) {
-      socket.emit('call:hangup', { convId: conversationId, callId: activeCallId, toEmail });
+      console.log(`[Web-Call] Sending call:hangup to peer. Reason: ${reason}`);
+      socket.emit('call:hangup', { convId: conversationId, callId: activeCallId, toEmail, reason });
     }
     try {
       await api.post('/call/hangup', { conversationId, callId: activeCallId });
     } catch (e) { /* ignore */ }
-    await leaveCurrentSession();
+    await leaveCurrentSession('handleHangup-' + reason);
 
     // Switch to ENDED state for 4 seconds
     useCallStore.getState().hangupCall();
@@ -487,7 +498,7 @@ const CallOverlay: React.FC = () => {
 
             <div className="w-px h-8 bg-white/10 mx-2" />
 
-            <button onClick={handleHangup} className="w-16 h-16 rounded-2xl bg-red-500 hover:bg-red-600 flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 shadow-[0_0_30px_rgba(239,68,68,0.3)]">
+            <button onClick={() => handleHangup('manual')} className="w-16 h-16 rounded-2xl bg-red-500 hover:bg-red-600 flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 shadow-[0_0_30px_rgba(239,68,68,0.3)]">
               <PhoneOff size={28} className="text-white" />
             </button>
           </div>

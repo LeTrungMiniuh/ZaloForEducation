@@ -59,9 +59,9 @@ export const setGlobalVideoRefs = (
 /**
  * Dừng toàn bộ hardware và cleanup Chime session.
  */
-export const leaveCurrentSession = async () => {
+export const leaveCurrentSession = async (reason: string = 'unknown') => {
   if (globalSession) {
-    console.log('[Chime] Cleaning up global session...');
+    console.log(`[Chime] Cleaning up global session. Reason: ${reason}`);
     try {
       const cleanupPromises: Promise<void>[] = [];
       if (globalVideoStarted) cleanupPromises.push(globalSession.audioVideo.stopVideoInput());
@@ -182,7 +182,7 @@ export const useChime = () => {
       return;
     }
 
-    console.log(`[Chime] >>> Starting session setup (type=${type}) <<<`);
+    console.log(`[Chime] >>> Starting session setup (Meeting: ${meeting.MeetingId}) <<<`);
     setConnecting(true);
     setConnectionError(null);
 
@@ -229,6 +229,8 @@ export const useChime = () => {
         console.warn('[Chime] No audio output devices found, attempting default...');
         await session.audioVideo.chooseAudioOutput(null as any);
       }
+
+      // [AUDIO FIX] Local mic will be unmuted in audioVideoDidStart callback
 
       // 2. Video Input
       if (type === 'video') {
@@ -310,6 +312,20 @@ export const useChime = () => {
           console.log('[Web-Chime] ✅ Session STARTED successfully');
           setConnecting(false);
           setCallState('CONNECTED');
+          
+          // [CRITICAL] Bind audio element NOW — session is ready
+          const audioEl = document.getElementById('chime-audio') as HTMLAudioElement | null;
+          if (audioEl && session) {
+            audioEl.volume = 1.0;
+            session.audioVideo.bindAudioElement(audioEl).then(() => {
+              console.log('[Web-Chime] 🔊 Audio element bound INSIDE audioVideoDidStart');
+              // [AUDIO FIX] Explicitly unmute and play
+              session.audioVideo.realtimeUnmuteLocalAudio();
+              audioEl.play().catch(e => console.warn('[Web-Chime] 🔇 Autoplay blocked? Please click on page.', e));
+            }).catch((e: any) => console.warn('[Web-Chime] Audio bind error:', e));
+          } else {
+            console.warn('[Web-Chime] ⚠️ #chime-audio NOT FOUND when session started');
+          }
         },
         audioVideoDidStop: (sessionStatus: any) => {
           const code = sessionStatus?.statusCode();
@@ -331,15 +347,20 @@ export const useChime = () => {
         }
       });
 
-      // 4. Audio Output binding (Search for #chime-audio in DOM)
-      console.log('[Chime] Step 4: Binding audio element...');
-      const audioEl = document.getElementById('chime-audio') as HTMLAudioElement | null;
-      if (audioEl) {
-        await session.audioVideo.bindAudioElement(audioEl);
-        console.log('[Chime] Step 4 OK: Audio element bound');
-      } else {
-        console.warn('[Chime] Step 4 WARNING: #chime-audio NOT FOUND in DOM - call may have no audio');
-      }
+      // 4. Audio Output binding — primary bind is in audioVideoDidStart callback above.
+      // This is a SAFETY NET rebind after 2s in case the callback fires before DOM is ready.
+      console.log('[Chime] Step 4: Scheduling safety-net audio rebind...');
+      setTimeout(async () => {
+        const audioEl = document.getElementById('chime-audio') as HTMLAudioElement | null;
+        if (audioEl && globalSession) {
+          try {
+            await globalSession.audioVideo.bindAudioElement(audioEl);
+            console.log('[Chime] Step 4 OK: Safety-net audio rebind successful');
+          } catch (e) {
+            console.warn('[Chime] Step 4: Safety-net rebind skipped (already bound)');
+          }
+        }
+      }, 2000);
 
       // 5. Start session
       console.log('[Chime] Step 5: Calling audioVideo.start()...');
@@ -356,20 +377,20 @@ export const useChime = () => {
 
     } catch (error: any) {
       console.error('[Chime] ❌ setupSession CRASHED:', error);
-      setConnectionError(error?.message || 'Lỗi khởi tạo Media');
+      setConnectionError(`Lỗi Media: ${error?.message || 'Không xác định'}`);
       setConnecting(false);
-      globalSession = null;
-       // Reset call sau 5s nếu lỗi khởi tạo
-      setTimeout(() => {
-         if (useCallStore.getState().callState === 'JOINING') resetCall();
-      }, 5000);
+      // globalSession = null; // Don't nullify yet, might be transient
     }
   }, [setCallState, resetCall, bindTile, rebindAllTiles, setConnecting, setConnectionError, setRemoteCameraOn]);
 
   useEffect(() => {
-    // ⚠️ Chỉ chạy khi có meeting data và chưa có session
+    // ⚠️ Only run when meeting data exists and no active session
+    // [FIX] Removed CONNECTED state guard — !globalSession is sufficient.
+    // The guard was blocking session creation when Web is callee (state is already CONNECTED
+    // because acceptCall() runs before this effect fires).
     if (meetingData && attendeeData && !globalSession) {
       const type = useCallStore.getState().callType;
+      console.log(`[Chime] useEffect triggered — creating session (type=${type})`);
       setupSession(type);
     }
   }, [meetingData?.MeetingId, attendeeData?.AttendeeId, setupSession]);
