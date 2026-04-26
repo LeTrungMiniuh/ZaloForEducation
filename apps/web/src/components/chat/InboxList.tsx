@@ -3,6 +3,7 @@ import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
 import { getDisplayName, getDisplayAvatar, isUnread } from '../../utils/chatUtils';
 import CreateGroupModal from './CreateGroupModal';
+import { BOT_EMAIL } from '@zalo-edu/shared';
 import ConversationTagPicker from './ConversationTagPicker';
 import Swal from 'sweetalert2';
 
@@ -11,6 +12,8 @@ import {
   MoreHorizontal,
   UserPlus,
   Users,
+  MessageSquarePlus,
+  Settings,
   Menu
 } from 'lucide-react';
 
@@ -91,6 +94,7 @@ const InboxList: React.FC = () => {
     setIsSearching(false);
   };
 
+<<<<<<< HEAD
   const normalizedSearch = String(searchQuery || '').trim().toLowerCase();
 
   const conversationMatchesSearch = (conv: any) => {
@@ -162,6 +166,9 @@ const InboxList: React.FC = () => {
   };
 
   const filteredConversations = conversations.filter((conv: any) => {
+    // 0. Exclude Bot conversations
+    if (Array.isArray(conv.members) && conv.members.includes(BOT_EMAIL)) return false;
+
     // 1. Unread filter
     if (chatFilter === "unread" && !isUnread(conv, user?.email)) return false;
 

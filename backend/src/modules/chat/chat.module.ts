@@ -6,12 +6,13 @@ import { FriendshipService } from "./friendship.service";
 import { ChatController } from "./chat.controller";
 import { AuthModule } from "../auth/auth.module";
 import { UserModule } from "../user/user.module";
+import { BotModule } from "../bot/bot.module";
 
 import { NotificationService } from "./notification.service";
 import { WsJwtGuard } from "./ws-jwt.guard";
 
 @Module({
-  imports: [forwardRef(() => AuthModule), forwardRef(() => UserModule)],
+  imports: [forwardRef(() => AuthModule), forwardRef(() => UserModule), forwardRef(() => BotModule)],
   controllers: [ChatController],
   providers: [ChatGateway, ChatService, MessageService, FriendshipService, NotificationService, WsJwtGuard],
   exports: [ChatGateway, ChatService, MessageService, FriendshipService, NotificationService, WsJwtGuard],

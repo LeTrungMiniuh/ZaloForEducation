@@ -27,6 +27,8 @@ import { ChatService } from "./chat.service";
 import { FriendshipService } from "./friendship.service";
 import { MessageService } from "./message.service";
 import { NotificationService } from "./notification.service";
+import { BotService } from "../bot/bot.service";
+import { BOT_EMAIL } from '@zalo-edu/shared';
 
 @Controller("chat")
 @UseGuards(JwtAuthGuard, ProfileCompleteGuard)
@@ -44,6 +46,7 @@ export class ChatController {
     @Inject(forwardRef(() => ChatGateway))
     private readonly chatGateway: ChatGateway,
     private readonly notificationService: NotificationService,
+    private readonly botService: BotService,
   ) { }
 
   // --- CONVERSATIONS ---
@@ -228,6 +231,13 @@ export class ChatController {
             ? '[Vị trí]'
             : (body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]')),
         data: { convId, messageId: res.id }
+      });
+    }
+
+    // Bot conversation: fire-and-forget
+    if (normalizedConvId.includes(BOT_EMAIL) && body.type !== 'system') {
+      this.botService.handleIncomingMessage(convId, email, body.content, body.media, body.files).catch((err) => {
+        console.error('[ChatController] Bot handler error:', err);
       });
     }
 

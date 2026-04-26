@@ -11,7 +11,8 @@ import {
   Cloud, 
   Settings, 
   User, 
-  LogOut 
+  LogOut,
+  Bot
 } from 'lucide-react';
 
 const Sidebar: React.FC = () => {
@@ -40,6 +41,7 @@ const Sidebar: React.FC = () => {
     { id: 'contacts', icon: Users, label: 'Danh bạ', path: '/contacts', hasBadge: false },
     { id: 'notifications', icon: Bell, label: 'Thông báo', path: '/notifications', hasBadge: false },
     { id: 'cloud', icon: Cloud, label: 'Cloud', path: '/cloud', hasBadge: false },
+    { id: 'bot', icon: Bot, label: 'AI Trợ lý', path: '/bot', hasBadge: false },
   ];
 
   const handleNavClick = () => {

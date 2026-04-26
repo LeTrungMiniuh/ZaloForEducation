@@ -62,6 +62,11 @@
     100% { background-color: rgba(254, 243, 199, 0); }
   }
 
+  @keyframes typingBounce {
+    0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+    30% { opacity: 1; transform: translateY(-4px); }
+  }
+
   --animate-pulse-highlight: pulseHighlight 2s ease-in-out;
 }
 
@@ -74,6 +79,15 @@
   animation: highlight-fade 2s ease-in-out;
   border: 2px solid #f59e0b !important;
   z-index: 10;
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #727784;
+  display: inline-block;
+  animation: typingBounce 1.2s ease-in-out infinite;
 }
 
 :root {
