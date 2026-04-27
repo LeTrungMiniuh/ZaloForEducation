@@ -1,3 +1,4 @@
+import { BOT_EMAIL } from "@zalo-edu/shared";
 import React from "react";
 
 // --- TYPES ---
@@ -223,7 +224,7 @@ export const getMessagePreview = (message: any): string => {
     const callStatus = (message.callStatus || message.metadata?.callStatus || "").toLowerCase();
     const isVideo = callType === "video";
     const label = isVideo ? "Video" : "Thoại";
-    
+
     if (callStatus === "missed" || callStatus === "no_answer" || callStatus === "cancelled") {
       return `[Cuộc gọi ${label} nhỡ]`;
     }
@@ -282,6 +283,7 @@ export const isUnread = (
   const myEmail = normalize(currentUserEmail);
   const lastSender = normalize(conv.lastMessageSenderId || conv.senderId || "");
 
+  if (lastSender === BOT_EMAIL) return false;
   if (lastSender === myEmail) return false;
   if (!conv.lastMessageTimestamp && !conv.updatedAt) return false;
 
