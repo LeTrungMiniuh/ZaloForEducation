@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Platform, View, Text } from 'react-native';
+import { Platform, View, Text, ActivityIndicator } from 'react-native';
+import { Audio } from 'expo-av';
 import * as Font from 'expo-font';
 import { 
   PlusJakartaSans_300Light, 
@@ -21,14 +22,23 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 function MainApp() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, logout, isDataLoaded } = useAuth();
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [isSplashTimeout, setIsSplashTimeout] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setIsSplashTimeout(true);
-    }, 2000);
+    }, 1500); // Minimum splash time
+    
+    Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+      staysActiveInBackground: true,
+    }).catch(err => console.warn('Audio mode set failed', err));
+
     return () => clearTimeout(timer);
   }, []);
 
@@ -53,9 +63,11 @@ function MainApp() {
     loadFonts();
   }, []);
 
+  const isEverythingLoaded = fontsLoaded && !authLoading && isSplashTimeout && isDataLoaded;
+
   return (
     <NavigationContainer>
-      {(!fontsLoaded || authLoading || !isSplashTimeout) ? (
+      {!isEverythingLoaded ? (
         <SplashScreen />
       ) : (
         <RootNavigator user={user} onLogout={logout} />

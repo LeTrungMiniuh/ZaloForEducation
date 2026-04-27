@@ -53,7 +53,8 @@
       "expo-notifications",
       "expo-location",
       "expo-font",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-video"
     ]
   }
 }

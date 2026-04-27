@@ -265,15 +265,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get().clearConversationMuted(convId);
     }
     
-    // Clear unread count locally
-    if (convId) {
-      set((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === convId ? { ...c, unreadCount: 0 } : c
-        )
-      }));
-    }
-
     set({ activeConvId: convId, messages: [], nextCursor: null });
     if (convId) {
       get().fetchMessages(convId);
@@ -288,31 +279,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const isActiveConversation = incomingConvId === state.activeConvId;
 
-    // 1. Avoid duplicates
-    if (isActiveConversation && state.messages.find(m => m.id === message.id)) return state;
-
-    // 2. Optimistic merge
-    const optimisticIndex = isActiveConversation
-      ? state.messages.findIndex(m =>
-        (m.conversationId || (m as any).convId) === incomingConvId &&
-        m.senderId === message.senderId &&
-        m.content === message.content &&
-        m.status === 'sending' &&
-        Math.abs(new Date(m.createdAt).getTime() - new Date(message.createdAt).getTime()) < 10000
-      )
-      : -1;
-
-    let newMessages;
-    if (optimisticIndex !== -1) {
-      newMessages = [...state.messages];
-      newMessages[optimisticIndex] = { ...message, status: 'sent' };
-    } else if (isActiveConversation) {
-      newMessages = [...state.messages, message];
-    } else {
-      newMessages = state.messages;
-    }
-
-    // 3. Update preview and bump conversation to top
+    // 1. Update preview and bump conversation to top
     const newConvs = [...state.conversations];
     const convIndex = newConvs.findIndex(c => c.id === incomingConvId);
 
@@ -335,12 +302,52 @@ export const useChatStore = create<ChatState>((set, get) => ({
       newConvs.splice(convIndex, 1);
       newConvs.unshift(updatedConv);
     } else {
-      // If conversation is missing, trigger a full fetch
       get().fetchConversations();
     }
 
+    if (!isActiveConversation) {
+      return { conversations: newConvs };
+    }
+
+    // 2. Add to active messages with sorting and deduplication
+    const currentMessages = state.messages;
+    
+    if (!message.id || !message.createdAt) {
+      console.warn("[chatStore] Received malformed message", message);
+      return { conversations: newConvs };
+    }
+
+    // Check if it's an update to a 'sending' message
+    const optimisticIndex = currentMessages.findIndex(m =>
+      m.senderId === message.senderId &&
+      m.content === message.content &&
+      m.status === 'sending' &&
+      Math.abs(new Date(m.createdAt).getTime() - new Date(message.createdAt).getTime()) < 10000
+    );
+
+    let updatedMessages;
+    if (optimisticIndex !== -1) {
+      updatedMessages = [...currentMessages];
+      updatedMessages[optimisticIndex] = { ...message, status: 'sent' };
+    } else if (!currentMessages.find(m => m.id === message.id)) {
+      updatedMessages = [...currentMessages, message];
+    } else {
+      return { conversations: newConvs };
+    }
+
+    // Always sort by date to ensure order and filter out any accidental bad data
+    updatedMessages = updatedMessages
+      .filter(m => m && m.id && m.createdAt)
+      .sort((a, b) => {
+        const t1 = new Date(a.createdAt).getTime();
+        const t2 = new Date(b.createdAt).getTime();
+        if (isNaN(t1)) return 1;
+        if (isNaN(t2)) return -1;
+        return t1 - t2;
+      });
+
     return {
-      messages: newMessages,
+      messages: updatedMessages,
       conversations: newConvs
     };
   }),
@@ -348,7 +355,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   markAsRead: async (convId) => {
     set((state) => ({
       conversations: state.conversations.map((c) =>
-        c.id === convId ? { ...c, lastReadAt: Date.now() } : c
+        c.id === convId ? { ...c, lastReadAt: Date.now(), unreadCount: 0 } : c
       )
     }));
     get().setLocalRead(convId);
@@ -395,8 +402,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ isLoadingMessages: true });
       const res = await api.get(`/chat/conversations/${encodeURIComponent(activeConvId)}/messages-context/${encodeURIComponent(messageId)}`);
       if (res.data?.messages) {
+        const formatted = Array.isArray(res.data.messages) 
+          ? res.data.messages
+              .filter((m: any) => m && m.id && m.createdAt && !isNaN(new Date(m.createdAt).getTime()))
+              .sort((a: any, b: any) => {
+                const t1 = new Date(a.createdAt).getTime();
+                const t2 = new Date(b.createdAt).getTime();
+                if (isNaN(t1)) return 1;
+                if (isNaN(t2)) return -1;
+                return t1 - t2;
+              })
+          : [];
         set({ 
-          messages: res.data.messages, 
+          messages: formatted, 
           nextCursor: res.data.nextCursor,
           isLoadingMessages: false 
         });
@@ -473,7 +491,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const res = await api.get(`/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${limit}`);
       const rawMessages = res.data.messages || [];
-      const formattedMessages = Array.isArray(rawMessages) ? [...rawMessages].reverse() : [];
+      const formattedMessages = Array.isArray(rawMessages) 
+        ? rawMessages
+            .filter((m: any) => m && m.id && m.createdAt && !isNaN(new Date(m.createdAt).getTime()))
+            .sort((a: any, b: any) => {
+              const t1 = new Date(a.createdAt).getTime();
+              const t2 = new Date(b.createdAt).getTime();
+              if (isNaN(t1)) return 1;
+              if (isNaN(t2)) return -1;
+              return t1 - t2;
+            })
+ 
+        : [];
       set({
         messages: formattedMessages,
         nextCursor: res.data.nextCursor,
@@ -497,8 +526,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       
       set((state) => {
         if (state.activeConvId !== convId) return { isLoadingMessages: false };
+        
+        // Use a Map to deduplicate and then sort
+        const messageMap = new Map();
+        state.messages.forEach(m => {
+          if (m && m.id && m.createdAt && !isNaN(new Date(m.createdAt).getTime())) {
+            messageMap.set(m.id, m);
+          }
+        });
+        olderMessages.forEach(m => {
+          if (m && m.id && m.createdAt && !isNaN(new Date(m.createdAt).getTime())) {
+            messageMap.set(m.id, m);
+          }
+        });
+        
+        const merged = Array.from(messageMap.values()).sort((a: any, b: any) => {
+          const t1 = new Date(a.createdAt).getTime();
+          const t2 = new Date(b.createdAt).getTime();
+          if (isNaN(t1)) return 1;
+          if (isNaN(t2)) return -1;
+          return t1 - t2;
+        });
+
         return {
-          messages: [...olderMessages, ...state.messages],
+          messages: merged,
           nextCursor: res.data.nextCursor,
           isLoadingMessages: false
         };
@@ -566,19 +617,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (convIndex !== -1) {
         const updatedConv = {
           ...newConvs[convIndex],
-          lastMessageContent: (() => {
-            if (msgType === 'contact_card') return '[Danh thiếp]';
-            if (!content || content.startsWith('MSG#')) {
-              if (media.length > 0) {
-                if (media.some((item: any) => item.isSticker || String(item.mimeType).includes("sticker"))) return "[Sticker]";
-                if (media.some((item: any) => item.isHD)) return "[Ảnh HD]";
-                return "[Hình ảnh]";
-              }
-              if (files.length > 0) return "[Tệp tin]";
-              return "Tin nhắn mới";
-            }
-            return content;
-          })(),
+          lastMessageContent: getMessagePreview(optimisticMsg),
           lastMessageSenderId: senderEmail,
           lastMessageTimestamp: new Date(timestamp).getTime(),
           updatedAt: timestamp,

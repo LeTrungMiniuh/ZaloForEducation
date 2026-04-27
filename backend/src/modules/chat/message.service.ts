@@ -66,14 +66,64 @@ export class MessageService {
     // Sort key format: MSG#2026-04-10T...#uuid ensures chronological sorting in DynamoDB
     const SK = `MSG#${timestamp}#${msgId}`;
 
-    const newMessage: Message = {
+    // --- FILTER FILES & MEDIA ---
+    let filteredFiles = Array.isArray(files) ? [...files] : [];
+    let audioUrl = (extraFields as any)?.audioUrl || null;
+    let contactCard = (extraFields as any)?.contactCard || null;
+    let location = (extraFields as any)?.location || null;
+
+    if (filteredFiles.length > 0) {
+      filteredFiles = filteredFiles.filter(f => {
+        const fileName = (f.name || '').toLowerCase();
+        const mimeType = (f.mimeType || '').toLowerCase();
+
+        // 1. Extract Contact Card data
+        if (fileName === 'contact.json') {
+          try {
+            if (!contactCard) {
+              const data = typeof f.dataUrl === 'string' ? JSON.parse(f.dataUrl) : f.dataUrl;
+              contactCard = data;
+            }
+          } catch (e) {
+            console.error('[MessageService] Failed to parse contact.json', e);
+          }
+          return false;
+        }
+
+        // 2. Extract Location data
+        if (fileName === 'location.json') {
+          try {
+            if (!location) {
+              const data = typeof f.dataUrl === 'string' ? JSON.parse(f.dataUrl) : f.dataUrl;
+              location = data;
+            }
+          } catch (e) {
+            console.error('[MessageService] Failed to parse location.json', e);
+          }
+          return false;
+        }
+
+        // 3. Extract audio recordings to top-level field and remove from files array
+        if (mimeType.startsWith('audio/')) {
+          if (!audioUrl) audioUrl = f.url || f.dataUrl;
+          return false;
+        }
+
+        return true;
+      });
+    }
+
+    const newMessage: any = {
       id: SK,
       conversationId: convId,
       senderId: senderEmail,
       content,
       type,
       media,
-      files,
+      files: filteredFiles.length > 0 ? filteredFiles : undefined,
+      audioUrl,
+      contactCard,
+      location,
       replyTo,
       status: "sent",
       createdAt: timestamp,

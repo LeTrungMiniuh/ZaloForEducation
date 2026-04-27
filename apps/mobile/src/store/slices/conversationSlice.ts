@@ -1,5 +1,5 @@
 import { StateCreator } from 'zustand';
-import { chatGet } from '../../utils/api';
+import { chatGet, apiPost } from '../../utils/api';
 import { normalizeConversation } from '../chatHelpers';
 import { ChatStore } from '../chatStore';
 
@@ -10,11 +10,81 @@ export interface ConversationSlice {
   markReadLocal: (convId: string) => void;
   fetchConversations: () => Promise<any[]>;
   upsertConversationLastMessage: (convId: string, content: string, senderId?: string, isSystem?: boolean, messageId?: string) => void;
+  mutedConversations: Record<string, any>;
+  isConversationMuted: (convId: string) => boolean;
+  muteConversationFor: (convId: string, duration: '1h' | '4h' | 'until-8am' | 'until-open' | boolean) => void;
+  clearConversationMuted: (convId: string) => void;
+  startDirectChat: (targetEmail: string) => Promise<string>;
 }
 
 export const createConversationSlice: StateCreator<ChatStore, [], [], ConversationSlice> = (set, get) => ({
   conversations: [],
   activeConvId: null,
+  mutedConversations: {},
+
+  startDirectChat: async (targetEmail: string) => {
+    const normalizedTarget = targetEmail.trim().toLowerCase();
+    const myEmail = get().currentUserEmail?.toLowerCase();
+    
+    // Find existing
+    const existing = get().conversations.find(c => 
+      c.type === 'direct' && 
+      Array.isArray(c.members) && 
+      c.members.map((m: string) => m.toLowerCase()).includes(normalizedTarget)
+    );
+
+    if (existing) return existing.id;
+
+    // Create new via backend if needed, but for now we can just use the direct chat ID pattern
+    // The backend usually creates it when first message is sent or explicitly.
+    // Let's call the same API as Web.
+    try {
+      const res = await apiPost("/chat/conversations/direct", { targetEmail: normalizedTarget });
+      if (res.data?.id) {
+        // Refresh conversations to get the new one
+        await get().fetchConversations();
+        return res.data.id;
+      }
+      throw new Error("Failed to create direct chat");
+    } catch (err) {
+      console.error("startDirectChat error", err);
+      // Fallback: generate a probable ID if backend is simple
+      const participants = [myEmail, normalizedTarget].sort();
+      return `direct:${participants.join(':')}`;
+    }
+  },
+
+  isConversationMuted: (convId: string) => {
+    const muted = get().mutedConversations[convId];
+    if (!muted) return false;
+    if (muted === true || muted === 'until-open') return true;
+    if (typeof muted === 'number') return Date.now() < muted;
+    return false;
+  },
+
+  muteConversationFor: (convId, duration) => {
+    let until: any = true;
+    if (duration === '1h') until = Date.now() + 60 * 60 * 1000;
+    else if (duration === '4h') until = Date.now() + 4 * 60 * 60 * 1000;
+    else if (duration === 'until-8am') {
+      const d = new Date();
+      if (d.getHours() >= 8) d.setDate(d.getDate() + 1);
+      d.setHours(8, 0, 0, 0);
+      until = d.getTime();
+    } else if (duration === 'until-open') until = 'until-open';
+
+    set((state) => ({
+      mutedConversations: { ...state.mutedConversations, [convId]: until }
+    } as any));
+  },
+
+  clearConversationMuted: (convId) => {
+    set((state) => {
+      const next = { ...state.mutedConversations };
+      delete next[convId];
+      return { mutedConversations: next } as any;
+    });
+  },
 
   setConversations: (input) => {
     const current = Array.isArray(get().conversations) ? get().conversations : [];

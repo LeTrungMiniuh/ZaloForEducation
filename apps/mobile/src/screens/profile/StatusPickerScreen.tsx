@@ -77,7 +77,7 @@ export default function StatusPickerScreen({ onNavigate }: StatusPickerProps) {
     };
 
     await storage.setItem('user', JSON.stringify(nextUser));
-    onNavigate('home-me');
+    onNavigate('ProfileTab');
   };
 
   const clearStatus = async () => {
@@ -93,7 +93,7 @@ export default function StatusPickerScreen({ onNavigate }: StatusPickerProps) {
     };
 
     await storage.setItem('user', JSON.stringify(nextUser));
-    onNavigate('home-me');
+    onNavigate('ProfileTab');
   };
 
   return (
@@ -101,7 +101,7 @@ export default function StatusPickerScreen({ onNavigate }: StatusPickerProps) {
       <StatusBar barStyle="light-content" />
       <LinearGradient colors={['#496e9a', '#9f7480']} style={styles.gradient}>
         <View style={styles.header}>
-          <TouchableOpacity style={styles.closeButton} onPress={() => onNavigate('home-me')}>
+          <TouchableOpacity style={styles.closeButton} onPress={() => onNavigate('ProfileTab')}>
             <Text style={styles.closeIcon}>close</Text>
           </TouchableOpacity>
           <View>

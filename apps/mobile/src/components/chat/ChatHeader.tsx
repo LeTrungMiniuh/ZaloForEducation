@@ -12,6 +12,7 @@ interface ChatHeaderProps {
   isOnline: boolean;
   typingText: string;
   onStartCall: (type: 'audio' | 'video') => void;
+  onOpenDetails?: () => void;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -23,6 +24,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   isOnline,
   typingText,
   onStartCall,
+  onOpenDetails,
 }) => {
   return (
     <LinearGradient colors={["#0058bc", "#00418f"]} style={[styles.header, { paddingTop: insets.top }]}>
@@ -54,7 +56,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         <TouchableOpacity style={styles.headerIconButton} onPress={() => onStartCall('video')}>
           <Text style={styles.headerIcon}>videocam</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.headerIconButton}>
+        <TouchableOpacity style={styles.headerIconButton} onPress={onOpenDetails}>
           <Text style={styles.headerIcon}>list</Text>
         </TouchableOpacity>
       </View>

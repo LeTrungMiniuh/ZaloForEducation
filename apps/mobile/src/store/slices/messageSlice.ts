@@ -7,6 +7,7 @@ import {
 } from '../chatHelpers';
 import { getCachedMessages, setCachedMessages } from '../storage';
 import { ChatStore } from '../chatStore';
+import { getMessagePreview } from '../../utils/chatUtils';
 
 export interface MessageSlice {
   messages: any[];
@@ -22,10 +23,11 @@ export interface MessageSlice {
   setMessages: (updater: any, nextCursor?: string | null) => void;
   addMessage: (message: any) => void;
   updateMessage: (msgId: string, updates: any) => void;
-  sendMessageOptimistic: (convId: string, senderEmail: string, content: string, msgType?: string, extraFields?: any) => Promise<void>;
+  sendMessageOptimistic: (convId: string, senderEmail: string, content: string, msgType?: string, extraFields?: any) => string;
   patchMessageOptimistic: (convId: string, messageId: string, data: any) => Promise<void>;
   deleteMessageOptimistic: (convId: string, messageId: string) => Promise<void>;
   fetchMessage: (convId: string, messageId: string) => Promise<void>;
+  clearHistory: (convId: string) => Promise<void>;
 }
 
 export const createMessageSlice: StateCreator<ChatStore, [], [], MessageSlice> = (set, get) => ({
@@ -34,6 +36,18 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageSlice> =
   nextCursor: null,
   fetchToken: 0,
   targetMessageId: null,
+
+  clearHistory: async (convId: string) => {
+    try {
+      await chatPost(`/conversations/${encodeURIComponent(convId)}/clear-history`, {});
+      if (get().activeConvId === convId) {
+        set({ messages: [] } as any);
+      }
+    } catch (err) {
+      console.error("Failed to clear history", err);
+      throw err;
+    }
+  },
 
   setTargetMessageId: (id) => set({ targetMessageId: id } as any),
 
@@ -183,9 +197,9 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageSlice> =
       let nextConversations = [...state.conversations];
       if (convIndex !== -1) {
         const target = { ...nextConversations[convIndex] };
-        const previewText = typeof safeMessage.content === "string" ? safeMessage.content : ((safeMessage.content as any)?.text || "[Tin nhắn]");
+        const previewText = getMessagePreview(safeMessage);
 
-        target.lastMessage = safeMessage.id; 
+        target.lastMessage = safeMessage.id;
         target.lastMessageContent = previewText;
         target.lastMessageSenderId = safeMessage.senderId;
         target.updatedAt = safeMessage.createdAt || new Date().toISOString();
@@ -224,15 +238,15 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageSlice> =
       return { messages: nextMessages } as any;
     }),
 
-  sendMessageOptimistic: async (convId, senderEmail, content, msgType = "text", extraFields = {}) => {
+  sendMessageOptimistic: (convId: string, senderEmail: string, content: string, msgType = "text", extraFields = {}) => {
     const tempId = `TEMP#${Date.now()}#${Math.random().toString(36).slice(2, 8)}`;
     const timestamp = new Date().toISOString();
     const attachments = extraFields.attachments || [];
     const media = attachments.filter((a: any) => a.mimeType.startsWith("image/") || a.mimeType.startsWith("video/")).map((a: any) => ({
-      url: a.dataUrl, dataUrl: a.dataUrl, name: a.name, mimeType: a.mimeType, size: a.size, isSticker: a.isSticker === true, isHD: a.isHD === true,
+      url: a.dataUrl || a.uri, dataUrl: a.dataUrl || a.uri, name: a.name, mimeType: a.mimeType, size: a.size, isSticker: a.isSticker === true, isHD: a.isHD === true,
     }));
     const files = attachments.filter((a: any) => !a.mimeType.startsWith("image/") && !a.mimeType.startsWith("video/")).map((a: any) => ({
-      url: a.dataUrl, dataUrl: a.dataUrl, name: a.name, mimeType: a.mimeType, size: a.size,
+      url: a.dataUrl || a.uri, dataUrl: a.dataUrl || a.uri, name: a.name, mimeType: a.mimeType, size: a.size,
     }));
 
     const optimisticMsg = {
@@ -256,20 +270,29 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageSlice> =
       return { messages: nextMessages, conversations: nextConversations } as any;
     });
 
-    try {
-      const payload = { content: content || (media.length > 0 ? '[Hình ảnh]' : files.length > 0 ? '[Tệp tin]' : ''), type: optimisticMsg.type, media: media.length > 0 ? media : undefined, files: files.length > 0 ? files : undefined, ...extraFields };
-      delete payload.attachments;
-      const res = await chatPost(`/conversations/${encodeURIComponent(convId)}/messages`, payload);
-      const savedMessage = normalizeMessage(res?.data || res);
-      if (!savedMessage) throw new Error("INVALID_MESSAGE_PAYLOAD");
-      set((state) => {
-        const nextMessages = state.messages.map((m) => m.id === tempId ? { ...savedMessage, status: "sent" } : m);
-        if (state.activeConvId === convId) setCachedMessages(convId, nextMessages);
-        return { messages: nextMessages } as any;
-      });
-    } catch (err) {
-      set((state) => ({ messages: state.messages.map((m) => m.id === tempId ? { ...m, status: "error" } : m) } as any));
+    // We don't await the API call here so the UI can continue immediately.
+    // The background process should handle the actual API call once uploads are done.
+    if (!extraFields.skipApi) {
+      (async () => {
+        try {
+          const payload = { content: content || (media.length > 0 ? '[Hình ảnh]' : files.length > 0 ? '[Tệp tin]' : ''), type: optimisticMsg.type, media: media.length > 0 ? media : undefined, files: files.length > 0 ? files : undefined, ...extraFields };
+          delete payload.attachments;
+          delete payload.skipApi;
+          const res = await chatPost(`/conversations/${encodeURIComponent(convId)}/messages`, payload);
+          const savedMessage = normalizeMessage(res?.data || res);
+          if (!savedMessage) throw new Error("INVALID_MESSAGE_PAYLOAD");
+          set((state) => {
+            const nextMessages = state.messages.map((m) => m.id === tempId ? { ...savedMessage, status: "sent" } : m);
+            if (state.activeConvId === convId) setCachedMessages(convId, nextMessages);
+            return { messages: nextMessages } as any;
+          });
+        } catch (err) {
+          set((state) => ({ messages: state.messages.map((m) => m.id === tempId ? { ...m, status: "error" } : m) } as any));
+        }
+      })();
     }
+
+    return tempId;
   },
 
   patchMessageOptimistic: async (convId, messageId, data) => {

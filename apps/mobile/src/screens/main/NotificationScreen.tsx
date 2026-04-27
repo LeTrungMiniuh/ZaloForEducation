@@ -13,9 +13,26 @@ import { Colors } from '../../constants/Theme';
 import { useChatStore } from '../../store/chatStore';
 import { getSecurityAlerts, markAllSecurityAlertsRead } from '../../utils/securityAlerts';
 
-export default function NotificationScreen({ onNavigate }) {
+interface NotificationScreenProps {
+  onNavigate: (screen: string, params?: any) => void;
+}
+
+interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  at: string | number;
+  read: boolean;
+  category: 'message' | 'security';
+  metadata?: {
+    conversationId?: string;
+    messageId?: string;
+  };
+}
+
+export default function NotificationScreen({ onNavigate }: NotificationScreenProps) {
   const { notifications, markNotificationsRead } = useChatStore();
-  const [securityAlerts, setSecurityAlerts] = useState([]);
+  const [securityAlerts, setSecurityAlerts] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
@@ -36,15 +53,15 @@ export default function NotificationScreen({ onNavigate }) {
   }, [loadData]);
 
   // Merge message notifications and security alerts, sorted by time
-  const allNotifications = [
-    ...notifications.map(n => ({ ...n, category: 'message' })),
-    ...securityAlerts.map(a => ({ ...a, category: 'security' }))
+  const allNotifications: NotificationItem[] = [
+    ...(notifications || []).map(n => ({ ...n, category: 'message' as const })),
+    ...(securityAlerts || []).map(a => ({ ...a, category: 'security' as const }))
   ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 
-  const handlePress = (item) => {
+  const handlePress = (item: NotificationItem) => {
     if (item.category === 'message' && item.metadata?.conversationId) {
       // Use Deep-link logic: Navigate to chat and scroll to messageId
-      onNavigate('chat', { 
+      onNavigate('Chat', { 
         conversationId: item.metadata.conversationId,
         targetMessageId: item.metadata.messageId 
       });
@@ -52,7 +69,7 @@ export default function NotificationScreen({ onNavigate }) {
     // Security alerts might just show detail or do nothing for now
   };
 
-  const renderItem = ({ item }) => (
+  const renderItem = ({ item }: { item: NotificationItem }) => (
     <TouchableOpacity 
       style={[styles.card, !item.read && styles.unreadCard]} 
       onPress={() => handlePress(item)}

@@ -18,6 +18,7 @@ import Alert from '../../utils/Alert';
 import { useAuth } from '../../context/AuthContext';
 import { apiRequest, chatGet, chatPost, chatPatch, chatUpload } from '../../utils/api';
 import SocketService from '../../utils/socket';
+import { getMessagePreview } from '../../utils/chatUtils';
 import { useChatStore } from '../../store/chatStore';
 import { useConversations } from "../../hooks/queries/useConversations";
 import { useCallStore } from "../../store/callStore";
@@ -31,10 +32,10 @@ import { Conversation, Message } from "../../store/types";
 
 const TAB_ALIAS: Record<string, string> = {
   messages: "chat",
-  friends: "contacts",
-  ai: "notifications",
   chat: "chat",
+  friends: "contacts",
   contacts: "contacts",
+  ai: "notifications",
   notifications: "notifications",
   profile: "profile",
 };
@@ -46,6 +47,7 @@ const DEFAULT_AVATAR = require('../../../assets/logo_blue.png');
 export default function HomeScreen({
   navigation,
   route,
+  params: directParams,
 }: any) {
   const insets = useSafeAreaInsets();
   const { user, profileVersion, checkSessionStatus, logout }: any = useAuth();
@@ -63,7 +65,7 @@ export default function HomeScreen({
   const { refetch: refetchConversations, isFetching: isRefreshing } = useConversations();
   const { startOutgoingCall, resetCall, setMeetingInfo }: any = useCallStore();
 
-  const initialTab = route.params?.tab || "messages";
+  const initialTab = directParams?.tab || route.params?.tab || "messages";
   const [activeTab, setActiveTab] = useState(normalizeHomeTab(initialTab));
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [friendSearchEmail, setFriendSearchEmail] = useState("");
@@ -75,8 +77,8 @@ export default function HomeScreen({
   }, []);
 
   useEffect(() => {
-    setActiveTab(normalizeHomeTab(initialTab));
-  }, [initialTab]);
+    setActiveTab(normalizeHomeTab(directParams?.tab || initialTab));
+  }, [directParams?.tab, initialTab]);
 
   const normalizeEmail = (email: string) => String(email || "").trim().toLowerCase();
 
@@ -101,11 +103,21 @@ export default function HomeScreen({
   };
 
   const getConversationPreview = (conv: Conversation) => {
-    const content = String(conv?.lastMessageContent || (String(conv?.lastMessage || "").startsWith("MSG#") ? "" : conv?.lastMessage) || "");
-    if (!content) return "Chưa có tin nhắn";
     const isMe = conv?.lastMessageSenderId === user?.email;
-    const prefix = isMe ? "Bạn: " : "";
-    return `${prefix}${content}`;
+    const prefix = isMe ? 'Bạn: ' : '';
+
+    // Create a mock message object to use getMessagePreview
+    const mockMsg = {
+      content: conv?.lastMessageContent || (String(conv?.lastMessage || '').startsWith('MSG#') ? '' : conv?.lastMessage) || '',
+      type: (conv as any).lastMessageType,
+      media: (conv as any).lastMessageMedia,
+      files: (conv as any).lastMessageFiles,
+    };
+
+    const preview = getMessagePreview(mockMsg);
+    if (preview === 'Tin nhắn' && !mockMsg.content) return 'Chưa có tin nhắn';
+    
+    return `${prefix}${preview}`;
   };
 
   const onRefresh = useCallback(async () => {
@@ -169,8 +181,8 @@ export default function HomeScreen({
               user={user}
               conversations={conversations}
               onNavigate={(screen: string, p: any) => navigation.navigate(screen, p)}
-              onOpenDirectChat={(email: string) => {}}
-              onOpenGroupConversation={(conv: any) => {}}
+              onOpenDirectChat={(email: string) => navigation.navigate('Chat', { targetEmail: email })}
+              onOpenGroupConversation={(conv: any) => navigation.navigate('Chat', { conversationId: conv.id })}
             />
           )}
           {activeTab === "notifications" && <NotificationScreen onNavigate={(s: string, p: any) => navigation.navigate(s, p)} />}

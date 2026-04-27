@@ -171,7 +171,7 @@ export default function ForgotPasswordScreen({ onNavigate }: ForgotPasswordProps
                   <Text style={styles.cardTitle}>Giao dịch thành công</Text>
                   <Text style={[styles.subtitle, { textAlign: 'center', marginBottom: 32 }]}>Mật khẩu của bạn đã được đặt lại thành công. Vui lòng đăng nhập hệ thống.</Text>
                   <View style={{ width: '100%' }}>
-                    <Button title="Đăng nhập ngay" onPress={() => onNavigate && onNavigate('login')} icon="login" />
+                    <Button title="Đăng nhập ngay" onPress={() => onNavigate && onNavigate('Login')} icon="login" />
                   </View>
                 </View>
               ) : (

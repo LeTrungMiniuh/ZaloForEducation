@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, Pressable, TouchableOpacity, Linking, ActivityIndicator } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, StyleSheet, Image, Pressable, TouchableOpacity, Linking, ActivityIndicator, Animated, PanResponder, Dimensions, Platform } from 'react-native';
+import { Video, ResizeMode, Audio } from 'expo-av';
+import Alert from '../../utils/Alert';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Typography } from '../../constants/Theme';
 import { useAuth } from '../../context/AuthContext';
@@ -7,6 +9,7 @@ import MediaViewerModal from './MediaViewerModal';
 import { downloadAndOpenFile } from '../../utils/fileHelper';
 import FluentEmoji from '../common/FluentEmoji';
 import { FLUENT_EMOJI_MAP } from '../../constants/Emojis';
+import { useNavigation } from '@react-navigation/native';
 
 const DEFAULT_AVATAR = require('../../../assets/logo_blue.png');
 
@@ -79,6 +82,121 @@ const isStickerMedia = (item: any) => {
   return mime.includes('sticker') || item?.isSticker === true;
 };
 
+const AudioPlayer = ({ url, isMe }: { url: string; isMe: boolean }) => {
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [position, setPosition] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [trackWidth, setTrackWidth] = useState(0);
+
+  const onPlaybackStatusUpdate = (status: any) => {
+    if (status.isLoaded) {
+      setPosition(status.positionMillis);
+      setDuration(status.durationMillis || 0);
+      setIsPlaying(status.isPlaying);
+      if (status.didJustFinish) {
+        setIsPlaying(false);
+        setPosition(0);
+      }
+    } else if (status.error) {
+      console.error(`Playback Error: ${status.error}`);
+    }
+  };
+
+  const playPause = async () => {
+    try {
+      if (sound) {
+        if (isPlaying) {
+          await sound.pauseAsync();
+        } else {
+          await sound.playAsync();
+        }
+      } else {
+        setIsLoading(true);
+        const { sound: newSound } = await Audio.Sound.createAsync(
+          { uri: url },
+          { shouldPlay: true },
+          onPlaybackStatusUpdate
+        );
+        setSound(newSound);
+        setIsLoading(false);
+      }
+    } catch (e) {
+      console.warn('Audio play error', e);
+      setIsLoading(false);
+    }
+  };
+
+  const handleSeek = async (e: any) => {
+    if (!sound || duration <= 0 || trackWidth <= 0) return;
+    const { locationX } = e.nativeEvent;
+    const percentage = locationX / trackWidth;
+    const seekPosition = percentage * duration;
+    try {
+      await sound.setPositionAsync(seekPosition);
+      setPosition(seekPosition);
+    } catch (err) {
+      console.warn("Seek error", err);
+    }
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+    };
+  }, [sound]);
+
+  const formatTime = (ms: number) => {
+    if (!ms || ms <= 0) return '0:00';
+    const totalSecs = Math.floor(ms / 1000);
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <View style={[styles.audioPlayer, isMe && styles.audioPlayerMe]}>
+      <TouchableOpacity onPress={playPause} style={styles.audioPlayBtn} disabled={isLoading}>
+        {isLoading ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : (
+          <Text style={[styles.audioPlayIcon, isMe && styles.audioPlayIconMe]}>
+            {isPlaying ? 'pause' : 'play_arrow'}
+          </Text>
+        )}
+      </TouchableOpacity>
+      <View style={styles.audioProgress}>
+        <View style={styles.audioHeader}>
+          <Text style={[styles.audioLabel, isMe && styles.audioLabelMe]}>Tin nhắn thoại</Text>
+          <Text style={[styles.audioTime, isMe && styles.audioTimeMe]}>
+             {duration > 0 ? formatTime(duration) : '--:--'}
+          </Text>
+        </View>
+        <Pressable 
+          style={styles.audioTrack} 
+          onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+          onPress={handleSeek}
+        >
+          <View 
+            style={[
+              styles.audioFill, 
+              { width: duration > 0 ? `${(position / duration) * 100}%` : '0%' }, 
+              isMe && styles.audioFillMe
+            ]} 
+          />
+          <View style={[styles.audioKnob, { left: duration > 0 ? `${(position / duration) * 100}%` : '0%' }, isMe && styles.audioKnobMe]} />
+        </Pressable>
+        <Text style={[styles.audioPos, isMe && styles.audioPosMe]}>
+          {formatTime(position)}
+        </Text>
+      </View>
+    </View>
+  );
+};
+
 const HighlightText = ({ text, keyword, style }: { text: string; keyword?: string; style: any }) => {
   if (!text || !keyword?.trim()) return <Text style={style}>{text}</Text>;
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -107,7 +225,13 @@ export default function MessageBubble({
   onReply,
   onSystemMessagePress,
   isHighlighted,
-  highlightKeyword 
+  highlightKeyword,
+  userProfiles,
+  onReplyPress,
+  showAvatar,
+  groupPosition,
+  isSeen,
+  onNavigate
 }: {
   message: any;
   isMe: boolean;
@@ -118,20 +242,96 @@ export default function MessageBubble({
   onSystemMessagePress?: (targetId: string) => void;
   isHighlighted?: boolean;
   highlightKeyword?: string;
+  userProfiles?: Record<string, any>;
+  onReplyPress?: (messageId: string) => void;
+  showAvatar?: boolean;
+  groupPosition?: 'first' | 'middle' | 'last' | 'single';
+  isSeen?: boolean;
+  onNavigate?: (screen: string, params?: any) => void;
 }) {
+  const isMediaOnly = (() => {
+    if (message.audioUrl || message.contactCard || message.location) return true;
+    if (!message.content) return true;
+    const placeholders = ['[Hình ảnh]', '[Tin nhắn thoại]', '[Ghi âm]', '[Tệp tin]', '[Sticker]', '[Ảnh/Video]', '[Danh thiếp]', '[Vị trí]'];
+    if (placeholders.some(p => message.content.startsWith(p))) {
+      return (message.media && message.media.length > 0) || (message.files && message.files.length > 0) || !!message.audioUrl || !!message.contactCard || !!message.location;
+    }
+    return false;
+  })();
+
+  const isSticker = (() => {
+    if (message.media && message.media.length === 1) {
+      return isStickerMedia(message.media[0]);
+    }
+    return false;
+  })();
+
+  const shouldHideBubble = isMediaOnly || isSticker || !!message.contactCard || !!message.location || !!message.audioUrl;
+
+  const navigate = useNavigation();
+
   const { user }: any = useAuth();
-  const [viewingMedia, setViewingMedia] = useState<{ url: string; name: string } | null>(null);
+
+  // SWIPE TO REPLY LOGIC
+  const translateX = useRef(new Animated.Value(0)).current;
+  const swipeThreshold = 60;
+  
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dy) < 10;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dx > 0) { // Swipe right to reply
+          translateX.setValue(gestureState.dx);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx > swipeThreshold) {
+          onReply({ 
+          ...message, 
+          senderName: (() => {
+            const replySender = String(message.senderId || "").trim().toLowerCase();
+            if (replySender === String(user?.email || "").trim().toLowerCase()) return "Bạn";
+            const p = userProfiles?.[replySender];
+            return p?.nickname || p?.fullName || p?.fullname || replySender;
+          })()
+        });
+        }
+        Animated.spring(translateX, {
+          toValue: 0,
+          useNativeDriver: true,
+          bounciness: 12,
+        }).start();
+      },
+    })
+  ).current;
+
+  const replyIconOpacity = translateX.interpolate({
+    inputRange: [0, swipeThreshold],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
+  const replyIconScale = translateX.interpolate({
+    inputRange: [0, swipeThreshold],
+    outputRange: [0.5, 1.2],
+    extrapolate: 'clamp',
+  });
 
   const isRecalled = !!message.recalled;
   const isPinned = !!message.pinned;
 
   const handleImagePress = (item: any) => {
-    console.log('[MessageBubble] Image pressed:', item.name);
+    console.log('[MessageBubble] Image/Video pressed:', item.name);
     if (isRecalled) return;
-    setViewingMedia({
-      url: item.url || item.dataUrl,
-      name: item.name
-    });
+    if (onNavigate) {
+      onNavigate('MediaDetail', {
+        url: item.url || item.dataUrl,
+        name: item.name,
+        mimeType: item.mimeType || item.fileType
+      });
+    }
   };
 
   const handleFilePress = (file: any) => {
@@ -173,14 +373,33 @@ export default function MessageBubble({
   const RenderBubbleContent = () => (
     <>
       {message.replyTo && (
-        <View style={[styles.replyBox, isMe && styles.replyBoxMe]}>
-          <Text style={[styles.replyHeader, isMe && styles.replyHeaderTextMe]}>
-            {String(message.replyTo.senderId || "").trim().toLowerCase() === String(user?.email || "").trim().toLowerCase() ? "Bạn" : "Người dùng"}
-          </Text>
-          <Text style={[styles.replyContent, isMe && styles.replyContentTextMe]} numberOfLines={2}>
-            {message.replyTo.content || "Đính kèm"}
-          </Text>
-        </View>
+        <TouchableOpacity 
+          activeOpacity={0.8}
+          onPress={() => onReplyPress && onReplyPress(message.replyTo.id)}
+          style={[styles.replyBox, isMe && styles.replyBoxMe]}
+        >
+          <View style={styles.replyContentRow}>
+            <View style={styles.replyTextColumn}>
+              <Text style={[styles.replyHeader, isMe && styles.replyHeaderTextMe]} numberOfLines={1}>
+                {(() => {
+                  const replySender = String(message.replyTo.senderId || "").trim().toLowerCase();
+                  if (replySender === String(user?.email || "").trim().toLowerCase()) return "Bạn";
+                  const p = userProfiles?.[replySender];
+                  return p?.nickname || p?.fullName || p?.fullname || replySender || "Người dùng";
+                })()}
+              </Text>
+              <Text style={[styles.replyContent, isMe && styles.replyContentTextMe]} numberOfLines={1}>
+                {message.replyTo.content || (message.replyTo.media?.length ? "[Hình ảnh]" : message.replyTo.files?.length ? "[Tệp tin]" : "Tin nhắn")}
+              </Text>
+            </View>
+            {(message.replyTo.media && message.replyTo.media.length > 0) && (
+              <Image 
+                source={{ uri: message.replyTo.media[0].url || message.replyTo.media[0].dataUrl }} 
+                style={styles.replyImagePreview}
+              />
+            )}
+          </View>
+        </TouchableOpacity>
       )}
 
       {isRecalled ? (
@@ -189,7 +408,7 @@ export default function MessageBubble({
         </Text>
       ) : (
         <>
-          {message.content ? (
+          {message.content && !isMediaOnly ? (
             <HighlightText 
               text={message.content} 
               keyword={highlightKeyword} 
@@ -199,46 +418,126 @@ export default function MessageBubble({
 
           {message.media && message.media.length > 0 && (
             <View style={styles.mediaContainer}>
-              <View style={[
-                styles.imageGrid,
-                message.media.length === 1 && styles.singleMediaGrid,
-                (message.media.length === 2 || message.media.length === 4) && styles.twoColumnGrid
-              ]}>
-                {message.media.map((item: any, idx: number) => {
-                  const mediaSource = (item.url || item.dataUrl) ? { uri: item.url || item.dataUrl } : DEFAULT_AVATAR;
-                  const isVideo = isVideoAttachment(item);
-                  const isSticker = isStickerMedia(item);
-                  
-                  return (
-                    <TouchableOpacity 
-                      key={idx} 
-                      style={[
-                        styles.imageBox,
-                        message.media.length === 1 && styles.singleImageBox
-                      ]}
-                      onPress={() => handleImagePress(item)}
-                    >
-                      <Image 
-                        source={mediaSource} 
-                        style={[
-                          styles.mediaImage, 
-                          isSticker && styles.stickerImage,
-                          message.media.length === 1 && styles.singleMediaImage
-                        ]} 
-                        resizeMode={isSticker ? "contain" : "cover"}
-                      />
-                      {isVideo && (
-                        <View style={styles.videoOverlay}>
-                          <Text style={styles.videoIcon}>play_circle</Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              {(() => {
+                const videos = message.media.filter(isVideoAttachment);
+                const images = message.media.filter((m: any) => !isVideoAttachment(m));
+                
+                return (
+                  <>
+                    {videos.length > 0 && (
+                      <View style={[styles.videoGrid, images.length > 0 && { marginBottom: 8 }]}>
+                        {videos.map((item: any, idx: number) => (
+                          <TouchableOpacity 
+                            key={`vid-${idx}`} 
+                            style={[styles.videoBox, videos.length === 1 && styles.singleVideoBox]}
+                            onPress={() => handleImagePress(item)}
+                          >
+                            <Image 
+                              source={(item.url || item.dataUrl) ? { uri: item.url || item.dataUrl } : DEFAULT_AVATAR} 
+                              style={styles.mediaImage} 
+                              resizeMode="cover"
+                            />
+                            <View style={styles.videoOverlay}>
+                              <View style={styles.playButtonCircle}>
+                                <Text style={styles.playIcon}>play_arrow</Text>
+                              </View>
+                              <View style={styles.videoBadge}>
+                                <Text style={styles.videoBadgeText}>VIDEO</Text>
+                              </View>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+
+                    {images.length > 0 && (
+                      <View style={[
+                        styles.imageGrid,
+                        images.length === 1 && styles.singleMediaGrid,
+                        (images.length === 2 || images.length === 4) && styles.twoColumnGrid
+                      ]}>
+                        {images.map((item: any, idx: number) => {
+                          const isSticker = isStickerMedia(item);
+                          return (
+                            <TouchableOpacity 
+                              key={`img-${idx}`} 
+                              style={[
+                                styles.imageBox,
+                                images.length === 1 && styles.singleImageBox
+                              ]}
+                              onPress={() => handleImagePress(item)}
+                            >
+                              <Image 
+                                source={(item.url || item.dataUrl) ? { uri: item.url || item.dataUrl } : DEFAULT_AVATAR} 
+                                style={[
+                                  styles.mediaImage, 
+                                  isSticker && styles.stickerImage,
+                                  images.length === 1 && styles.singleMediaImage
+                                ]} 
+                                resizeMode={isSticker ? "contain" : "cover"}
+                              />
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </>
+                );
+              })()}
             </View>
           )}
 
+          {/* 1. Special Cards (Location/Contact) */}
+          {message.location && (
+            <View style={styles.fileList}>
+              <TouchableOpacity 
+                style={[styles.specialCard, isMe && styles.specialCardMe]}
+                onPress={() => {
+                  const url = Platform.select({
+                    ios: `maps:0,0?q=${message.location.latitude},${message.location.longitude}`,
+                    android: `geo:0,0?q=${message.location.latitude},${message.location.longitude}`
+                  });
+                  if (url) Linking.openURL(url);
+                }}
+              >
+                <View style={[styles.specialIconBox, { backgroundColor: '#fff1f2' }]}>
+                  <Text style={[styles.specialIcon, { color: '#f43f5e' }]}>location_on</Text>
+                </View>
+                <View style={styles.fileInfo}>
+                  <Text style={[styles.fileName, isMe && styles.fileNameMe]}>Vị trí hiện tại</Text>
+                  <Text style={[styles.fileSize, isMe && styles.fileSizeMe]}>{message.location.label || 'Nhấn để xem bản đồ'}</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {message.contactCard && (
+            <View style={styles.fileList}>
+              <TouchableOpacity 
+                style={[styles.specialCard, isMe && styles.specialCardMe]}
+                onPress={() => {
+                  if (onNavigate) onNavigate('Profile', { userId: message.contactCard.email });
+                }}
+              >
+                <View style={[styles.specialIconBox, { backgroundColor: '#f5f3ff' }]}>
+                  <Image source={{ uri: message.contactCard.avatarUrl || 'https://via.placeholder.com/150' }} style={styles.specialAvatar} />
+                </View>
+                <View style={styles.fileInfo}>
+                  <Text style={[styles.fileName, isMe && styles.fileNameMe]}>{message.contactCard.fullName || "Danh thiếp"}</Text>
+                  <Text style={[styles.fileSize, isMe && styles.fileSizeMe]}>Nhấn để xem trang cá nhân</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* 2. Audio Player */}
+          {message.audioUrl && (
+            <View style={styles.fileList}>
+              <AudioPlayer url={message.audioUrl} isMe={isMe} />
+            </View>
+          )}
+
+          {/* 3. Standard Files */}
           {message.files && message.files.length > 0 && (
             <View style={styles.fileList}>
               {message.files.map((file: any, idx: number) => {
@@ -267,37 +566,73 @@ export default function MessageBubble({
   );
 
   return (
-    <View style={[styles.container, isMe ? styles.containerMe : styles.containerOther]}>
-      {!isMe && (
-        <Image 
-          source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} 
-          style={styles.avatar} 
-        />
+    <View style={[
+      styles.container, 
+      isMe ? styles.containerMe : styles.containerOther,
+      groupPosition === 'middle' || groupPosition === 'last' ? { marginBottom: 2 } : { marginBottom: 8 }
+    ]}>
+      {/* Swipe Reply Icon Indicator */}
+      <Animated.View style={[
+        styles.replySwipeIndicator,
+        {
+          opacity: replyIconOpacity,
+          transform: [{ scale: replyIconScale }, { translateX: -20 }]
+        }
+      ]}>
+        <Text style={styles.replySwipeIcon}>reply</Text>
+      </Animated.View>
+
+      <Animated.View 
+        {...panResponder.panHandlers}
+        style={[
+          { flexDirection: 'row', flex: 1, alignItems: 'flex-end', justifyContent: isMe ? 'flex-end' : 'flex-start' },
+          { transform: [{ translateX }] }
+        ]}
+      >
+        {!isMe && (
+        <View style={styles.avatarSpace}>
+          {showAvatar ? (
+            <Image 
+              source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} 
+              style={styles.avatar} 
+            />
+          ) : null}
+        </View>
       )}
       
       <View style={[styles.bubbleWrapper, isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperOther]}>
-        {/* Name and Pin Header */}
-        <View style={styles.headerRow}>
-          {isPinned && (
+        {/* Name and Pin Header - Only show if pinned */}
+        {isPinned && (
+          <View style={styles.headerRow}>
             <View style={styles.pinBadge}>
               <Text style={styles.pinIcon}>push_pin</Text>
               <Text style={styles.pinText}>Đã ghim</Text>
             </View>
-          )}
-        </View>
+          </View>
+        )}
 
         <Pressable 
           onLongPress={() => onLongPress(message)}
           delayLongPress={300}
         >
-          {isMe ? (
+          {shouldHideBubble ? (
+            <View style={[
+              styles.noBubble,
+              isHighlighted && styles.bubbleHighlighted
+            ]}>
+              <RenderBubbleContent />
+            </View>
+          ) : isMe ? (
             <LinearGradient
-              colors={['#e3f2fd', '#bbdefb']}
+              colors={isMe ? ['#e3f2fd', '#bbdefb'] : ['#ffffff', '#ffffff']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={[
                 styles.bubble,
-                styles.bubbleMe,
+                isMe ? styles.bubbleMe : styles.bubbleOther,
+                groupPosition === 'first' && (isMe ? styles.firstMe : styles.firstOther),
+                groupPosition === 'middle' && (isMe ? styles.middleMe : styles.middleOther),
+                groupPosition === 'last' && (isMe ? styles.lastMe : styles.lastOther),
                 isHighlighted && styles.bubbleHighlighted
               ]}
             >
@@ -308,6 +643,9 @@ export default function MessageBubble({
               style={[
                 styles.bubble,
                 styles.bubbleOther,
+                groupPosition === 'first' && styles.firstOther,
+                groupPosition === 'middle' && styles.middleOther,
+                groupPosition === 'last' && styles.lastOther,
                 isHighlighted && styles.bubbleHighlighted
               ]}
             >
@@ -316,12 +654,6 @@ export default function MessageBubble({
           )}
         </Pressable>
 
-        <MediaViewerModal
-          visible={!!viewingMedia}
-          mediaUrl={viewingMedia?.url}
-          fileName={viewingMedia?.name}
-          onClose={() => setViewingMedia(null)}
-        />
 
         {message.reactions && reactionSummary.length > 0 && (
           <View style={[styles.reactionSummary, isMe ? styles.reactionSummaryMe : styles.reactionSummaryOther]}>
@@ -334,33 +666,49 @@ export default function MessageBubble({
           </View>
         )}
 
-        <View style={[styles.footerRow, isMe && styles.footerRowMe]}>
-          <Text style={styles.timeText}>
-            {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-          {isMe && (
-            <View style={styles.statusWrapper}>
-              {message.status === 'sending' ? (
-                <ActivityIndicator size={8} color={Colors.primary} />
-              ) : message.status === 'error' ? (
-                <Text style={[styles.statusIcon, { color: '#ef4444' }]}>error</Text>
-              ) : (
-                <Text style={styles.statusIcon}>check_circle</Text>
-              )}
-            </View>
-          )}
-        </View>
+        {(groupPosition === 'last' || groupPosition === 'single' || (isMe && message.status)) && (
+          <View style={[styles.footerRow, isMe && styles.footerRowMe]}>
+            {(groupPosition === 'last' || groupPosition === 'single') && (
+              <Text style={styles.timeText}>
+                {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+              </Text>
+            )}
+            
+            {isMe && (
+              <View style={styles.statusWrapper}>
+                {isSeen ? (
+                  <Image source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} style={styles.seenAvatar} />
+                ) : message.status === 'sending' ? (
+                  <View style={styles.statusCircle} />
+                ) : message.status === 'error' ? (
+                  <View style={[styles.statusCircle, { borderColor: '#ef4444' }]}>
+                    <Text style={[styles.statusCheck, { color: '#ef4444' }]}>!</Text>
+                  </View>
+                ) : (
+                  <View style={[styles.statusCircle, styles.statusSent]}>
+                    <Text style={styles.statusCheck}>✓</Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        )}
       </View>
-    </View>
-  );
+    </Animated.View>
+  </View>
+);
 }
 
 const styles = StyleSheet.create({
+  noBubble: {
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
   container: {
     flexDirection: 'row',
-    marginBottom: 6,
+    marginBottom: 4,
     alignItems: 'flex-end',
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
   },
   containerMe: {
     justifyContent: 'flex-end',
@@ -376,13 +724,15 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   bubbleWrapper: {
-    maxWidth: '85%',
+    flexShrink: 1,
   },
   bubbleWrapperMe: {
     alignItems: 'flex-end',
+    maxWidth: '75%',
   },
   bubbleWrapperOther: {
     alignItems: 'flex-start',
+    maxWidth: '75%',
   },
   headerRow: {
     flexDirection: 'row',
@@ -391,14 +741,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   bubble: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 22,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    minHeight: 48,
+    justifyContent: 'center',
   },
   bubbleHighlighted: {
     backgroundColor: '#fff9c4',
@@ -408,20 +757,29 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
   },
   bubbleMe: {
-    borderBottomRightRadius: 4,
+    borderRadius: 18,
+    alignSelf: 'flex-end',
+    backgroundColor: '#e3f2fd',
   },
   bubbleOther: {
     backgroundColor: '#ffffff',
-    borderBottomLeftRadius: 4,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.05)',
+    alignSelf: 'flex-start',
   },
+  firstMe: { borderBottomRightRadius: 4 },
+  middleMe: { borderTopRightRadius: 4, borderBottomRightRadius: 4 },
+  lastMe: { borderTopRightRadius: 4 },
+  firstOther: { borderBottomLeftRadius: 4 },
+  middleOther: { borderTopLeftRadius: 4, borderBottomLeftRadius: 4 },
+  lastOther: { borderTopLeftRadius: 4 },
   messageText: {
     ...Typography.body,
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 17,
+    lineHeight: 24,
     color: '#000000',
-    fontWeight: '500',
+    fontWeight: '400',
   },
   messageTextMe: {
     color: '#000000',
@@ -434,21 +792,38 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   replyBox: {
-    backgroundColor: 'rgba(0,0,0,0.08)',
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.primary,
-    padding: 10,
-    borderRadius: 10,
+    backgroundColor: 'rgba(0, 104, 255, 0.1)',
+    borderLeftWidth: 4,
+    borderLeftColor: '#0068ff',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     marginBottom: 8,
+    minWidth: 140,
+  },
+  replyContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  replyTextColumn: {
+    flex: 1,
+  },
+  replyImagePreview: {
+    width: 36,
+    height: 36,
+    borderRadius: 4,
+    backgroundColor: '#eee',
   },
   replyBoxMe: {
     backgroundColor: 'rgba(0,0,0,0.06)',
     borderLeftColor: Colors.primary,
   },
   replyHeader: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#000',
     marginBottom: 2,
   },
   replyHeaderTextMe: {
@@ -458,8 +833,7 @@ const styles = StyleSheet.create({
   replyContent: {
     ...Typography.body,
     fontSize: 13,
-    color: '#333',
-    fontStyle: 'italic',
+    color: '#666',
   },
   replyContentTextMe: {
     color: '#333',
@@ -503,19 +877,62 @@ const styles = StyleSheet.create({
   stickerImage: {
     backgroundColor: 'transparent',
   },
+  videoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  videoBox: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    backgroundColor: '#000',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  singleVideoBox: {
+    maxWidth: 300,
+  },
+  playButtonCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+  },
+  playIcon: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 32,
+    color: '#fff',
+    marginLeft: 4,
+  },
+  videoBadge: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  videoBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
   videoOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.2)',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
   },
   videoIcon: {
     fontFamily: 'Material Symbols Outlined',
     fontSize: 48,
     color: '#fff',
-    textShadowColor: 'rgba(0,0,0,0.4)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    opacity: 0.9,
   },
   fileList: {
     gap: 6,
@@ -562,12 +979,43 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   fileSizeMe: {
-    color: '#6b7280',
+    color: '#555',
+  },
+  specialCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#eee',
+    minWidth: 200,
+    marginTop: 4,
+  },
+  specialCardMe: {
+    backgroundColor: 'rgba(255,255,255,0.7)',
+  },
+  specialIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  specialIcon: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 24,
+  },
+  specialAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
   },
   reactionSummary: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginTop: -8,
+    marginTop: 2,
     marginBottom: 4,
     zIndex: 10,
     gap: 4,
@@ -585,11 +1033,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.08)',
-    borderRadius: 12,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    gap: 3,
+    borderColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    height: 24,
+    gap: 4,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -597,23 +1045,22 @@ const styles = StyleSheet.create({
     shadowRadius: 1,
   },
   reactionEmojiIcon: {
-    width: 14,
-    height: 14,
+    width: 18,
+    height: 18,
   },
   reactionCount: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
-    color: '#5a6781',
+    color: '#64748b',
   },
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
     marginTop: 2,
-    paddingHorizontal: 4,
   },
   footerRowMe: {
     justifyContent: 'flex-end',
+    alignSelf: 'flex-end',
   },
   timeText: {
     fontSize: 9,
@@ -621,13 +1068,34 @@ const styles = StyleSheet.create({
     color: '#9ba3b2',
   },
   statusWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    marginLeft: 4,
   },
-  statusIcon: {
-    fontFamily: 'Material Symbols Outlined',
-    fontSize: 11,
-    color: Colors.primary,
+  statusCircle: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#0084ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusSent: {
+    backgroundColor: '#0084ff',
+  },
+  statusCheck: {
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: 'bold',
+  },
+  seenAvatar: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  avatarSpace: {
+    width: 28,
+    marginRight: 6,
+    justifyContent: 'flex-end',
   },
   systemContainer: {
     alignItems: 'center',
@@ -661,6 +1129,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   pinIcon: {
+    fontFamily: 'Material Symbols Outlined',
     fontSize: 12,
     color: '#f57f17',
     marginRight: 4,
@@ -669,5 +1138,127 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#f57f17',
+  },
+  audioPlayer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 20,
+    width: 250,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+  },
+  audioPlayerMe: {
+    backgroundColor: 'rgba(255,255,255,0.85)',
+  },
+  audioPlayBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  audioPlayIcon: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 22,
+    color: '#fff',
+  },
+  audioPlayIconMe: {
+    color: '#fff',
+  },
+  audioProgress: {
+    flex: 1,
+  },
+  audioHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  audioLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  audioLabelMe: {
+    color: Colors.primary,
+  },
+  audioTrack: {
+    height: 6,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 3,
+    position: 'relative',
+    marginVertical: 4,
+  },
+  audioFill: {
+    height: '100%',
+    backgroundColor: Colors.primary,
+    borderRadius: 3,
+  },
+  audioFillMe: {
+    backgroundColor: Colors.primary,
+  },
+  audioKnob: {
+    position: 'absolute',
+    top: -3,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: Colors.primary,
+    marginLeft: -6,
+    borderWidth: 2,
+    borderColor: '#fff',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1,
+  },
+  audioKnobMe: {
+    backgroundColor: Colors.primary,
+  },
+  audioTime: {
+    fontSize: 10,
+    color: '#64748b',
+    fontWeight: '700',
+  },
+  audioTimeMe: {
+    color: '#5a6781',
+  },
+  audioPos: {
+    fontSize: 9,
+    color: '#94a3b8',
+    fontWeight: '600',
+  },
+  audioPosMe: {
+    color: '#94a3b8',
+  },
+  replySwipeIndicator: {
+    position: 'absolute',
+    left: -40,
+    top: '30%',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: -1,
+  },
+  replySwipeIcon: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 18,
+    color: '#666',
   }
 });

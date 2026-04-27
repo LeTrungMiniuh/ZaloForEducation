@@ -96,7 +96,7 @@ export default function ResetPasswordScreen({ onNavigate }: { onNavigate?: (scre
                   <Text style={styles.cardTitle}>Giao dịch thành công</Text>
                   <Text style={[styles.subtitle, { textAlign: 'center', marginBottom: 32 }]}>Mật khẩu của bạn đã được đặt lại thành công. Vui lòng đăng nhập hệ thống.</Text>
                   <View style={{ width: '100%' }}>
-                    <Button title="Đăng nhập ngay" onPress={() => onNavigate && onNavigate('login')} icon="login" />
+                    <Button title="Đăng nhập ngay" onPress={() => onNavigate && onNavigate('Login')} icon="login" />
                   </View>
                 </View>
               ) : (
@@ -129,7 +129,7 @@ export default function ResetPasswordScreen({ onNavigate }: { onNavigate?: (scre
                     />
                   </View>
 
-                  <TouchableOpacity onPress={() => onNavigate && onNavigate('login')} style={styles.footer}>
+                  <TouchableOpacity onPress={() => onNavigate && onNavigate('Login')} style={styles.footer}>
                     <Text style={styles.footerLink}>← Về trang đăng nhập</Text>
                   </TouchableOpacity>
                 </>

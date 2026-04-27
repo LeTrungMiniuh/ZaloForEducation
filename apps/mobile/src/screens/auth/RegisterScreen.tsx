@@ -176,7 +176,7 @@ export default function RegisterScreen({ onNavigate }: RegisterProps) {
       const data = await response.json();
       if (response.ok) {
         Alert.alert('Thành công', 'Đăng ký tài khoản thành công!');
-        onNavigate && onNavigate('login');
+        onNavigate && onNavigate('Login');
       } else {
         Alert.alert('Lỗi', data.message);
       }

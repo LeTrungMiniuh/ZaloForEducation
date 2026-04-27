@@ -54,11 +54,13 @@ export const getMuteLabel = (schedule: any) => {
   return `Đã tắt thông báo đến ${endTime}`;
 };
 
-export const getMessagePreview = (message: any) => {
+export const getMessagePreview = (message: any): string => {
   if (!message) return "Tin nhắn";
   if (message.recalled) return "Tin nhắn đã được thu hồi";
 
   const contentStr = typeof message.content === "string" ? message.content : "";
+  
+  // Rich Preview for Calls
   if (message.type === 'call' || message.type === 'SYSTEM_CALL' || (message.type === 'system' && contentStr.includes('Cuộc gọi'))) {
     const meta = message.metadata || {};
     const isVideo = meta.callType === 'video' || contentStr.includes('video');
@@ -70,7 +72,37 @@ export const getMessagePreview = (message: any) => {
     return `[Cuộc gọi ${label}]`;
   }
 
-  if (message.media?.length > 0) return "[Ảnh/Video]";
-  if (message.files?.length > 0) return "[Tệp đính kèm]";
+  if (message.type === "contact_card") return "[Danh thiếp]";
+
+  // Check known placeholders first
+  const knownPlaceholders = ['[Sticker]', '[Hình ảnh]', '[Ảnh HD]', '[Ảnh/Video]', '[Tin nhắn thoại]', '[Ghi âm]', '[Tệp tin]', '[Tệp đính kèm]', '[Danh thiếp]', '[Vị trí]'];
+  if (knownPlaceholders.includes(contentStr)) return contentStr;
+
+  // Media detection
+  const mediaArr = Array.isArray(message.media) ? message.media : [];
+  if (mediaArr.length > 0) {
+    const hasSticker = mediaArr.some((item: any) => {
+      const mime = String(item?.mimeType || item?.fileType || '').toLowerCase();
+      return mime.includes('sticker') || item?.isSticker === true;
+    });
+    if (hasSticker) return '[Sticker]';
+
+    const hasHD = mediaArr.some((item: any) => item?.isHD === true);
+    if (hasHD) return '[Ảnh HD]';
+
+    return '[Hình ảnh]';
+  }
+
+  // File/Audio detection
+  const filesArr = Array.isArray(message.files) ? message.files : [];
+  if (filesArr.length > 0) {
+    const hasAudio = filesArr.some((f: any) => {
+      const mime = String(f?.mimeType || f?.fileType || '').toLowerCase();
+      return mime.startsWith('audio/');
+    });
+    if (hasAudio) return '[Tin nhắn thoại]';
+    return '[Tệp đính kèm]';
+  }
+
   return message.content || "Tin nhắn";
 };

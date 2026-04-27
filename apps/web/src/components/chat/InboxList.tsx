@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
-import { getDisplayName, getDisplayAvatar, isUnread } from '../../utils/chatUtils';
+import { getDisplayName, getDisplayAvatar, isUnread, getMessagePreview } from '../../utils/chatUtils';
 import CreateGroupModal from './CreateGroupModal';
 import { BOT_EMAIL } from '@zalo-edu/shared';
 import ConversationTagPicker from './ConversationTagPicker';
@@ -456,13 +456,26 @@ const InboxList: React.FC = () => {
                         {isHidden
                           ? 'Trò chuyện đã ẩn (yêu cầu PIN)'
                           : (() => {
-                              const content = chat.lastMessageContent || chat.lastMessage;
-                              if (content === '[Cuộc gọi thoại]' || content === '[Cuộc gọi video]') {
-                                const isMe = chat.lastMessageSenderId === user?.email;
-                                const type = content.includes('video') ? 'video' : 'thoại';
+                              const isMe = chat.lastMessageSenderId === user?.email;
+                              const prefix = isMe ? 'Bạn: ' : '';
+
+                              // Build a lightweight message object for getMessagePreview
+                              const previewMsg = {
+                                recalled: false,
+                                type: (chat as any).lastMessageType,
+                                content: chat.lastMessageContent || chat.lastMessage,
+                                media: (chat as any).lastMessageMedia,
+                                files: (chat as any).lastMessageFiles,
+                              };
+                              const preview = getMessagePreview(previewMsg);
+
+                              // Special call label formatting
+                              if (preview === '[Cuộc gọi thoại]' || preview === '[Cuộc gọi video]') {
+                                const type = preview.includes('video') ? 'video' : 'thoại';
                                 return isMe ? `Cuộc gọi ${type} đi` : `Cuộc gọi ${type} đến`;
                               }
-                              return content || 'Chưa có tin nhắn';
+
+                              return `${prefix}${preview}`;
                             })()}
                       </p>
                     </div>

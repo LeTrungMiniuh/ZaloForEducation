@@ -142,7 +142,7 @@ interface SettingsScreenProps {
   onLogout: () => void;
 }
 
-export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout }: SettingsScreenProps) {
+export default function SettingsScreen({ onNavigate, returnTo = 'Main', onLogout }: SettingsScreenProps) {
   const { width } = useWindowDimensions();
   const storage = useMemo(() => AsyncStorage, []);
   const { requestLockAccount, confirmLockAccount, requestDeleteAccount, confirmDeleteAccount } = useAuth() as any;
@@ -271,7 +271,7 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             title="Quản lý thiết bị đăng nhập"
             subtitle="Xem và đăng xuất phiên đang hoạt động"
             rightElement={<Text style={styles.chevron}>chevron_right</Text>}
-            onPress={() => onNavigate('sessions')}
+            onPress={() => onNavigate('Sessions')}
             compact={isCompact}
           />
           <SettingRow
@@ -279,7 +279,7 @@ export default function SettingsScreen({ onNavigate, returnTo = 'home', onLogout
             title="Đổi mật khẩu"
             subtitle="Cập nhật mật khẩu để tăng an toàn"
             rightElement={<Text style={styles.chevron}>chevron_right</Text>}
-            onPress={() => onNavigate('change-password')} 
+            onPress={() => onNavigate('ChangePassword')} 
             divider
             compact={isCompact}
           />
@@ -860,7 +860,7 @@ function AccountActionModal({ visible, onClose, mode, onRequestOtp, onConfirmOtp
     try {
       await onRequestOtp(currentPassword);
       setStep(2);
-    } catch (err) {
+    } catch (err: any) {
       setError(err?.message || 'Có lỗi xảy ra, vui lòng thử lại.');
     } finally {
       setLoading(false);
@@ -873,7 +873,7 @@ function AccountActionModal({ visible, onClose, mode, onRequestOtp, onConfirmOtp
     setError(null);
     try {
       await onConfirmOtp(otp);
-    } catch (err) {
+    } catch (err: any) {
       setError(err?.message || 'Mã OTP không chính xác.');
       setLoading(false);
     }
