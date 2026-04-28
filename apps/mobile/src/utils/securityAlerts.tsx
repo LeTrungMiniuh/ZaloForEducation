@@ -88,12 +88,15 @@ const saveSecurityAlerts = async (alerts: SecurityAlert[]) => {
   );
 };
 
+import { DeviceEventEmitter } from "react-native";
+
 export const pushSecurityAlert = async (payload: any) => {
   const normalized = normalizeSecurityAlert(payload);
   const current = await getSecurityAlerts();
   // Keep last 100 alerts
   const next = [normalized, ...current].slice(0, 100);
   await saveSecurityAlerts(next);
+  DeviceEventEmitter.emit('security_alerts_updated', next);
   return next;
 };
 
@@ -101,10 +104,12 @@ export const markAllSecurityAlertsRead = async () => {
   const current = await getSecurityAlerts();
   const next = current.map((item) => ({ ...item, read: true }));
   await saveSecurityAlerts(next);
+  DeviceEventEmitter.emit('security_alerts_updated', next);
   return next;
 };
 
 export const clearSecurityAlerts = async () => {
   await saveSecurityAlerts([]);
+  DeviceEventEmitter.emit('security_alerts_updated', []);
   return [];
 };

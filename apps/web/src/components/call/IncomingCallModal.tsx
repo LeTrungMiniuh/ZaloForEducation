@@ -103,8 +103,8 @@ const IncomingCallModal: React.FC = () => {
           convId: conversationId,
           callId: activeCallId,
           fromEmail: user.email,
-          toEmail,
-          meetingInfo: data // [FIX] Đã cập nhật gửi thông tin meeting đầy chủ cho đối phương
+          toEmail
+          // ✅ KHÔNG gửi meetingInfo để tránh Caller dùng nhầm
         });
       }
     } catch (error) {

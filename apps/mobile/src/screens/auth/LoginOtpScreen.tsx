@@ -63,7 +63,6 @@ export default function LoginOtpScreen({ onNavigate, goBack, params }: LoginOtpP
         console.log('[DEBUG] Login OTP verification successful');
         // Use context login (handles state, storage and socket)
         await login(data.user, data.accessToken, deviceId);
-        if (onNavigate) onNavigate('Main');
       } else {
         if (data.retryAfter) {
           syncWithServer(data.retryAfter);

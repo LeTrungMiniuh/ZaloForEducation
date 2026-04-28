@@ -50,6 +50,7 @@ interface CallStore {
   setUpgradeRequesterEmail: (email: string | null) => void;
   setCameraOn: (on: boolean) => void;
   setMicOn: (on: boolean) => void;
+  setConnected: () => void;
   resetCall: () => void;
 }
 
@@ -142,11 +143,31 @@ export const useCallStore = create<CallStore>((set, get) => ({
     clearInternalTimeout();
     const current = get();
     set({
+      callState: 'JOINING',
+      // [CRITICAL FIX] Prioritize current store data (from /call/create) over socket data.
+      // Caller has current data, Callee uses meetingInfo from /call/join.
+      meetingData: current.meetingData || meetingInfo.meeting,
+      attendeeData: current.attendeeData || meetingInfo.attendee,
+      startTime: null, // Reset until session actually starts
+    });
+  },
+
+  setConnected: () => {
+    const state = get();
+    set({
       callState: 'CONNECTED',
-      meetingData: meetingInfo.meeting || current.meetingData,
-      attendeeData: meetingInfo.attendee || current.attendeeData,
       startTime: Date.now(),
     });
+    
+    // Clear backend ghost hangup timer
+    const SocketService = require('../utils/socket').default;
+    if (SocketService.socket && state.conversationId && state.toEmail && state.activeCallId) {
+      SocketService.socket.emit('call:peer_joined', {
+        convId: state.conversationId,
+        toEmail: state.toEmail,
+        callId: state.activeCallId
+      });
+    }
   },
 
   hangupCall: () => {

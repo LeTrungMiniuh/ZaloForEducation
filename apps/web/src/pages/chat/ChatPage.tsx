@@ -10,6 +10,7 @@ import ChatInfoSidebar from "../../components/chat/ChatInfoSidebar";
 import ImageModal from "../../components/chat/ImageModal";
 import ForwardModal from "../../components/chat/ForwardModal";
 import TagManagerModal from "../../components/chat/TagManagerModal";
+import SecurityAlertsView from "../../components/chat/SecurityAlertsView";
 import { getMessageTimeContext, getDisplayName } from "../../utils/chatUtils";
 import type { Attachment } from "../../utils/chatUtils";
 import type { Message } from "@zalo-edu/shared";
@@ -467,7 +468,9 @@ const ChatPage: React.FC = () => {
 
       {/* 2. Main Chat Area */}
       <div className="flex-1 h-full flex flex-col min-w-0 bg-[#f7f9fb] dark:bg-surface-container-low shadow-[inset_1px_0_0_rgba(0,0,0,0.05)] dark:shadow-[inset_1px_0_0_rgba(255,255,255,0.04)]">
-        {activeConvId ? (
+        {activeConvId === "CONV#SYSTEM" ? (
+          <SecurityAlertsView />
+        ) : activeConvId ? (
           <>
             <ChatHeader
               isInfoOpen={isInfoOpen}
@@ -514,11 +517,17 @@ const ChatPage: React.FC = () => {
                     })
                     .map((m, index, sortedMsgs) => {
                       const prevMsg = index > 0 ? sortedMsgs[index - 1] : undefined;
-                    const { dateHeader, showTimeHeader, formattedTime } =
-                      getMessageTimeContext(
-                        new Date(m.createdAt),
-                        prevMsg ? new Date(prevMsg.createdAt) : undefined,
-                      );
+                      
+                      // Consecutive grouping logic: Same sender and within 5 minutes
+                      const isSameSenderAsPrev = prevMsg && prevMsg.senderId === m.senderId && m.type !== 'system' && prevMsg.type !== 'system';
+                      const timeGapPrev = prevMsg ? new Date(m.createdAt).getTime() - new Date(prevMsg.createdAt).getTime() : Infinity;
+                      const isConsecutive = isSameSenderAsPrev && timeGapPrev < 5 * 60 * 1000;
+
+                      const { dateHeader, showTimeHeader, formattedTime } =
+                        getMessageTimeContext(
+                          new Date(m.createdAt),
+                          prevMsg ? new Date(prevMsg.createdAt) : undefined,
+                        );
 
                     return (
                       <React.Fragment key={m.id}>
@@ -538,13 +547,14 @@ const ChatPage: React.FC = () => {
                         )}
                         <div
                           className={
-                            !dateHeader && !showTimeHeader ? "mt-1" : "mt-4"
+                            !dateHeader && !showTimeHeader && isConsecutive ? "mt-1" : "mt-4"
                           }
                         >
                           <MessageBubble
                             message={m}
                             userProfiles={userProfiles}
                             hideTime={!showTimeHeader}
+                            isConsecutive={isConsecutive}
                             onContextMenu={(msg, x, y) =>
                               setContextMenu({ message: msg, x, y })
                             }
@@ -636,7 +646,7 @@ const ChatPage: React.FC = () => {
       />
 
       {/* 3. Info Sidebar */}
-      {activeConvId && isInfoOpen && <ChatInfoSidebar />}
+      {activeConvId && activeConvId !== "CONV#SYSTEM" && isInfoOpen && <ChatInfoSidebar />}
 
       {/* Context Menu Overlay (Zalo Style Redesign) */}
       {contextMenu && (

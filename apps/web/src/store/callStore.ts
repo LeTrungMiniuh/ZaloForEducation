@@ -43,6 +43,9 @@ interface CallStore {
   engine: 'webrtc' | 'chime' | null;
   callOffer: any | null;
 
+  pendingMeetingData: any | null;    // ✅ THÊM
+  pendingAttendeeData: any | null;   // ✅ THÊM
+
   // Actions
   setCallState: (state: CallState) => void;
   setConnecting: (isConnecting: boolean) => void;
@@ -59,10 +62,12 @@ interface CallStore {
   setCameraOn: (on: boolean) => void;
   setRemoteCameraOn: (on: boolean) => void;
   setMicOn: (on: boolean) => void;
+  setConnected: () => void;
   setUpgradeRequestPending: (pending: boolean) => void;
   setIncomingUpgradeRequest: (incoming: boolean) => void;
   setUpgradeRequesterEmail: (email: string | null) => void;
   setRemoteTiles: (tiles: any[]) => void;
+  setPendingMeetingData: (meeting: any, attendee: any, type?: 'audio' | 'video') => void; // ✅ THÊM
   isPeerJoined: boolean;
   setPeerJoined: (joined: boolean) => void;
   isMinimized: boolean;
@@ -93,6 +98,8 @@ export const useCallStore = create<CallStore>((set, get) => ({
   callOffer: null,
   isPeerJoined: false,
   isMinimized: false,
+  pendingMeetingData: null,
+  pendingAttendeeData: null,
   
   setMinimized: (isMinimized) => set({ isMinimized }),
 
@@ -106,6 +113,15 @@ export const useCallStore = create<CallStore>((set, get) => ({
       meetingData,
       attendeeData,
       callType: type || currentType,
+    });
+  },
+
+  setPendingMeetingData: (pendingMeetingData, pendingAttendeeData, type) => {
+    const currentType = get().callType;
+    set({ 
+      pendingMeetingData, 
+      pendingAttendeeData,
+      callType: type || currentType 
     });
   },
 
@@ -174,16 +190,46 @@ export const useCallStore = create<CallStore>((set, get) => ({
   acceptCall: (meetingInfo) => {
     clearInternalTimeout();
     const current = get();
+    
+    // [CRITICAL FIX] Caller MUST use its own pending data.
+    // If it uses meetingInfo.attendee sent by the Callee via socket, 
+    // both will join with the SAME AttendeeId -> statusCode: 4!
+    const meeting = current.pendingMeetingData 
+      || meetingInfo?.Meeting || meetingInfo?.meeting 
+      || current.meetingData;
+    const attendee = current.pendingAttendeeData 
+      || meetingInfo?.Attendee || meetingInfo?.attendee 
+      || current.attendeeData;
+
     set({ 
-      callState: 'CONNECTED', 
-      isConnecting: false, 
+      callState: 'JOINING',
+      isConnecting: true,
       connectionError: null,
-      // [CRITICAL FIX] Only update meetingData if new info is provided.
-      // The Web caller already has meetingData from /call/create — don't overwrite with undefined.
-      meetingData: meetingInfo?.Meeting || meetingInfo?.meeting || current.meetingData,
-      attendeeData: meetingInfo?.Attendee || meetingInfo?.attendee || current.attendeeData,
-      startTime: current.startTime || Date.now(),
+      meetingData: meeting,      // ✅ Kích hoạt useEffect trong useChime
+      attendeeData: attendee,
+      pendingMeetingData: null,  // ✅ Dọn dẹp
+      pendingAttendeeData: null,
+      startTime: null,
     });
+  },
+
+  setConnected: () => {
+    const state = get();
+    set({
+      callState: 'CONNECTED',
+      isConnecting: false,
+      startTime: Date.now(),
+    });
+    
+    // Clear backend ghost hangup timer
+    const socket = (window as any).socket;
+    if (socket && state.conversationId && state.toEmail && state.activeCallId) {
+      socket.emit('call:peer_joined', {
+        convId: state.conversationId,
+        toEmail: state.toEmail,
+        callId: state.activeCallId
+      });
+    }
   },
 
   hangupCall: () => {

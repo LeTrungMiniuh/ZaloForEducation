@@ -72,15 +72,151 @@ export class ChatController {
 
   @Post("conversations/group")
   async createGroup(
-    @Body() body: { name: string; members: string[] },
+    @Body() body: { name: string; members?: string[]; memberEmails?: string[]; avatar?: string },
     @Req() req: any,
   ) {
     const email = req.user.email;
-    return await this.chatService.createGroupConversation(
+    const members = body.members || body.memberEmails || [];
+    const res = await this.chatService.createGroupConversation(
       email,
-      body.members,
+      members,
       body.name,
+      body.avatar
     );
+
+    // Send system message
+    await this.messageService.sendMessage(
+      res.id,
+      'system',
+      JSON.stringify({
+        action: 'group_created',
+        actor: email,
+        groupName: body.name
+      }),
+      'system'
+    );
+
+    return res;
+  }
+
+  @Patch("conversations/:id")
+  async updateGroupInfo(
+    @Param("id") id: string,
+    @Body() body: { name?: string; avatar?: string },
+    @Req() req: any
+  ) {
+    const email = req.user.email;
+    const res = await this.chatService.updateGroupInfo(id, email, body);
+    
+    if (body.name) {
+      await this.messageService.sendMessage(
+        id,
+        'system',
+        JSON.stringify({
+          action: 'group_name_updated',
+          actor: email,
+          newName: body.name
+        }),
+        'system'
+      );
+    }
+
+    this.chatGateway.emitConversationUpdated(id, body);
+    
+    return res;
+  }
+
+  @Post("conversations/:id/members")
+  async addMembers(
+    @Param("id") id: string,
+    @Body() body: { members: string[] },
+    @Req() req: any
+  ) {
+    const email = req.user.email;
+    const res = await this.chatService.addMembersToGroup(id, email, body.members);
+    
+    for (const target of body.members) {
+      await this.messageService.sendMessage(
+        id,
+        'system',
+        JSON.stringify({
+          action: 'member_added',
+          actor: email,
+          target: target
+        }),
+        'system'
+      );
+    }
+    
+    return res;
+  }
+
+  @Delete("conversations/:id/members/:targetEmail")
+  async removeMember(
+    @Param("id") id: string,
+    @Param("targetEmail") targetEmail: string,
+    @Req() req: any
+  ) {
+    const email = req.user.email;
+    const res = await this.chatService.removeMemberFromGroup(id, email, targetEmail);
+    
+    const action = email === targetEmail ? 'member_left' : 'member_kicked';
+    await this.messageService.sendMessage(
+      id,
+      'system',
+      JSON.stringify({
+        action,
+        actor: email,
+        target: targetEmail
+      }),
+      'system'
+    );
+    
+    return res;
+  }
+
+  @Patch("conversations/:id/roles")
+  async updateRole(
+    @Param("id") id: string,
+    @Body() body: { targetEmail: string; role: 'deputy' | 'member' | 'owner' },
+    @Req() req: any
+  ) {
+    const email = req.user.email;
+    const res = await this.chatService.updateMemberRole(id, email, body.targetEmail, body.role);
+    
+    let action = 'role_updated';
+    if (body.role === 'deputy') action = 'promoted_to_deputy';
+    if (body.role === 'owner') action = 'transferred_owner';
+    if (body.role === 'member') action = 'demoted_to_member';
+
+    await this.messageService.sendMessage(
+      id,
+      'system',
+      JSON.stringify({
+        action,
+        actor: email,
+        target: body.targetEmail
+      }),
+      'system'
+    );
+    
+    return res;
+  }
+
+  @Patch("conversations/:id/settings")
+  async updateSettings(
+    @Param("id") id: string,
+    @Body() body: { isMuted?: boolean; isPinned?: boolean },
+    @Req() req: any
+  ) {
+    const email = req.user.email;
+    return await this.chatService.updateGroupSettings(id, email, body);
+  }
+
+  @Delete("conversations/:id")
+  async dissolveGroup(@Param("id") id: string, @Req() req: any) {
+    const email = req.user.email;
+    return await this.chatService.dissolveGroup(id, email);
   }
 
   @Get("conversations/:convId/metadata")

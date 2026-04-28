@@ -11,7 +11,7 @@ import FluentEmoji from '../common/FluentEmoji';
 import { FLUENT_EMOJI_MAP } from '../../constants/Emojis';
 import { useNavigation } from '@react-navigation/native';
 
-const DEFAULT_AVATAR = require('../../../assets/logo_blue.png');
+const DEFAULT_AVATAR = { uri: "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png" };
 
 const getDisplayAvatar = (userId: string) => {
   return DEFAULT_AVATAR;
@@ -352,6 +352,49 @@ export default function MessageBubble({
   // System Message
   if (message.type === 'system') {
     const targetId = message.metadata?.targetMessageId;
+
+    let displayContent = message.content;
+    try {
+      const parsed = JSON.parse(message.content);
+      if (parsed.action) {
+        const getDisplayName = (email: string) => {
+          if (!email) return "Người dùng";
+          const myEmail = user?.email?.toLowerCase();
+          const targetEmail = email.trim().toLowerCase();
+          if (targetEmail === myEmail) return "Bạn";
+          const p = userProfiles?.[targetEmail];
+          return p?.nickname || p?.fullName || p?.fullname || email.split('@')[0];
+        };
+
+        const actorLabel = getDisplayName(parsed.actor);
+        const targetLabel = parsed.target ? getDisplayName(parsed.target) : '';
+
+        switch (parsed.action) {
+          case 'member_added':
+            displayContent = `${actorLabel} đã thêm ${targetLabel} vào nhóm`;
+            break;
+          case 'member_removed':
+            displayContent = `${actorLabel} đã xóa ${targetLabel} khỏi nhóm`;
+            break;
+          case 'member_left':
+            displayContent = `${actorLabel} đã rời nhóm`;
+            break;
+          case 'role_updated':
+            const roleName = parsed.role === 'owner' ? 'Trưởng nhóm' : parsed.role === 'deputy' ? 'Phó nhóm' : 'Thành viên';
+            displayContent = `${actorLabel} đã đặt ${targetLabel} làm ${roleName}`;
+            break;
+          case 'info_updated':
+            displayContent = `${actorLabel} đã cập nhật thông tin nhóm`;
+            break;
+          case 'group_created':
+            displayContent = `${actorLabel} đã tạo nhóm`;
+            break;
+        }
+      }
+    } catch (e) {
+      // Fallback to raw content
+    }
+
     return (
       <View style={styles.systemContainer}>
         <TouchableOpacity 
@@ -359,7 +402,7 @@ export default function MessageBubble({
           onPress={() => targetId && onSystemMessagePress && onSystemMessagePress(targetId)}
           style={[styles.systemBadge, targetId && { borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.1)' }]}
         >
-          <Text style={styles.systemText}>{message.content}</Text>
+          <Text style={styles.systemText}>{displayContent}</Text>
         </TouchableOpacity>
         <Text style={styles.systemTime}>
           {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', {

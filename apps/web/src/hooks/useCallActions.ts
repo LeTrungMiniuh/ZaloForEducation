@@ -11,7 +11,7 @@ import api from '../services/api';
  */
 export const useCallActions = () => {
   const { socket, user } = useAuth();
-  const { initiateCall, setMeetingData } = useCallStore();
+  const { initiateCall, setPendingMeetingData } = useCallStore();
   const { conversations, activeConvId, userProfiles } = useChatStore();
 
   const startCall = useCallback(async (type: 'audio' | 'video') => {
@@ -60,7 +60,8 @@ export const useCallActions = () => {
           callId: activeCallId,
           type,
         });
-        setMeetingData(res.data.meeting, res.data.attendee, res.data.callType);
+        // ✅ [FIX] Don't trigger session yet, just save as pending
+        setPendingMeetingData(res.data.meeting, res.data.attendee, res.data.callType);
       }
 
       // 4. Thông báo đối phương qua Socket.IO (Bỏ qua tạo Chime meeting nếu WebRTC)
@@ -82,7 +83,7 @@ export const useCallActions = () => {
       console.error('[useCallActions] Failed to start call:', error?.message);
       useCallStore.getState().resetCall();
     }
-  }, [activeConvId, user, socket, conversations, userProfiles, initiateCall, setMeetingData]);
+  }, [activeConvId, user, socket, conversations, userProfiles, initiateCall, setPendingMeetingData]);
 
   return { startCall };
 };

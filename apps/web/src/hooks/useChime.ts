@@ -145,7 +145,7 @@ export const toggleMic = async (turnOn: boolean) => {
 
 export const useChime = () => {
   const { 
-    meetingData, attendeeData, 
+    meetingData, attendeeData, callState,
     setCallState, resetCall, setConnecting, setConnectionError,
     setRemoteCameraOn,
   } = useCallStore();
@@ -211,14 +211,19 @@ export const useChime = () => {
     }
 
     try {
-      // 1. Audio Input & Output
-      console.log('[Chime] Step 1: Listing audio devices...');
+      console.log('[Chime] Step 1: Initializing audio...');
       const audioInputDevices = await session.audioVideo.listAudioInputDevices();
       if (audioInputDevices.length > 0) {
-        console.log(`[Chime] Using audio device: ${audioInputDevices[0].label || 'Default'}`);
-        await session.audioVideo.startAudioInput(audioInputDevices[0].deviceId);
+        console.log(`[Chime] Found ${audioInputDevices.length} audio inputs. First: ${audioInputDevices[0].label}`);
+        try {
+          await session.audioVideo.startAudioInput(audioInputDevices[0].deviceId);
+        } catch (e) {
+          console.warn('[Chime] Failed to start specific audio input, trying default...');
+          await session.audioVideo.startAudioInput(null as any);
+        }
       } else {
-        throw new Error('Không tìm thấy Micro');
+        console.warn('[Chime] No specific audio input devices found, attempting default...');
+        await session.audioVideo.startAudioInput(null as any);
       }
 
       const audioOutputDevices = await session.audioVideo.listAudioOutputDevices();
@@ -311,17 +316,24 @@ export const useChime = () => {
         audioVideoDidStart: () => {
           console.log('[Web-Chime] ✅ Session STARTED successfully');
           setConnecting(false);
-          setCallState('CONNECTED');
+          useCallStore.getState().setConnected();
           
           // [CRITICAL] Bind audio element NOW — session is ready
           const audioEl = document.getElementById('chime-audio') as HTMLAudioElement | null;
           if (audioEl && session) {
             audioEl.volume = 1.0;
+            audioEl.muted = false;
             session.audioVideo.bindAudioElement(audioEl).then(() => {
               console.log('[Web-Chime] 🔊 Audio element bound INSIDE audioVideoDidStart');
-              // [AUDIO FIX] Explicitly unmute and play
               session.audioVideo.realtimeUnmuteLocalAudio();
-              audioEl.play().catch(e => console.warn('[Web-Chime] 🔇 Autoplay blocked? Please click on page.', e));
+              audioEl.play().catch(e => {
+                console.warn('[Web-Chime] 🔇 Autoplay blocked? Retrying on first click.', e);
+                const playOnActive = () => {
+                   audioEl.play();
+                   document.removeEventListener('click', playOnActive);
+                };
+                document.addEventListener('click', playOnActive);
+              });
             }).catch((e: any) => console.warn('[Web-Chime] Audio bind error:', e));
           } else {
             console.warn('[Web-Chime] ⚠️ #chime-audio NOT FOUND when session started');
@@ -347,6 +359,18 @@ export const useChime = () => {
         }
       });
 
+      // [FIX] Attendee Presence is handled via Realtime API, not AudioVideoObserver
+      session.audioVideo.realtimeSubscribeToAttendeeIdPresence((attendeeId, present) => {
+        console.log(`[Web-Chime] 👤 Attendee ${attendeeId} is ${present ? 'PRESENT' : 'LEFT'}`);
+        if (present) {
+          // Safety-net: Re-verify audio binding when someone joins
+          const audioEl = document.getElementById('chime-audio') as HTMLAudioElement | null;
+          if (audioEl && session) {
+            session.audioVideo.bindAudioElement(audioEl).catch(() => {});
+          }
+        }
+      });
+
       // 4. Audio Output binding — primary bind is in audioVideoDidStart callback above.
       // This is a SAFETY NET rebind after 2s in case the callback fires before DOM is ready.
       console.log('[Chime] Step 4: Scheduling safety-net audio rebind...');
@@ -364,7 +388,25 @@ export const useChime = () => {
 
       // 5. Start session
       console.log('[Chime] Step 5: Calling audioVideo.start()...');
-      await session.audioVideo.start();
+      
+      let retries = 0;
+      let success = false;
+      while (retries < 3 && !success) {
+        try {
+          await session.audioVideo.start();
+          console.log(`[Chime] Step 5 OK: Session STARTED (Attempt ${retries + 1})`);
+          success = true;
+        } catch (e) {
+          retries++;
+          console.error(`[Chime] Step 5 FAILED on attempt ${retries}:`, e);
+          if (retries >= 3) {
+            throw e; // Ném lỗi ra ngoài catch block chính
+          } else {
+            console.log(`[Chime] Retrying in 1000ms...`);
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+      }
 
       // 6. Start local video tile
       if (type === 'video') {
@@ -384,16 +426,14 @@ export const useChime = () => {
   }, [setCallState, resetCall, bindTile, rebindAllTiles, setConnecting, setConnectionError, setRemoteCameraOn]);
 
   useEffect(() => {
-    // ⚠️ Only run when meeting data exists and no active session
-    // [FIX] Removed CONNECTED state guard — !globalSession is sufficient.
-    // The guard was blocking session creation when Web is callee (state is already CONNECTED
-    // because acceptCall() runs before this effect fires).
-    if (meetingData && attendeeData && !globalSession) {
+    // For Caller: This happens after receiving 'call:accept' socket.
+    // For Callee: This happens after clicking 'Accept' button.
+    if (meetingData && attendeeData && !globalSession && callState === 'JOINING') {
       const type = useCallStore.getState().callType;
       console.log(`[Chime] useEffect triggered — creating session (type=${type})`);
       setupSession(type);
     }
-  }, [meetingData?.MeetingId, attendeeData?.AttendeeId, setupSession]);
+  }, [meetingData?.MeetingId, attendeeData?.AttendeeId, setupSession, callState]);
 
   return {
     rebindAllTiles,

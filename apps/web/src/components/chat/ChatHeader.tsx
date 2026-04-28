@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
-import { getDisplayName, getDisplayAvatar } from '../../utils/chatUtils';
+import { getDisplayName, getDisplayAvatar, DEFAULT_GROUP_AVATAR } from '../../utils/chatUtils';
 import { useCallActions } from '../../hooks/useCallActions';
 import { 
   Search, 
@@ -47,7 +47,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({ onToggleInfo, isInfoOpen }) => 
 
   const chatAvatar = activeChat.type === 'direct' 
     ? getDisplayAvatar(partnerEmail, user, userProfiles)
-    : (activeChat.avatar || '/logo_blue.png');
+    : (activeChat.avatar || DEFAULT_GROUP_AVATAR);
 
   const normalizedPartner = partnerEmail ? String(partnerEmail).trim().toLowerCase() : "";
   const isOnline = normalizedPartner ? userProfiles[normalizedPartner]?.status === 'online' : false;

@@ -136,7 +136,7 @@ interface ChatState {
     replyTo?: any, 
     extraFields?: Record<string, any>
   ) => Promise<void>;
-  createGroupConversation: (name: string, members: string[]) => Promise<any>;
+  createGroupConversation: (name: string, members: string[], avatar?: string) => Promise<any>;
   startDirectChat: (targetEmail: string) => Promise<void>;
   clearHistory: (convId: string) => Promise<void>;
   localClearHistory: (convId: string) => void;
@@ -189,6 +189,13 @@ interface ChatState {
   setIsAddFriendModalOpen: (val: boolean) => void;
   isCreateGroupModalOpen: boolean;
   setIsCreateGroupModalOpen: (val: boolean) => void;
+  
+  // Group Management
+  addMembers: (convId: string, members: string[]) => Promise<void>;
+  removeMember: (convId: string, email: string) => Promise<void>;
+  updateMemberRole: (convId: string, email: string, role: 'member' | 'deputy' | 'owner') => Promise<void>;
+  updateGroupInfo: (convId: string, data: { name?: string; avatar?: string }) => Promise<void>;
+  dissolveGroup: (convId: string) => Promise<void>;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -560,9 +567,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  createGroupConversation: async (name, members) => {
+  createGroupConversation: async (name, members, avatar) => {
     try {
-      const res = await api.post("/chat/conversations/group", { name, members });
+      const res = await api.post("/chat/conversations/group", { name, members, avatar });
       get().fetchConversations();
       return res.data;
     } catch (err) {
@@ -965,5 +972,61 @@ export const useChatStore = create<ChatState>((set, get) => ({
   localClearHistory: (convId) => {
     if (get().activeConvId === convId) set({ activeConvId: null, messages: [], nextCursor: null });
     set((state) => ({ conversations: state.conversations.filter((c) => c.id !== convId) }));
+  },
+
+  // Group Management Implementation
+  addMembers: async (convId, members) => {
+    try {
+      await api.post(`/chat/conversations/${encodeURIComponent(convId)}/members`, { members });
+      get().fetchConversations();
+    } catch (err) {
+      console.error("Failed to add members", err);
+      throw err;
+    }
+  },
+
+  removeMember: async (convId, email) => {
+    try {
+      await api.delete(`/chat/conversations/${encodeURIComponent(convId)}/members/${encodeURIComponent(email)}`);
+      get().fetchConversations();
+      // If I am the one who left/kicked, close the chat
+      if (email === getCurrentUserEmail()) {
+        set({ activeConvId: null, messages: [] });
+      }
+    } catch (err) {
+      console.error("Failed to remove member", err);
+      throw err;
+    }
+  },
+
+  updateMemberRole: async (convId, email, role) => {
+    try {
+      await api.patch(`/chat/conversations/${encodeURIComponent(convId)}/roles`, { targetEmail: email, role });
+      get().fetchConversations();
+    } catch (err) {
+      console.error("Failed to update role", err);
+      throw err;
+    }
+  },
+
+  updateGroupInfo: async (convId, data) => {
+    try {
+      await api.patch(`/chat/conversations/${encodeURIComponent(convId)}`, data);
+      get().fetchConversations();
+    } catch (err) {
+      console.error("Failed to update group info", err);
+      throw err;
+    }
+  },
+
+  dissolveGroup: async (convId) => {
+    try {
+      await api.delete(`/chat/conversations/${encodeURIComponent(convId)}`);
+      set({ activeConvId: null, messages: [] });
+      get().fetchConversations();
+    } catch (err) {
+      console.error("Failed to dissolve group", err);
+      throw err;
+    }
   },
 }));

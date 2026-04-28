@@ -13,9 +13,17 @@ import {
   Video, 
   X,
   Check,
-  ChevronDown
+  ChevronDown,
+  UserMinus,
+  ShieldCheck,
+  ShieldAlert,
+  LogOut,
+  Settings,
+  Plus,
+  Camera
 } from 'lucide-react';
 import Swal from 'sweetalert2';
+import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useChatStore } from '../../store/chatStore';
 import { 
@@ -47,6 +55,11 @@ const ChatInfoSidebar: React.FC = () => {
     muteConversationFor,
     clearConversationMuted,
     isConversationMuted,
+    addMembers,
+    removeMember,
+    updateMemberRole,
+    updateGroupInfo,
+    dissolveGroup,
   } = useChatStore();
 
   const activeChat = conversations.find(c => c.id === activeConvId);
@@ -336,16 +349,149 @@ const ChatInfoSidebar: React.FC = () => {
     }
   };
 
+  const handleLeaveGroup = async () => {
+    if (!activeConvId) return;
+    const confirm = await Swal.fire({
+      title: 'Rời nhóm?',
+      text: 'Bạn sẽ không còn nhận được tin nhắn từ nhóm này.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Rời nhóm',
+      cancelButtonColor: '#d33'
+    });
+    if (confirm.isConfirmed) {
+      try {
+        await removeMember(activeConvId, user?.email || '');
+      } catch (err: any) {
+        Swal.fire('Lỗi', err.response?.data?.message || 'Không thể rời nhóm', 'error');
+      }
+    }
+  };
+
+  const handleDissolveGroup = async () => {
+    if (!activeConvId) return;
+    const confirm = await Swal.fire({
+      title: 'Giải tán nhóm?',
+      text: 'Tất cả thành viên sẽ bị xóa khỏi nhóm và lịch sử chat sẽ bị xóa.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Giải tán',
+      cancelButtonColor: '#d33'
+    });
+    if (confirm.isConfirmed) {
+      try {
+        await dissolveGroup(activeConvId);
+      } catch (err: any) {
+        Swal.fire('Lỗi', err.response?.data?.message || 'Không thể giải tán nhóm', 'error');
+      }
+    }
+  };
+
+  const handleKickMember = async (targetEmail: string) => {
+    if (!activeConvId) return;
+    const confirm = await Swal.fire({
+      title: 'Xóa thành viên?',
+      text: `Bạn có chắc muốn xóa ${getDisplayName(targetEmail, user, userProfiles)} khỏi nhóm?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Xóa'
+    });
+    if (confirm.isConfirmed) {
+      try {
+        await removeMember(activeConvId, targetEmail);
+      } catch (err: any) {
+        Swal.fire('Lỗi', err.response?.data?.message || 'Không thể xóa thành viên', 'error');
+      }
+    }
+  };
+
+  const handleChangeRole = async (targetEmail: string, role: 'member' | 'deputy' | 'owner') => {
+    if (!activeConvId) return;
+    const roleName = role === 'owner' ? 'Trưởng nhóm' : role === 'deputy' ? 'Phó nhóm' : 'Thành viên';
+    const confirm = await Swal.fire({
+      title: 'Thay đổi vai trò?',
+      text: `Bạn có chắc muốn đặt ${getDisplayName(targetEmail, user, userProfiles)} làm ${roleName}?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Đồng ý'
+    });
+    if (confirm.isConfirmed) {
+      try {
+        await updateMemberRole(activeConvId, targetEmail, role);
+      } catch (err: any) {
+        Swal.fire('Lỗi', err.response?.data?.message || 'Không thể thay đổi vai trò', 'error');
+      }
+    }
+  };
+
+  const handleAddMembers = async () => {
+    Swal.fire({
+      title: 'Thêm thành viên',
+      input: 'text',
+      inputPlaceholder: 'Nhập email thành viên...',
+      showCancelButton: true,
+      confirmButtonText: 'Thêm'
+    }).then(async (result) => {
+      if (result.isConfirmed && result.value) {
+        try {
+          await addMembers(activeConvId!, [result.value.trim()]);
+          Swal.fire('Thành công', 'Đã thêm thành viên', 'success');
+        } catch (err: any) {
+          Swal.fire('Lỗi', err.response?.data?.message || 'Không thể thêm thành viên', 'error');
+        }
+      }
+    });
+  };
+
+  const handleUpdateGroupAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeConvId) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const uploadRes = await api.post('/chat/uploads', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const avatarUrl = uploadRes.data.fileUrl || uploadRes.data.dataUrl || '';
+      await updateGroupInfo(activeConvId, { avatar: avatarUrl });
+      Swal.fire({
+        icon: 'success',
+        title: 'Thành công',
+        text: 'Đã cập nhật ảnh đại diện nhóm',
+        timer: 1500,
+        showConfirmButton: false
+      });
+    } catch (err) {
+      Swal.fire('Lỗi', 'Không thể cập nhật ảnh đại diện', 'error');
+    }
+  };
+
+  const DEFAULT_GROUP_AVATAR = "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
+
   return (
     <div className="w-[320px] h-full border-l border-outline-variant/30 dark:border-outline-variant/30 bg-white dark:bg-surface-container flex flex-col shrink-0 animate-in slide-in-from-right-4 duration-300">
       <div className="p-6 border-b border-outline-variant/10 flex flex-col items-center">
-        <img
-          className={`w-20 h-20 rounded-full object-cover shadow-md mb-3 border-2 border-white dark:border-surface-container-high ${partnerEmail ? 'cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
-          src={chatAvatar}
-          alt=""
-          onClick={handleOpenProfile}
-          title={partnerEmail ? 'Xem trang cá nhân' : undefined}
-        />
+        <div className="relative group mb-3">
+          <img
+            className={`w-20 h-20 rounded-full object-cover shadow-md border-2 border-white dark:border-surface-container-high ${partnerEmail ? 'cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
+            src={activeChat.avatar || (activeChat.type === 'group' ? DEFAULT_GROUP_AVATAR : chatAvatar)}
+            alt=""
+            onClick={activeChat.type === 'group' ? undefined : handleOpenProfile}
+            title={partnerEmail ? 'Xem trang cá nhân' : activeChat.type === 'group' ? 'Đổi ảnh đại diện' : undefined}
+          />
+          {activeChat.type === 'group' && (
+            <label className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+              <Camera size={24} className="text-white" />
+              <input 
+                type="file" 
+                accept="image/*" 
+                className="hidden" 
+                onChange={handleUpdateGroupAvatar}
+              />
+            </label>
+          )}
+        </div>
         <h3 className="font-bold text-[16px] text-on-surface text-center leading-tight">{chatName}</h3>
         <p className="text-[12px] text-on-surface-variant font-medium mt-1">
           {activeChat.type === 'direct' ? 'Trò chuyện cá nhân' : 'Hội thoại nhóm'}
@@ -609,6 +755,131 @@ const ChatInfoSidebar: React.FC = () => {
               <Trash2 size={20} />
               Xóa lịch sử trò chuyện
             </button>
+
+            {activeChat.type === 'group' && (
+              <>
+                <div className="pt-4 pb-2">
+                  <h4 className="px-3 text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider">Quản lý nhóm</h4>
+                </div>
+                
+                <button
+                  onClick={handleLeaveGroup}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-error/10 text-error font-bold text-[13px] transition-all"
+                >
+                  <LogOut size={20} />
+                  Rời nhóm
+                </button>
+
+                {(activeChat.owner === user?.email || activeChat.admin === user?.email) && (
+                  <button
+                    onClick={handleDissolveGroup}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-error/10 text-error font-extrabold text-[13px] transition-all"
+                  >
+                    <Trash2 size={20} />
+                    Giải tán nhóm
+                  </button>
+                )}
+
+                <div className="pt-6 pb-2 flex items-center justify-between px-3">
+                  <h4 className="text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider">Thành viên ({activeChat.members?.length || 0})</h4>
+                  <button 
+                    onClick={handleAddMembers}
+                    className="p-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+
+                <div className="space-y-1 mt-1">
+                  {activeChat.members?.map(memberEmail => {
+                    const isMe = memberEmail === user?.email;
+                    const isOwner = activeChat.owner === memberEmail || activeChat.admin === memberEmail;
+                    const isDeputy = (activeChat.deputies || []).includes(memberEmail);
+                    const myRole = (activeChat.owner === user?.email || activeChat.admin === user?.email) ? 'owner' : (activeChat.deputies || []).includes(user?.email || '') ? 'deputy' : 'member';
+
+                    return (
+                      <div key={memberEmail} className="group/member flex items-center gap-3 p-2 rounded-xl hover:bg-surface-container transition-all">
+                        <img 
+                          src={getDisplayAvatar(memberEmail, user, userProfiles)} 
+                          className="w-9 h-9 rounded-full object-cover border border-outline-variant/10" 
+                          alt="" 
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-bold text-on-surface truncate">
+                            {getDisplayName(memberEmail, user, userProfiles)}
+                            {isMe && <span className="ml-1 opacity-50 font-medium">(Bạn)</span>}
+                          </p>
+                          <div className="flex items-center gap-1">
+                            {isOwner && (
+                              <span className="flex items-center gap-0.5 text-[10px] font-extrabold text-primary uppercase">
+                                <ShieldCheck size={10} /> Trưởng nhóm
+                              </span>
+                            )}
+                            {isDeputy && (
+                              <span className="flex items-center gap-0.5 text-[10px] font-extrabold text-secondary uppercase">
+                                <ShieldAlert size={10} /> Phó nhóm
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {!isMe && (
+                          <div className="flex items-center opacity-0 group-hover/member:opacity-100 transition-opacity">
+                            {myRole === 'owner' && (
+                              <div className="flex items-center gap-1">
+                                {!isOwner && !isDeputy && (
+                                  <button 
+                                    onClick={() => handleChangeRole(memberEmail, 'deputy')}
+                                    title="Chỉ định làm phó nhóm"
+                                    className="p-1.5 rounded-lg hover:bg-surface-container-highest text-on-surface-variant hover:text-primary"
+                                  >
+                                    <ShieldCheck size={16} />
+                                  </button>
+                                )}
+                                {isDeputy && (
+                                  <button 
+                                    onClick={() => handleChangeRole(memberEmail, 'member')}
+                                    title="Gỡ vai trò phó nhóm"
+                                    className="p-1.5 rounded-lg hover:bg-surface-container-highest text-on-surface-variant hover:text-error"
+                                  >
+                                    <ShieldAlert size={16} />
+                                  </button>
+                                )}
+                                {!isOwner && (
+                                  <button 
+                                    onClick={() => handleChangeRole(memberEmail, 'owner')}
+                                    title="Chuyển quyền trưởng nhóm"
+                                    className="p-1.5 rounded-lg hover:bg-surface-container-highest text-on-surface-variant hover:text-amber-500"
+                                  >
+                                    <Settings size={16} />
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => handleKickMember(memberEmail)}
+                                  title="Xóa khỏi nhóm"
+                                  className="p-1.5 rounded-lg hover:bg-error/10 text-error"
+                                >
+                                  <UserMinus size={16} />
+                                </button>
+                              </div>
+                            )}
+                            {myRole === 'deputy' && !isOwner && !isDeputy && (
+                              <button 
+                                onClick={() => handleKickMember(memberEmail)}
+                                title="Xóa khỏi nhóm"
+                                className="p-1.5 rounded-lg hover:bg-error/10 text-error"
+                              >
+                                <UserMinus size={16} />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

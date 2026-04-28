@@ -337,17 +337,46 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
         setConversations((prev: any[]) => prev.map(c => c.id === convId ? { ...c, pinnedMessageIds: data.pinnedMessageIds } : c));
       }
     };
+    const handleGroupUpdate = (data: any) => {
+      if (data.convId === conversationId || data.id === conversationId) {
+        setConversations((prev: any[]) => prev.map(c => c.id === data.id ? { ...c, ...data.updates } : c));
+        if (data.updates) {
+          setLocalConversation((prev: any) => prev ? { ...prev, ...data.updates } : null);
+        }
+      }
+    };
+    const handleGroupDissolve = (data: any) => {
+      if (data.convId === conversationId || data.id === conversationId) {
+        Alert.alert("Thông báo", "Nhóm đã bị giải tán bởi trưởng nhóm.");
+        if (goBack) goBack();
+      }
+    };
+    const handleConversationUpdated = (data: any) => {
+      const convId = data.conversationId || data.convId || data.id;
+      if (convId === conversationId) {
+        setConversations((prev: any[]) => prev.map(c => c.id === convId ? { ...c, ...data.updates } : c));
+        if (data.updates) {
+          setLocalConversation((prev: any) => prev ? { ...prev, ...data.updates } : null);
+        }
+      }
+    };
     socket.on("typing", handleTyping);
     socket.on("message_reaction", handleMessageReaction);
     socket.on("message_update", handleMessageUpdate);
     socket.on("message_delete", handleMessageDelete);
     socket.on("PIN_UPDATE", handlePinUpdate);
+    socket.on("group_updated", handleGroupUpdate);
+    socket.on("conversation:updated", handleConversationUpdated);
+    socket.on("group_dissolved", handleGroupDissolve);
     return () => {
       socket.off("typing", handleTyping);
       socket.off("message_reaction", handleMessageReaction);
       socket.off("message_update", handleMessageUpdate);
       socket.off("message_delete", handleMessageDelete);
       socket.off("PIN_UPDATE", handlePinUpdate);
+      socket.off("group_updated", handleGroupUpdate);
+      socket.off("conversation:updated", handleConversationUpdated);
+      socket.off("group_dissolved", handleGroupDissolve);
     };
   }, [conversationId, currentUserEmail, updateMessage, setConversations]);
 
@@ -448,7 +477,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     const partnerEmail = selectedChat.partner || (Array.isArray(selectedChat.members) ? selectedChat.members.find((m: string) => m !== user?.email) : undefined);
     if (!partnerEmail) return Alert.alert('Lỗi', 'Không tìm thấy thông tin đối phương');
     const activeCallId = uuidv4();
-    startOutgoingCall({ email: partnerEmail, fullName: getDisplayName(partnerEmail) }, type, selectedChat.id, activeCallId);
+    startOutgoingCall({ email: partnerEmail, fullName: getDisplayName(partnerEmail), avatarUrl: getDisplayAvatar(partnerEmail) }, type, selectedChat.id, activeCallId);
     const res = await apiPost('/call/create', { conversationId: selectedChat.id, callId: activeCallId, type });
     if (res.ok) {
       setMeetingInfo(res.meeting, res.attendee);

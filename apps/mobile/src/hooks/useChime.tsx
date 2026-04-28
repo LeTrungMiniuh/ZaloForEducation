@@ -16,7 +16,7 @@ import { chimeRef } from '../utils/chimeRef';
  */
 export const useChime = () => {
   const { 
-    meetingData, attendeeData, callType,
+    meetingData, attendeeData, callType, callState,
     remoteTiles: globalRemoteTiles
   } = useCallStore();
 
@@ -82,6 +82,10 @@ export const useChime = () => {
     ChimeModuleBridge.removeAllListeners('onVideoTileAdded');
     ChimeModuleBridge.removeAllListeners('onVideoTileRemoved');
     ChimeModuleBridge.removeAllListeners('onMeetingStart');
+    ChimeModuleBridge.removeAllListeners('onMeetingEnd');
+    ChimeModuleBridge.removeAllListeners('onMeetingConnecting');
+    ChimeModuleBridge.removeAllListeners('onAttendeeJoin');
+    ChimeModuleBridge.removeAllListeners('onAttendeeLeave');
     
     isStarted.current = false;
     // Use getState() to avoid stale closure on the setRemoteTiles reference
@@ -161,35 +165,50 @@ export const useChime = () => {
 
       ChimeModuleBridge.addListener('onMeetingStart', (data) => {
         console.log('[Chime-Bridge] 🌍 SIGNALING CONNECTED (onMeetingStart)', data);
-        // [STABLE PATTERN] Re-verify media activation after signaling is established
-        setTimeout(() => {
-          console.log('[Chime-Bridge] 🔊 Re-confirming media activation');
-          ChimeModuleBridge.toggleMic(true);
-          if (callType === 'video') {
-            ChimeModuleBridge.toggleCamera(true);
-          }
-        }, 500);
+        // ✅ [FIX 6] Set state to CONNECTED only when native signaling confirms it
+        useCallStore.getState().setConnected();
       });
 
       ChimeModuleBridge.addListener('onMeetingEnd', (data) => {
         console.log('[Chime-Bridge] 🏁 Meeting ended/failed', data);
+        // ✅ [FIX 1] Reset lock so a new session can start if needed
+        isStarted.current = false;
       });
 
-      console.log(`[Chime-Bridge] 🚀 Calling Native StartMeeting (ID: ${md.MeetingId}) in 500ms...`);
+      ChimeModuleBridge.addListener('onAttendeeJoin', (data) => {
+        console.log('[Chime-Bridge] 👤 Attendee joined:', data.attendeeId);
+      });
+
+      ChimeModuleBridge.addListener('onAttendeeLeave', (data) => {
+        console.log('[Chime-Bridge] 👤 Attendee left:', data.attendeeId);
+      });
+
+      console.log(`[Chime-Bridge] 🚀 Waiting 1000ms for expo-av to release Audio Focus & Calling Native StartMeeting (ID: ${md.MeetingId})...`);
+      
       try {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        await ChimeModuleBridge.startMeeting(md, ad);
-        console.log('[Chime-Bridge] 🏁 Native StartMeeting CALLED');
-        
-        // [STABLE PATTERN] Double-toggle: once immediately after start returns
-        console.log('[Chime-Bridge] 🎙️ Pre-emptive media activation');
-        await ChimeModuleBridge.toggleMic(true);
-        if (callType === 'video') {
-          await ChimeModuleBridge.toggleCamera(true);
-        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        console.log('[Chime-Bridge] 🔊 Delay finished. Proceeding to Native Setup.');
       } catch (e) {
-        console.error('[Chime-Bridge] Setup failed:', e);
-        isStarted.current = false;
+        console.warn(e);
+      }
+
+      let retries = 0;
+      let success = false;
+      while (retries < 3 && !success) {
+        try {
+          await ChimeModuleBridge.startMeeting(md, ad);
+          console.log(`[Chime-Bridge] 🏁 Native StartMeeting CALLED (Attempt ${retries + 1})`);
+          success = true;
+        } catch (e) {
+          retries++;
+          console.error(`[Chime-Bridge] Setup failed on attempt ${retries}:`, e);
+          if (retries >= 3) {
+            isStarted.current = false;
+          } else {
+            console.log(`[Chime-Bridge] Retrying in 1000ms...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
       }
     } catch (err) {
       console.error('[Chime-Bridge] Setup CRASHED:', err);
@@ -219,14 +238,13 @@ export const useChime = () => {
   }, []);
 
   useEffect(() => {
-    if (meetingData && attendeeData) {
+    // ✅ [FIX 2] Only trigger setupSession when the app explicitly enters JOINING state.
+    // This prevents accidental joins from stale meetingData before handleAccept is called.
+    if (meetingData && attendeeData && callState === 'JOINING') {
       setupSession();
     }
-    // [CRITICAL FIX] Do NOT include setupSession in deps — it changes on every render
-    // because it's a useCallback that closes over meetingData/attendeeData/callType.
-    // Including it causes setupSession() to run twice, registering duplicate listeners.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingData, attendeeData]);
+  }, [meetingData, attendeeData, callState]); // ✅ callState là reactive, trigger effect khi thay đổi
 
   return {
     localTileId,

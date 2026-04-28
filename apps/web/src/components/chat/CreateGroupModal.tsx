@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useChatStore } from '../../store/chatStore';
 import { getDisplayName, getDisplayAvatar } from '../../utils/chatUtils';
-import { X, Users, Search, CheckCircle2, UserPlus, Loader2 } from 'lucide-react';
+import { X, Users, Search, CheckCircle2, UserPlus, Loader2, Camera } from 'lucide-react';
 import Swal from 'sweetalert2';
+import api from '../../services/api';
 
 interface CreateGroupModalProps {
   isOpen: boolean;
@@ -73,6 +74,9 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose }) 
     }
   }, [isOpen, fetchFriends]);
 
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
   const handleToggle = (email: string) => {
@@ -83,6 +87,18 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose }) 
       next.add(email);
     }
     setSelectedIds(next);
+  };
+  
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAvatarFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAvatarPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleCreate = async () => {
@@ -97,9 +113,19 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose }) 
 
     setIsCreating(true);
     try {
+      let avatarUrl = '';
+      if (avatarFile) {
+        const formData = new FormData();
+        formData.append('file', avatarFile);
+        const uploadRes = await api.post('/chat/uploads', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        avatarUrl = uploadRes.data.fileUrl || uploadRes.data.dataUrl || '';
+      }
+
       const members = Array.from(selectedIds);
       // Backend automatically adds the creator
-      const newGroup = await createGroupConversation(groupName.trim(), members);
+      const newGroup = await createGroupConversation(groupName.trim(), members, avatarUrl);
       Swal.fire({
         title: 'Tạo nhóm thành công!',
         icon: 'success',
@@ -141,14 +167,31 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose }) 
         </div>
 
         <div className="p-5 flex flex-col gap-4">
-          <div className="space-y-1">
-             <label className="text-[13px] font-bold text-on-surface">Tên nhóm</label>
-             <input 
-               value={groupName}
-               onChange={e => setGroupName(e.target.value)}
-               placeholder="Nhập tên nhóm..."
-               className="w-full bg-surface-container-low border border-outline-variant/20 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-[14px]"
-             />
+          <div className="flex items-center gap-4">
+             <div className="relative group">
+                <div className="w-16 h-16 rounded-2xl bg-surface-container-high flex items-center justify-center overflow-hidden border-2 border-outline-variant/20 group-hover:border-primary/30 transition-all">
+                   {avatarPreview ? (
+                      <img src={avatarPreview} className="w-full h-full object-cover" alt="" />
+                   ) : (
+                      <Camera size={24} className="text-on-surface-variant/50 group-hover:text-primary transition-colors" />
+                   )}
+                </div>
+                <input 
+                  type="file" 
+                  accept="image/*"
+                  onChange={handleAvatarChange}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+             </div>
+             <div className="flex-1 space-y-1">
+                <label className="text-[13px] font-bold text-on-surface">Tên nhóm</label>
+                <input 
+                  value={groupName}
+                  onChange={e => setGroupName(e.target.value)}
+                  placeholder="Nhập tên nhóm..."
+                  className="w-full bg-surface-container-low border border-outline-variant/20 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-primary/20 transition-all text-[14px]"
+                />
+             </div>
           </div>
 
           <div className="space-y-1">

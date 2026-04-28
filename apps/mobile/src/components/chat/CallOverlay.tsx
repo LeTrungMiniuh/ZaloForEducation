@@ -127,6 +127,22 @@ const CallOverlay = () => {
   const ringtoneSound = useRef<any>(null);
   const ringbackSound = useRef<any>(null);
 
+  const resetAudioMode = useCallback(async () => {
+    try {
+      const { Audio } = require('expo-av');
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
+      });
+      console.log('[CallOverlay] 🛡️ Audio mode reset to system default (released expo-av focus)');
+    } catch (e) {
+      console.warn('Failed to reset audio mode', e);
+    }
+  }, []);
+
   const stopRingtone = useCallback(async () => {
     if (ringtoneSound.current) {
       console.log('[CallOverlay] Manual Stop: Ringtone');
@@ -135,8 +151,9 @@ const CallOverlay = () => {
         await ringtoneSound.current.unloadAsync();
       } catch (e) {}
       ringtoneSound.current = null;
+      await resetAudioMode();
     }
-  }, []);
+  }, [resetAudioMode]);
 
   const stopRingback = useCallback(async () => {
     if (ringbackSound.current) {
@@ -146,8 +163,9 @@ const CallOverlay = () => {
         await ringbackSound.current.unloadAsync();
       } catch (e) {}
       ringbackSound.current = null;
+      await resetAudioMode();
     }
-  }, []);
+  }, [resetAudioMode]);
 
   // Handle Duration Timer
   useEffect(() => {
@@ -296,7 +314,9 @@ const CallOverlay = () => {
 
   // [SENIOR] One-Way Data Flow: Sync Mic Hardware with Store
   useEffect(() => {
-    if (callState === 'CONNECTED' || callState === 'CALLING' || callState === 'RINGING') {
+    // ✅ [ROOT CAUSE #2 FIX] Only sync hardware when state is truly CONNECTED.
+    // Syncing during JOINING or RINGING leads to race conditions with uninitialized sessions.
+    if (callState === 'CONNECTED') {
       console.log('[CallOverlay] Syncing Mic Hardware ->', isMicOn);
       toggleMicChime(isMicOn);
     }
@@ -361,6 +381,10 @@ const CallOverlay = () => {
     }
 
     await stopRingtone();
+    
+    // ✅ [ROOT CAUSE #5 FIX] Add a small delay (300ms) to allow AudioManager to release
+    // the hardware before Chime tries to grab it.
+    await new Promise(resolve => setTimeout(resolve, 300));
 
     try {
       const res = await apiRequest('/call/join', { 
@@ -388,8 +412,8 @@ const CallOverlay = () => {
           convId: conversationId,
           callId: activeCallId,
           fromEmail: user.email,
-          toEmail: caller?.email,
-          meetingInfo: meetingData 
+          toEmail: caller?.email
+          // ✅ KHÔNG gửi meetingInfo để tránh Caller dùng nhầm
         });
       }
 
@@ -400,18 +424,6 @@ const CallOverlay = () => {
 
       // [STABLE PATTERN] metadata update in store will trigger setupSession in useChime automatically
       isAcceptingRef.current = false;
-
-      // [FALLBACK] Force media activation after 2.5s if signaling event is missed
-      setTimeout(() => {
-        const state = useCallStore.getState();
-        if (state.callState === 'CONNECTED') {
-          console.log('[CallOverlay] 🛡️ Fallback: Forcing media activation');
-          toggleMicChime(true);
-          if (callType === 'video') {
-            toggleCameraChime(true);
-          }
-        }
-      }, 2500);
     } catch (err) {
       console.error('Error accepting call:', err);
       isAcceptingRef.current = false;
@@ -848,7 +860,7 @@ const CallOverlay = () => {
       {!isMinimized && (
         <SafeAreaView style={{ flex: 1 }}>
           {callState === 'RINGING' && renderIncoming()}
-          {callState === 'CALLING' && renderCalling()}
+          {(callState === 'CALLING' || callState === 'JOINING') && renderCalling()}
           {callState === 'CONNECTED' && (callType === 'video' ? renderVideoCall() : renderAudioCall())}
           {callState === 'ENDED' && renderEnded()}
           

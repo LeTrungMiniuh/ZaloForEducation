@@ -36,6 +36,7 @@ interface MessageBubbleProps {
   hideTime?: boolean;
   onReply: (message: any) => void;
   onForward?: (message: any) => void;
+  isConsecutive?: boolean;
 }
 
 const FLUENT_EMOJI_MAP: Record<string, string> = {
@@ -132,6 +133,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   userProfiles,
   onReply,
   onForward,
+  isConsecutive,
 }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -298,15 +300,47 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         />
       );
     }
-    const actorEmail = (message as any).systemActionBy;
-    const isActorMe = actorEmail === user?.email;
 
     let displayContent = message.content;
-    if (isActorMe && actorEmail) {
-      const actorProfile = userProfiles[actorEmail];
-      const actorName =
-        actorProfile?.fullName || actorProfile?.fullname || actorEmail;
-      displayContent = displayContent.replace(actorName, "Bạn");
+    try {
+      const parsed = JSON.parse(message.content);
+      if (parsed.action) {
+         const actorName = getDisplayName(parsed.actor, user, userProfiles);
+         const targetName = parsed.target ? getDisplayName(parsed.target, user, userProfiles) : '';
+         const isActorMe = parsed.actor === user?.email;
+         const actorLabel = isActorMe ? 'Bạn' : actorName;
+
+         switch (parsed.action) {
+            case 'member_added':
+               displayContent = `${actorLabel} đã thêm ${targetName} vào nhóm`;
+               break;
+            case 'member_removed':
+               displayContent = `${actorLabel} đã xóa ${targetName} khỏi nhóm`;
+               break;
+            case 'member_left':
+               displayContent = `${actorLabel} đã rời nhóm`;
+               break;
+            case 'role_updated':
+               const roleName = parsed.role === 'owner' ? 'Trưởng nhóm' : parsed.role === 'deputy' ? 'Phó nhóm' : 'Thành viên';
+               displayContent = `${actorLabel} đã đặt ${targetName} làm ${roleName}`;
+               break;
+            case 'info_updated':
+               displayContent = `${actorLabel} đã cập nhật thông tin nhóm`;
+               break;
+            case 'group_created':
+               displayContent = `${actorLabel} đã tạo nhóm`;
+               break;
+         }
+      }
+    } catch (e) {
+      // Fallback to legacy parsing
+      const actorEmail = (message as any).systemActionBy;
+      const isActorMe = actorEmail === user?.email;
+      if (isActorMe && actorEmail) {
+        const actorProfile = userProfiles[actorEmail];
+        const actorName = actorProfile?.fullName || actorProfile?.fullname || actorEmail;
+        displayContent = displayContent.replace(actorName, "Bạn");
+      }
     }
 
     return (
@@ -317,7 +351,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
               {displayContent}
             </p>
           </div>
-          <p className="text-[11px] font-bold text-on-surface-variant/70 tracking-tight text-center">
+          <p className="text-[11px] font-bold text-on-surface-variant/70 tracking-tight text-center opacity-40">
             {new Date(message.createdAt).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
@@ -334,7 +368,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
       className={`flex items-end gap-3 group relative mb-4 transition-all duration-500 ${isMe ? "flex-row-reverse" : "flex-row"} ${isHighlighted ? "scale-105 z-10" : ""}`}
     >
       <div className="shrink-0 mb-1">
-        {!isMe ? (
+        {!isMe && !isConsecutive ? (
           <img
             src={getDisplayAvatar(message.senderId, user, userProfiles)}
             className="w-10 h-10 rounded-full object-cover shadow-sm ring-1 ring-black/5 cursor-pointer hover:opacity-90 transition-opacity"
@@ -342,6 +376,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             title="Xem trang cá nhân"
             alt=""
           />
+        ) : !isMe && isConsecutive ? (
+          <div className="w-10" />
         ) : null}
       </div>
 
@@ -349,7 +385,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         className={`flex flex-col max-w-[75%] ${isMe ? "items-end" : "items-start"}`}
       >
         <div className="flex items-center gap-2 mb-1.5 px-1">
-          {!isMe && (
+          {!isMe && !isConsecutive && (
             <span className="text-[12px] font-extrabold text-on-surface-variant/70">
               {getDisplayName(message.senderId, user, userProfiles)}
             </span>

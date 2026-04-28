@@ -18,6 +18,7 @@ export interface ConversationMuteSchedule {
 }
 
 const MUTE_SCHEDULE_STORAGE_PREFIX = 'chat_notification_mute_schedule:';
+export const DEFAULT_GROUP_AVATAR = "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
 
 const getMuteScheduleStorageKey = (convId: string) =>
   `${MUTE_SCHEDULE_STORAGE_PREFIX}${convId}`;
@@ -207,7 +208,7 @@ export const getDisplayAvatar = (
   currentUser: any,
   userProfiles: Record<string, any>,
 ) => {
-  if (!email) return "/logo_blue.png";
+  if (!email) return DEFAULT_GROUP_AVATAR;
   const normalized = String(email).trim().toLowerCase();
   const myEmail = String(currentUser?.email || "").trim().toLowerCase();
   if (normalized === myEmail) return currentUser?.avatarUrl || "/logo_blue.png";
@@ -254,6 +255,25 @@ export const getMessagePreview = (message: any): string => {
   }
   if (Array.isArray(message.files) && message.files.length > 0)
     return "[Tệp đính kèm]";
+  if (message.type === "system") {
+    try {
+      const parsed = JSON.parse(message.content);
+      if (parsed.action) {
+        switch (parsed.action) {
+          case 'member_added': return '[Thêm thành viên]';
+          case 'member_removed': return '[Xóa thành viên]';
+          case 'member_left': return '[Rời nhóm]';
+          case 'role_updated': return '[Cập nhật vai trò]';
+          case 'info_updated': return '[Cập nhật thông tin]';
+          case 'group_created': return '[Tạo nhóm]';
+        }
+      }
+    } catch (e) {
+      // Fallback to raw content if not JSON
+    }
+    return message.content || "[Hệ thống]";
+  }
+
   return String(message.content || (message.type === 'media' ? '[Tệp tin]' : 'Tin nhắn'));
 }
 

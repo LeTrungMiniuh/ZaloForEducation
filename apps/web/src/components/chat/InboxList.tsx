@@ -1,19 +1,18 @@
 import React, { useState } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useAuth } from '../../context/AuthContext';
-import { getDisplayName, getDisplayAvatar, isUnread, getMessagePreview } from '../../utils/chatUtils';
+import { getDisplayName, getDisplayAvatar, isUnread, getMessagePreview, DEFAULT_GROUP_AVATAR } from '../../utils/chatUtils';
 import CreateGroupModal from './CreateGroupModal';
 import { BOT_EMAIL } from '@zalo-edu/shared';
 import ConversationTagPicker from './ConversationTagPicker';
 import Swal from 'sweetalert2';
+import { useSecurityAlerts } from '../../hooks/useSecurityAlerts';
 
 import {
   Lock,
   MoreHorizontal,
   UserPlus,
   Users,
-  MessageSquarePlus,
-  Settings,
   Menu
 } from 'lucide-react';
 
@@ -50,6 +49,8 @@ const InboxList: React.FC = () => {
     x: number;
     y: number;
   }>(null);
+
+  const { alerts, unreadCount: systemUnreadCount } = useSecurityAlerts();
 
   // Fetch conversations on mount
   React.useEffect(() => {
@@ -186,6 +187,25 @@ const InboxList: React.FC = () => {
     // 4. Search filter
     return conversationMatchesSearch(conv);
   });
+
+  if (alerts.length > 0) {
+    const systemConv = {
+      id: "CONV#SYSTEM",
+      name: "Cảnh báo bảo mật",
+      type: "system",
+      avatar: "https://ui-avatars.com/api/?name=Alert&background=ff3b30&color=fff&bold=true",
+      lastMessageContent: alerts[0].title,
+      updatedAt: alerts[0].at,
+      unreadCount: systemUnreadCount,
+    };
+    
+    const matchesSearch = normalizedSearch ? "cảnh báo bảo mật alert".includes(normalizedSearch) || (alerts[0].title || '').toLowerCase().includes(normalizedSearch) : true;
+    const matchesUnread = chatFilter === 'unread' ? systemUnreadCount > 0 : true;
+
+    if (matchesSearch && matchesUnread) {
+      filteredConversations.unshift(systemConv as any);
+    }
+  }
 
   return (
     <div className="w-85 h-full border-r border-outline-variant/30 flex flex-col bg-white dark:bg-surface-container shrink-0">
@@ -388,7 +408,7 @@ const InboxList: React.FC = () => {
 
             const chatAvatar = chat.type === "direct"
               ? getDisplayAvatar(partnerEmail, user, userProfiles)
-              : chat.avatar || "/logo_blue.png";
+              : chat.avatar || DEFAULT_GROUP_AVATAR;
 
             const unread = isUnread(chat, user?.email);
             const normalizedPartner = partnerEmail ? String(partnerEmail).trim().toLowerCase() : "";
@@ -421,7 +441,7 @@ const InboxList: React.FC = () => {
                     alt={chatName}
                     src={chatAvatar}
                   />
-                  {isOnline && (
+                  {isOnline && (chat as any).type !== "system" && (
                     <div className="absolute top-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-surface-container rounded-full shadow-sm ring-1 ring-black/5 animate-pulse"></div>
                   )}
                 </div>
@@ -456,6 +476,10 @@ const InboxList: React.FC = () => {
                         {isHidden
                           ? 'Trò chuyện đã ẩn (yêu cầu PIN)'
                           : (() => {
+                              if ((chat as any).type === "system") {
+                                return chat.lastMessageContent;
+                              }
+
                               const isMe = chat.lastMessageSenderId === user?.email;
                               const prefix = isMe ? 'Bạn: ' : '';
 
@@ -490,21 +514,23 @@ const InboxList: React.FC = () => {
                   </div>
                 </div>
 
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    setConvMenu({
-                      convId: chat.id,
-                      x: Math.min(rect.right - 220, window.innerWidth - 240),
-                      y: Math.min(rect.bottom + 8, window.innerHeight - 180),
-                    });
-                  }}
-                  className="rounded-full p-1 text-on-surface-variant opacity-0 transition group-hover:opacity-100 hover:bg-surface-container"
-                  title="Tùy chọn"
-                >
-                  <MoreHorizontal size={18} />
-                </button>
+                {(chat as any).type !== "system" && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      setConvMenu({
+                        convId: chat.id,
+                        x: Math.min(rect.right - 220, window.innerWidth - 240),
+                        y: Math.min(rect.bottom + 8, window.innerHeight - 180),
+                      });
+                    }}
+                    className="rounded-full p-1 text-on-surface-variant opacity-0 transition group-hover:opacity-100 hover:bg-surface-container"
+                    title="Tùy chọn"
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
+                )}
               </div>
             );
           })

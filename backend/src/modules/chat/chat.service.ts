@@ -109,21 +109,25 @@ export class ChatService {
   /**
    * CREATE GROUP CONVERSATION
    */
-  async createGroupConversation(adminEmail: string, members: string[], groupName: string) {
+  async createGroupConversation(adminEmail: string, members: string[], groupName: string, avatar?: string) {
     const allMembers = Array.from(new Set([adminEmail, ...members]));
     if (allMembers.length < 3) throw new BadRequestException('Group must have at least 3 members');
 
     const rawId = uuidv4();
     const convId = `CONV#GROUP#${rawId}`;
+    const now = new Date().toISOString();
 
     const newConv: Conversation = {
       id: convId,
       name: groupName,
       type: 'group',
       admin: adminEmail,
+      owner: adminEmail,
+      avatar: avatar || '',
+      deputies: [],
       members: allMembers,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now
     };
 
     const transactItems: any[] = [
@@ -148,7 +152,7 @@ export class ChatService {
             SK: convId,
             type: 'group',
             name: groupName,
-            createdAt: newConv.createdAt
+            createdAt: now
           }
         }
       });
@@ -158,7 +162,261 @@ export class ChatService {
       TransactItems: transactItems
     }));
 
+    // Create system message for group creation
+    const systemContent = JSON.stringify({
+      action: 'group_created',
+      actor: adminEmail,
+      groupName: groupName
+    });
+    
+    // We'll call messageService.sendMessage but we need to inject it or use gateway
+    // For now, let's just emit the event or let the controller handle it
+    // Actually, it's better if the controller calls sendMessage after creation
+
     return newConv;
+  }
+
+  async addMembersToGroup(convId: string, actorEmail: string, newMembers: string[]) {
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata || metadata.type !== 'group') throw new BadRequestException('Group not found');
+
+    // Permission check: Actor must be owner or deputy
+    const isOwner = metadata.owner === actorEmail || metadata.admin === actorEmail;
+    const isDeputy = (metadata.deputies || []).includes(actorEmail);
+    if (!isOwner && !isDeputy) throw new BadRequestException('Only owner or deputy can add members');
+
+    const uniqueNewMembers = newMembers.filter(m => !metadata.members.includes(m));
+    if (uniqueNewMembers.length === 0) return metadata;
+
+    const updatedMembers = [...metadata.members, ...uniqueNewMembers];
+    const now = new Date().toISOString();
+
+    const transactItems: any[] = [
+      {
+        Update: {
+          TableName: this.db.tableName,
+          Key: { PK: convId, SK: 'METADATA' },
+          UpdateExpression: 'SET #m = :members, updatedAt = :now',
+          ExpressionAttributeNames: { '#m': 'members' },
+          ExpressionAttributeValues: { ':members': updatedMembers, ':now': now }
+        }
+      }
+    ];
+
+    for (const member of uniqueNewMembers) {
+      transactItems.push({
+        Put: {
+          TableName: this.db.tableName,
+          Item: {
+            PK: `USER#${member}`,
+            SK: convId,
+            type: 'group',
+            name: metadata.name,
+            createdAt: now
+          }
+        }
+      });
+    }
+
+    await this.db.docClient.send(new TransactWriteCommand({ TransactItems: transactItems }));
+
+    // Send system messages
+    // Notify via socket
+    this.chatGateway.emitGroupUpdated(convId, { members: updatedMembers, addedMembers: uniqueNewMembers, actor: actorEmail });
+
+    return { ...metadata, members: updatedMembers };
+  }
+
+  async removeMemberFromGroup(convId: string, actorEmail: string, targetEmail: string) {
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata || metadata.type !== 'group') throw new BadRequestException('Group not found');
+
+    const isSelf = actorEmail === targetEmail;
+    const isOwner = metadata.owner === actorEmail || metadata.admin === actorEmail;
+    const isDeputy = (metadata.deputies || []).includes(actorEmail);
+    
+    const targetIsOwner = metadata.owner === targetEmail || metadata.admin === targetEmail;
+    const targetIsDeputy = (metadata.deputies || []).includes(targetEmail);
+
+    if (!isSelf) {
+      // Kicking logic
+      if (!isOwner && !isDeputy) throw new BadRequestException('Permission denied');
+      if (isDeputy && (targetIsOwner || targetIsDeputy)) throw new BadRequestException('Deputy cannot kick other deputy or owner');
+      if (targetIsOwner) throw new BadRequestException('Cannot kick the owner');
+    } else {
+      // Leaving logic
+      if (isOwner && metadata.members.length > 1) {
+        throw new BadRequestException('Owner must transfer ownership before leaving');
+      }
+    }
+
+    const updatedMembers = metadata.members.filter(m => m !== targetEmail);
+    const updatedDeputies = (metadata.deputies || []).filter(m => m !== targetEmail);
+    const now = new Date().toISOString();
+
+    const transactItems: any[] = [
+      {
+        Update: {
+          TableName: this.db.tableName,
+          Key: { PK: convId, SK: 'METADATA' },
+          UpdateExpression: 'SET #m = :members, deputies = :deputies, updatedAt = :now',
+          ExpressionAttributeNames: { '#m': 'members' },
+          ExpressionAttributeValues: { ':members': updatedMembers, ':deputies': updatedDeputies, ':now': now }
+        }
+      },
+      {
+        Delete: {
+          TableName: this.db.tableName,
+          Key: { PK: `USER#${targetEmail}`, SK: convId }
+        }
+      }
+    ];
+
+    await this.db.docClient.send(new TransactWriteCommand({ TransactItems: transactItems }));
+
+    this.chatGateway.emitGroupUpdated(convId, { members: updatedMembers, removedMember: targetEmail, actor: actorEmail });
+
+    return { success: true };
+  }
+
+  async updateMemberRole(convId: string, actorEmail: string, targetEmail: string, role: 'deputy' | 'member' | 'owner') {
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata || metadata.type !== 'group') throw new BadRequestException('Group not found');
+
+    const isOwner = metadata.owner === actorEmail || metadata.admin === actorEmail;
+    if (!isOwner) throw new BadRequestException('Only owner can change roles');
+
+    if (!metadata.members.includes(targetEmail)) throw new BadRequestException('Target is not a member');
+
+    let updateExp = 'SET updatedAt = :now';
+    const expVals: any = { ':now': new Date().toISOString() };
+
+    if (role === 'owner') {
+      updateExp += ', #owner = :target, #admin = :target';
+      expVals[':target'] = targetEmail;
+      // If promoting to owner, remove from deputies if they were one
+      const updatedDeputies = (metadata.deputies || []).filter(m => m !== targetEmail);
+      updateExp += ', deputies = :deputies';
+      expVals[':deputies'] = updatedDeputies;
+    } else if (role === 'deputy') {
+      const deputies = new Set(metadata.deputies || []);
+      deputies.add(targetEmail);
+      updateExp += ', deputies = :deputies';
+      expVals[':deputies'] = Array.from(deputies);
+    } else {
+      const deputies = (metadata.deputies || []).filter(m => m !== targetEmail);
+      updateExp += ', deputies = :deputies';
+      expVals[':deputies'] = deputies;
+    }
+
+    await this.db.docClient.send(new UpdateCommand({
+      TableName: this.db.tableName,
+      Key: { PK: convId, SK: 'METADATA' },
+      UpdateExpression: updateExp,
+      ExpressionAttributeNames: role === 'owner' ? { '#owner': 'owner', '#admin': 'admin' } : undefined,
+      ExpressionAttributeValues: expVals
+    }));
+
+    this.chatGateway.emitGroupUpdated(convId, { roleUpdated: { email: targetEmail, role }, actor: actorEmail });
+
+    return { success: true };
+  }
+
+  async updateGroupSettings(convId: string, userEmail: string, settings: { isMuted?: boolean; isPinned?: boolean }) {
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata) throw new BadRequestException('Conversation not found');
+
+    // We store settings in the mapping record (USER#email, SK: CONV#id)
+    let updateExp = 'SET updatedAt = :now';
+    const expVals: any = { ':now': new Date().toISOString() };
+
+    if (settings.isMuted !== undefined) {
+      updateExp += ', isMuted = :muted';
+      expVals[':muted'] = settings.isMuted;
+    }
+    if (settings.isPinned !== undefined) {
+      updateExp += ', isPinned = :pinned';
+      expVals[':pinned'] = settings.isPinned;
+    }
+
+    await this.db.docClient.send(new UpdateCommand({
+      TableName: this.db.tableName,
+      Key: { PK: `USER#${userEmail}`, SK: convId },
+      UpdateExpression: updateExp,
+      ExpressionAttributeValues: expVals
+    }));
+
+    return { success: true };
+  }
+
+  async updateGroupInfo(convId: string, actorEmail: string, data: { name?: string; avatar?: string }) {
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata || metadata.type !== 'group') throw new BadRequestException('Group not found');
+
+    const isOwner = metadata.owner === actorEmail || metadata.admin === actorEmail;
+    const isDeputy = (metadata.deputies || []).includes(actorEmail);
+    if (!isOwner && !isDeputy) throw new BadRequestException('Permission denied');
+
+    let updateExp = 'SET updatedAt = :now';
+    const expVals: any = { ':now': new Date().toISOString() };
+
+    if (data.name) {
+      updateExp += ', #name = :name';
+      expVals[':name'] = data.name;
+    }
+    if (data.avatar) {
+      updateExp += ', avatar = :avatar';
+      expVals[':avatar'] = data.avatar;
+    }
+
+    await this.db.docClient.send(new UpdateCommand({
+      TableName: this.db.tableName,
+      Key: { PK: convId, SK: 'METADATA' },
+      UpdateExpression: updateExp,
+      ExpressionAttributeNames: data.name ? { '#name': 'name' } : undefined,
+      ExpressionAttributeValues: expVals
+    }));
+
+    // If name changed, we might want to update all user mappings too, but it's expensive.
+    // Usually we fetch name from metadata.
+    // For now, just emit the update.
+    this.chatGateway.emitGroupUpdated(convId, { infoUpdated: data, actor: actorEmail });
+
+    return { success: true };
+  }
+
+  async dissolveGroup(convId: string, actorEmail: string) {
+    const metadata = await this.getConversationMetadata(convId);
+    if (!metadata || metadata.type !== 'group') throw new BadRequestException('Group not found');
+
+    const isOwner = metadata.owner === actorEmail || metadata.admin === actorEmail;
+    if (!isOwner) throw new BadRequestException('Only owner can dissolve group');
+
+    // In a real app, we'd delete all mappings and metadata.
+    // For now, let's mark it as dissolved or delete.
+    const transactItems: any[] = [
+      {
+        Delete: {
+          TableName: this.db.tableName,
+          Key: { PK: convId, SK: 'METADATA' }
+        }
+      }
+    ];
+
+    for (const member of metadata.members) {
+      transactItems.push({
+        Delete: {
+          TableName: this.db.tableName,
+          Key: { PK: `USER#${member}`, SK: convId }
+        }
+      });
+    }
+
+    await this.db.docClient.send(new TransactWriteCommand({ TransactItems: transactItems }));
+
+    this.chatGateway.emitGroupDissolved(convId, actorEmail);
+
+    return { success: true };
   }
 
   /**

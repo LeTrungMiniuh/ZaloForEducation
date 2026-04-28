@@ -25,6 +25,7 @@ export class CallGateway {
   server: Server;
 
   private readonly logger = new Logger(CallGateway.name);
+  private waitForJoinTimeouts = new Map<string, any>(); // ✅ Lưu Timer chống Ghost Hangup
 
   constructor(private readonly callService: CallService) {}
 
@@ -81,8 +82,8 @@ export class CallGateway {
     // 1. [UTMOST PRIORITY] Thông báo cho người gọi ngay lập tức
     this.server.to(callerRoom).emit('call:accept', { 
       convId: data.convId, 
-      callId: data.callId,
-      meetingInfo: data.meetingInfo 
+      callId: data.callId
+      // ❌ [CRITICAL FIX] KHÔNG đính kèm meetingInfo của Callee để tránh Caller dùng nhầm Attendee của Callee
     });
 
     // 2. [BACKGROUND] Mark start time for duration calculation
@@ -102,6 +103,17 @@ export class CallGateway {
       // Fallback cho logic cũ
       client.broadcast.to(myRoom).emit('call:dismiss', { convId: data.convId, callId: data.callId, reason: 'accepted' });
     }
+
+    // 4. ✅ [LIFECYCLE CONTROL] Cập nhật state thành ACCEPTED
+    await this.callService['redis'].set(`call:state:${data.callId}`, 'ACCEPTED', 1800);
+
+    // 5. ✅ [GHOST HANGUP] Đặt Timer chờ 15s cho việc join
+    const waitTimeout = setTimeout(() => {
+      this.logger.warn(`[GhostHangup] Call ${data.callId} accepted but no peer joined within 15s. Forcing hangup...`);
+      this.handleHangup({ convId: data.convId, toEmail: data.toEmail, callId: data.callId }, client);
+      this.waitForJoinTimeouts.delete(data.callId);
+    }, 15000);
+    this.waitForJoinTimeouts.set(data.callId, waitTimeout);
   }
 
   /**
@@ -229,6 +241,15 @@ export class CallGateway {
     @MessageBody() data: { convId: string; toEmail: string; callId: string },
   ) {
     if (!data?.convId || !data?.toEmail) return;
+
+    // ✅ [GHOST HANGUP] Xóa timer chờ do đối phương đã join thành công
+    const timeout = this.waitForJoinTimeouts.get(data.callId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.waitForJoinTimeouts.delete(data.callId);
+      this.logger.log(`[PeerJoined] Cleared Ghost Hangup timeout for CallId: ${data.callId}`);
+    }
+
     const targetRoom = `user#${data.toEmail.toLowerCase()}`;
     this.server.to(targetRoom).emit('call:peer_joined', { convId: data.convId, callId: data.callId });
   }
@@ -257,6 +278,13 @@ export class CallGateway {
       });
     } else {
       this.server.emit('call:hangup', { convId: data.convId, callId: data.callId });
+    }
+
+    // ✅ [GHOST HANGUP] Xóa timer nếu có
+    const timeout = this.waitForJoinTimeouts.get(data.callId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.waitForJoinTimeouts.delete(data.callId);
     }
 
     // 2. [BACKGROUND] Cleanup & Save history

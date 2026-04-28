@@ -31,7 +31,12 @@ export class CallController {
     if (!body.conversationId || !body.callId) throw new BadRequestException('conversationId and callId are required');
 
     this.logger.log(`[API] Create: convId=${body.conversationId}, callId=${body.callId}, type=${body.type}, user=${userEmail}`);
-    return this.callService.createMeeting(body.conversationId, body.callId, userEmail, body.type || 'video');
+    
+    // 1. Tạo meeting (không có attendee)
+    await this.callService.createMeeting(body.conversationId, body.callId, userEmail, body.type || 'video');
+    
+    // 2. Caller tự join ngay để lấy attendee của mình
+    return this.callService.joinMeeting(body.conversationId, body.callId, userEmail);
   }
 
   /**

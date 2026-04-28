@@ -38,9 +38,11 @@ export interface Conversation {
   id: string; // CONV#<id>
   name?: string;
   avatar?: string;
-  admin?: string; // string representing user email/id
+  admin?: string; // Legacy: mapped to owner
+  owner?: string; // string representing user email/id
+  deputies?: string[]; // array of user emails/ids
   members: string[]; // array of user emails/ids
-  type: "direct" | "group";
+  type: "direct" | "group" | "system";
   lastMessage?: string; // messageId
   lastMessageContent?: string;
   lastMessageSenderId?: string;
@@ -54,9 +56,14 @@ export interface Conversation {
   partner?: string;
   online?: boolean;
   lastReadAt?: number;
+  unreadCount?: number;
   pinnedMessageIds?: string[];
   autoDeleteDays?: 1 | 7 | 30 | null;
   autoDeleteUpdatedAt?: string;
+  settings?: {
+    isMuted?: boolean;
+    isPinned?: boolean;
+  };
 }
 
 export interface Friendship {

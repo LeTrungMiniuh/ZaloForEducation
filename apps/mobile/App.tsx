@@ -14,6 +14,35 @@ import {
 import { NavigationContainer } from '@react-navigation/native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RootNavigator } from './src/navigation';
+import * as Notifications from 'expo-notifications';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+Notifications.setNotificationCategoryAsync('incoming_call', [
+  {
+    identifier: 'ACCEPT',
+    buttonTitle: 'Nghe',
+    options: {
+      opensAppToForeground: true,
+    },
+  },
+  {
+    identifier: 'REJECT',
+    buttonTitle: 'Từ chối',
+    options: {
+      isDestructive: true,
+      opensAppToForeground: false,
+    },
+  },
+]);
 
 import SplashScreen from './src/components/SplashScreen';
 import CallOverlay from './src/components/chat/CallOverlay';
@@ -38,6 +67,21 @@ function MainApp() {
       playThroughEarpieceAndroid: false,
       staysActiveInBackground: true,
     }).catch(err => console.warn('Audio mode set failed', err));
+
+    // Yêu cầu quyền thông báo
+    const requestPushPermissions = async () => {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (finalStatus !== 'granted') {
+        console.log('Failed to get push token for push notification!');
+        return;
+      }
+    };
+    requestPushPermissions();
 
     return () => clearTimeout(timer);
   }, []);

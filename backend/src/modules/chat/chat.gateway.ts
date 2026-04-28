@@ -127,6 +127,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  async emitConversationUpdated(convId: string, updates: any) {
+    const metadata = await this.chatService.getConversationMetadata(convId);
+    if (metadata && Array.isArray(metadata.members)) {
+      for (const member of metadata.members) {
+        const userRoom = `user#${String(member).toLowerCase()}`;
+        this.server.to(userRoom).emit('conversation:updated', { convId, updates });
+      }
+    }
+    
+    // Broadcast to the room for those currently in the chat
+    const room = convId.toLowerCase();
+    this.server.to(room).emit('conversation:updated', { convId, updates });
+    this.logger.log(`[SOCKET] Emitted conversation:updated for ${convId} to all members`);
+  }
+
   @SubscribeMessage("get_platform")
   handleGetPlatform(
     @MessageBody() data: { email: string },
@@ -344,5 +359,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userRoom = `user#${email.toLowerCase()}`;
     this.server.to(userRoom).emit("history_cleared", { convId });
     console.log(`Sent history_cleared for ${convId} to room ${userRoom}`);
+  }
+
+  async emitGroupUpdated(convId: string, payload: any) {
+    const metadata = await this.chatService.getConversationMetadata(convId);
+    if (metadata && Array.isArray(metadata.members)) {
+      for (const member of metadata.members) {
+        const userRoom = `user#${String(member).toLowerCase()}`;
+        this.server.to(userRoom).emit("group_updated", { convId, ...payload });
+      }
+    }
+
+    const room = convId.toLowerCase();
+    this.server.to(room).emit("group_updated", { convId, ...payload });
+    this.logger.log(`[SOCKET] Broadcasted group_updated for ${convId} to all members`);
+  }
+
+  emitGroupDissolved(convId: string, actor: string) {
+    const room = convId.toLowerCase();
+    this.server.to(room).emit("group_dissolved", { convId, actor });
+    this.logger.log(`[SOCKET] Broadcasted group_dissolved for ${convId}`);
   }
 }

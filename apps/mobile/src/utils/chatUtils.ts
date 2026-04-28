@@ -72,6 +72,22 @@ export const getMessagePreview = (message: any): string => {
     return `[Cuộc gọi ${label}]`;
   }
 
+  if (message.type === 'system') {
+     try {
+       const parsed = JSON.parse(contentStr);
+       if (parsed.action) {
+          switch (parsed.action) {
+             case 'member_added': return '[Thêm thành viên]';
+             case 'member_removed': return '[Xóa thành viên]';
+             case 'member_left': return '[Rời nhóm]';
+             case 'role_updated': return '[Cập nhật vai trò]';
+             case 'info_updated': return '[Cập nhật thông tin]';
+             case 'group_created': return '[Tạo nhóm]';
+          }
+       }
+     } catch (e) {}
+  }
+
   if (message.type === "contact_card") return "[Danh thiếp]";
 
   // Check known placeholders first

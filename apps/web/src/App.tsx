@@ -119,7 +119,7 @@ const AppContent: React.FC = () => {
       <ChimeSessionManager />
       <IncomingCallModal />
       <CallOverlay />
-      <audio id="chime-audio" autoPlay className="hidden" />
+      <audio id="chime-audio" autoPlay style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
     </>
   );
 };

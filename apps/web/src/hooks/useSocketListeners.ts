@@ -3,7 +3,9 @@ import { useAuth } from '../context/AuthContext';
 import { useChatStore, type Message } from '../store/chatStore';
 import { useCallStore } from '../store/callStore';
 import { leaveCurrentSession, toggleCamera as toggleCameraChime } from './useChime';
-import { getMessagePreview, isConversationMutedNow } from '../utils/chatUtils';
+import { getMessagePreview, isConversationMutedNow, getDisplayName } from '../utils/chatUtils';
+import { pushSecurityAlert } from '../utils/securityAlerts';
+import Swal from 'sweetalert2';
 
 type PresenceStatus = 'online' | 'offline';
 
@@ -48,6 +50,7 @@ type CallEventData = {
 export const useSocketListeners = () => {
   const { socket, user } = useAuth();
   const notifiedMessageIdsRef = useRef<Set<string>>(new Set());
+  const activeCallNotificationRef = useRef<Notification | null>(null);
 
   // Chat Store Selectors
   const addMessage = useChatStore((state) => state.addMessage);
@@ -93,7 +96,9 @@ export const useSocketListeners = () => {
 
     notifiedMessageIdsRef.current.add(msg.id);
 
-    const senderName = String(msg.senderName || msg.senderId || 'Người dùng');
+    const userProfiles = useChatStore.getState().userProfiles;
+    const senderName = getDisplayName(msg.senderId, user, userProfiles);
+    
     const preview = getMessagePreview(msg);
     const title = `Tin nhắn từ ${senderName}`;
     const options: any = {
@@ -226,10 +231,56 @@ export const useSocketListeners = () => {
       );
     };
 
-    const handleGroupUpdate = (data: { convId: string; updates: any }) => {
+    const handleGroupUpdate = (data: { convId: string; members?: string[]; addedMembers?: string[]; removedMember?: string[]; roleUpdated?: any; infoUpdated?: any; actor: string }) => {
+      console.log('[SOCKET] group_updated received:', data);
       setConversations((prev) =>
-        prev.map((c) => (c.id === data.convId ? { ...c, ...data.updates } : c))
+        prev.map((c) => {
+          if (c.id !== data.convId) return c;
+          
+          let next = { ...c };
+          if (data.members) next.members = data.members;
+          if (data.infoUpdated) {
+            if (data.infoUpdated.name) next.name = data.infoUpdated.name;
+            if (data.infoUpdated.avatar) next.avatar = data.infoUpdated.avatar;
+          }
+          if (data.roleUpdated) {
+             if (data.roleUpdated.role === 'owner') {
+                next.owner = data.roleUpdated.email;
+                next.admin = data.roleUpdated.email; // sync legacy
+             }
+             if (data.roleUpdated.role === 'deputy') {
+                next.deputies = Array.from(new Set([...(next.deputies || []), data.roleUpdated.email]));
+             }
+             if (data.roleUpdated.role === 'member') {
+                next.deputies = (next.deputies || []).filter(d => d !== data.roleUpdated.email);
+             }
+          }
+          return next;
+        })
       );
+    };
+
+    const handleConversationUpdated = (data: { convId: string; updates: any }) => {
+      console.log('[SOCKET] conversation:updated received:', data);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === data.convId ? { ...c, ...data.updates } : c
+        )
+      );
+    };
+
+    const handleGroupDissolved = (data: { convId: string; actor: string }) => {
+      console.log('[SOCKET] group_dissolved received:', data);
+      setConversations((prev) => prev.filter(c => c.id !== data.convId));
+      if (activeConvId === data.convId) {
+        useChatStore.getState().setActiveConversation(null);
+        Swal.fire({
+          title: 'Nhóm đã giải tán',
+          text: 'Chủ nhóm đã giải tán cuộc trò chuyện này.',
+          icon: 'info',
+          timer: 3000
+        });
+      }
     };
 
     const handleParticipantRead = (data: { convId: string; email: string; timestamp: number }) => {
@@ -245,6 +296,11 @@ export const useSocketListeners = () => {
 
         setMessages(updatedMessages, state.nextCursor);
       }
+    };
+
+    const handleSecurityAlert = (data: any) => {
+      console.log('[SOCKET] security_alert received:', data);
+      pushSecurityAlert(data);
     };
 
     // ── Call Events ──────────────────────────────────────────────────────────
@@ -279,9 +335,45 @@ export const useSocketListeners = () => {
         data.engine,
         data.offer
       );
+
+      // ── Desktop Notification for Call ──
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        const shouldNotify = document.visibilityState !== 'visible' || activeConvId !== data.convId;
+        if (shouldNotify) {
+          const userProfiles = useChatStore.getState().userProfiles;
+          const callerName = getDisplayName(data.fromEmail, user, userProfiles);
+          const title = `Cuộc gọi ${data.callType === 'video' ? 'video' : 'thoại'} đến`;
+          const options: any = {
+            body: `${callerName} đang gọi cho bạn...`,
+            icon: (data.callerProfile || data.fromProfile)?.avatarUrl || '/logo_blue.png',
+            badge: '/logo_blue.png',
+            tag: `call-${data.callId}`,
+            requireInteraction: true, // Giữ thông báo trên màn hình cho đến khi user tương tác
+          };
+
+          try {
+            const n = new Notification(title, options);
+            activeCallNotificationRef.current = n;
+            n.onclick = () => {
+              window.focus();
+              n.close();
+              activeCallNotificationRef.current = null;
+            };
+            n.onclose = () => {
+              activeCallNotificationRef.current = null;
+            };
+          } catch (err) {
+            console.warn('[notify] Failed to show call notification', err);
+          }
+        }
+      }
     };
 
     const handleCallAccept = (data: CallEventData) => {
+      if (activeCallNotificationRef.current) {
+        activeCallNotificationRef.current.close();
+        activeCallNotificationRef.current = null;
+      }
       const { activeCallId, acceptCall, meetingData } = useCallStore.getState();
       if (data.callId === activeCallId) {
         console.log('[Socket] call:accept — Peer accepted. Starting media.');
@@ -293,6 +385,10 @@ export const useSocketListeners = () => {
     };
 
     const handleCallDismiss = (data: CallEventData) => {
+      if (activeCallNotificationRef.current) {
+        activeCallNotificationRef.current.close();
+        activeCallNotificationRef.current = null;
+      }
       const { activeCallId, resetCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
         if (callState === 'CONNECTED' || callState === 'JOINING') {
@@ -305,6 +401,10 @@ export const useSocketListeners = () => {
     };
 
     const handleCallHandledElsewhere = (data: CallEventData) => {
+      if (activeCallNotificationRef.current) {
+        activeCallNotificationRef.current.close();
+        activeCallNotificationRef.current = null;
+      }
       const { activeCallId, resetCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
         if (callState === 'CONNECTED' || callState === 'JOINING') {
@@ -317,6 +417,10 @@ export const useSocketListeners = () => {
     };
 
     const handleCallHangup = async (data: any) => {
+      if (activeCallNotificationRef.current) {
+        activeCallNotificationRef.current.close();
+        activeCallNotificationRef.current = null;
+      }
       const { activeCallId, hangupCall, conversationId: currentConvId } = useCallStore.getState();
       // Handle both callId based (Chime) and convId based (generic) hangup
       if ((data.callId && data.callId === activeCallId) || (data.convId && data.convId === currentConvId) || (!data.callId && !data.convId)) {
@@ -327,6 +431,10 @@ export const useSocketListeners = () => {
     };
 
     const handleCallReject = async (data: CallEventData) => {
+      if (activeCallNotificationRef.current) {
+        activeCallNotificationRef.current.close();
+        activeCallNotificationRef.current = null;
+      }
       const { activeCallId, rejectCall } = useCallStore.getState();
       if (!data?.callId || data.callId === activeCallId) {
         console.log('[Socket] call:reject — cleaning up');
@@ -336,6 +444,10 @@ export const useSocketListeners = () => {
     };
 
     const handleCallTimeout = (data: CallEventData) => {
+      if (activeCallNotificationRef.current) {
+        activeCallNotificationRef.current.close();
+        activeCallNotificationRef.current = null;
+      }
       const { activeCallId, rejectCall, callState } = useCallStore.getState();
       if (data.callId === activeCallId) {
         if (callState === 'CONNECTED' || callState === 'JOINING') {
@@ -423,8 +535,11 @@ export const useSocketListeners = () => {
     socket.on('message_patched', handleMessagePatched);
     socket.on('pin_update', handlePinUpdate);
     socket.on('PIN_UPDATE', handlePinUpdate);
-    socket.on('group_update', handleGroupUpdate);
+    socket.on('group_updated', handleGroupUpdate);
+    socket.on('conversation:updated', handleConversationUpdated);
+    socket.on('group_dissolved', handleGroupDissolved);
     socket.on('participant_read', handleParticipantRead);
+    socket.on('security_alert', handleSecurityAlert);
 
     socket.on('call:incoming', handleCallIncoming);
     socket.on('call:accept', handleCallAccept);
@@ -450,8 +565,11 @@ export const useSocketListeners = () => {
       socket.off('message_patched', handleMessagePatched);
       socket.off('pin_update', handlePinUpdate);
       socket.off('PIN_UPDATE', handlePinUpdate);
-      socket.off('group_update', handleGroupUpdate);
+      socket.off('group_updated', handleGroupUpdate);
+      socket.off('conversation:updated', handleConversationUpdated);
+      socket.off('group_dissolved', handleGroupDissolved);
       socket.off('participant_read', handleParticipantRead);
+      socket.off('security_alert', handleSecurityAlert);
 
       socket.off('call:incoming', handleCallIncoming);
       socket.off('call:accept', handleCallAccept);

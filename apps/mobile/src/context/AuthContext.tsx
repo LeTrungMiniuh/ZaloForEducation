@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { Platform, View, Text, Image } from 'react-native';
+import { Platform, View, Text, Image, AppState, NativeModules } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Alert from '../utils/Alert';
 import SocketService from '../utils/socket';
@@ -215,6 +216,26 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
 
     SocketService.on('receiveMessage', (data: any) => {
       useChatStore.getState().addMessage(data);
+      if (AppState.currentState !== 'active') {
+        const getProfileName = (email: string) => {
+          if (!email) return 'Người dùng';
+          const profiles = useChatStore.getState().userProfiles;
+          const norm = String(email).replace(/^USER#/, "").trim().toLowerCase();
+          const p = profiles[norm] || profiles[email];
+          return p?.nickname || p?.fullName || p?.fullname || norm.split('@')[0];
+        };
+        const senderName = getProfileName(data.senderId);
+        const content = data.content || 'Đã gửi một tin nhắn';
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: `Tin nhắn từ ${senderName}`,
+            body: content,
+            sound: true,
+            data: { convId: data.conversationId || data.convId },
+          },
+          trigger: null,
+        });
+      }
     });
 
     SocketService.on('message_patched', (data: any) => {
@@ -243,6 +264,15 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       }
     });
 
+    SocketService.on('conversation:updated', (data: any) => {
+      const { convId, updates } = data;
+      if (convId && updates) {
+        useChatStore.getState().setConversations((prev: any[]) => 
+          prev.map((c: any) => c.id === convId ? { ...c, ...updates } : c)
+        );
+      }
+    });
+
     SocketService.on('notification:new', (data: any) => {
       useChatStore.getState().addNotification(data);
     });
@@ -251,6 +281,10 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       const { hangupCall, activeCallId } = useCallStore.getState();
       console.log('[SOCKET] CALL_ENDED received:', data);
       if (SocketService.socket && activeCallId === data.callId) {
+        if (Platform.OS === 'android' && NativeModules.ChimeModule?.clearWakeUpScreen) {
+          NativeModules.ChimeModule.clearWakeUpScreen();
+        }
+        Notifications.dismissAllNotificationsAsync();
         hangupCall();
         if (chimeRef.current) {
           chimeRef.current.cleanup();
@@ -273,6 +307,36 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
         return;
       }
       receiveIncomingCall(data.callerProfile, data.callType, data.convId, data.callId);
+
+      if (AppState.currentState !== 'active') {
+        if (Platform.OS === 'android' && NativeModules.ChimeModule?.wakeUpScreen) {
+          NativeModules.ChimeModule.wakeUpScreen();
+        }
+        
+        const getProfileName = (email: string) => {
+          if (!email) return 'Người dùng';
+          const profiles = useChatStore.getState().userProfiles;
+          const norm = String(email).replace(/^USER#/, "").trim().toLowerCase();
+          const p = profiles[norm] || profiles[email];
+          return p?.nickname || p?.fullName || p?.fullname || norm.split('@')[0];
+        };
+        const callerName = data.callerProfile?.fullName || getProfileName(data.fromEmail);
+
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: `Cuộc gọi ${data.callType === 'video' ? 'video' : 'thoại'} đến`,
+            body: `${callerName} đang gọi cho bạn...`,
+            sound: true,
+            data: { callId: data.callId, convId: data.convId },
+            categoryIdentifier: 'incoming_call',
+            autoDismiss: false,
+            sticky: true,
+            vibrate: [0, 500, 1000, 500, 1000, 500],
+          },
+          trigger: null,
+        });
+      }
+
       if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       callTimeoutRef.current = setTimeout(() => {
         const state = useCallStore.getState();
@@ -289,6 +353,10 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
     SocketService.on('call:dismiss', (data: any) => {
       const state = useCallStore.getState();
       if (state.activeCallId === data.callId) {
+        if (Platform.OS === 'android' && NativeModules.ChimeModule?.clearWakeUpScreen) {
+          NativeModules.ChimeModule.clearWakeUpScreen();
+        }
+        Notifications.dismissAllNotificationsAsync();
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
         chimeRef.current?.cleanup();
@@ -296,20 +364,28 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       }
     });
 
-    SocketService.on('call:accept', (data: any) => {
+    SocketService.on('call:accept', async (data: any) => {
       console.log('[SOCKET] call:accept received:', data);
-      const state = useCallStore.getState();
-      if (state.activeCallId === data.callId) {
-        if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
-        callTimeoutRef.current = null;
-        useCallStore.getState().acceptCall(data.meetingInfo || {});
-      }
+      const store = useCallStore.getState();
+      
+      // Chỉ xử lý nếu Mobile là Caller (isIncoming = false)
+      if (data.callId !== store.activeCallId) return;
+      if (store.isIncoming) return; // Bỏ qua nếu là Callee
+      
+      // Mobile Caller nhận call:accept -> peer đã chấp nhận, Caller bắt đầu media
+      // Dùng attendee đã tạo từ lúc /call/create (không gọi /call/join nữa)
+      console.log('[Socket] call:accept — Peer accepted. Starting media.');
+      store.acceptCall(store.meetingData ? undefined : (data.meetingInfo || {}));
     });
 
     SocketService.on('call:reject', (data: any) => {
       console.log('[SOCKET] call:reject received:', data);
       const state = useCallStore.getState();
       if (state.activeCallId === data.callId) {
+        if (Platform.OS === 'android' && NativeModules.ChimeModule?.clearWakeUpScreen) {
+          NativeModules.ChimeModule.clearWakeUpScreen();
+        }
+        Notifications.dismissAllNotificationsAsync();
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
         chimeRef.current?.cleanup();
@@ -321,6 +397,10 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       console.log('[SOCKET] call:hangup received:', data);
       const state = useCallStore.getState();
       if (state.activeCallId === data.callId) {
+        if (Platform.OS === 'android' && NativeModules.ChimeModule?.clearWakeUpScreen) {
+          NativeModules.ChimeModule.clearWakeUpScreen();
+        }
+        Notifications.dismissAllNotificationsAsync();
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
         chimeRef.current?.cleanup();
@@ -331,6 +411,10 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
     SocketService.on('call:timeout', (data: any) => {
       const state = useCallStore.getState();
       if (state.activeCallId === data.callId) {
+        if (Platform.OS === 'android' && NativeModules.ChimeModule?.clearWakeUpScreen) {
+          NativeModules.ChimeModule.clearWakeUpScreen();
+        }
+        Notifications.dismissAllNotificationsAsync();
         if (state.callState === 'CONNECTED' || state.callState === 'JOINING') return;
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
@@ -342,6 +426,10 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
     SocketService.on('call:handled_elsewhere', (data: any) => {
         const state = useCallStore.getState();
         if (state.activeCallId === data.callId) {
+          if (Platform.OS === 'android' && NativeModules.ChimeModule?.clearWakeUpScreen) {
+            NativeModules.ChimeModule.clearWakeUpScreen();
+          }
+          Notifications.dismissAllNotificationsAsync();
           if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
           callTimeoutRef.current = null;
           useCallStore.getState().resetCall();
@@ -456,9 +544,32 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
 
     const subscription = require('react-native').AppState.addEventListener('change', handleAppStateChange);
 
+    const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
+      // Xóa thông báo ngay khi có tương tác (Nghe, Từ chối, hoặc bấm thẳng vào thông báo)
+      Notifications.dismissAllNotificationsAsync();
+      
+      if (response.actionIdentifier === 'REJECT') {
+        const { callId, convId } = response.notification.request.content.data as any;
+        const state = useCallStore.getState();
+        if (state.activeCallId === callId) {
+          SocketService.socket?.emit('call:reject', {
+            convId,
+            callId,
+            reason: 'BUSY'
+          });
+          useCallStore.getState().rejectCall();
+        }
+      }
+    });
+
     return () => {
       SocketService.off('force_logout');
       SocketService.off('profile_update');
+      SocketService.off('receiveMessage');
+      SocketService.off('message_patched');
+      SocketService.off('PIN_UPDATE');
+      SocketService.off('conversation_marked_read');
+      SocketService.off('conversation:updated');
       SocketService.off('notification:new');
       SocketService.off('security_alert');
       SocketService.off('call:incoming');
@@ -472,6 +583,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       SocketService.off('call:upgrade_accepted');
       SocketService.off('call:upgrade_declined');
       subscription.remove();
+      responseListener.remove();
     };
   }, [setupSocketListeners, handleForceLogout]);
 

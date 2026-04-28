@@ -1,5 +1,5 @@
 import { StateCreator } from 'zustand';
-import { chatGet, apiPost } from '../../utils/api';
+import { chatGet, apiPost, chatPatch, apiDelete, apiPatch } from '../../utils/api';
 import { normalizeConversation } from '../chatHelpers';
 import { ChatStore } from '../chatStore';
 
@@ -15,12 +15,52 @@ export interface ConversationSlice {
   muteConversationFor: (convId: string, duration: '1h' | '4h' | 'until-8am' | 'until-open' | boolean) => void;
   clearConversationMuted: (convId: string) => void;
   startDirectChat: (targetEmail: string) => Promise<string>;
+  addMembers: (convId: string, memberEmails: string[]) => Promise<void>;
+  removeMember: (convId: string, memberEmail: string) => Promise<void>;
+  updateMemberRole: (convId: string, memberEmail: string, role: 'owner' | 'deputy' | 'member') => Promise<void>;
+  updateGroupInfo: (convId: string, updates: { name?: string; avatar?: string }) => Promise<void>;
+  dissolveGroup: (convId: string) => Promise<void>;
 }
 
 export const createConversationSlice: StateCreator<ChatStore, [], [], ConversationSlice> = (set, get) => ({
   conversations: [],
   activeConvId: null,
   mutedConversations: {},
+
+  addMembers: async (convId, memberEmails) => {
+    await apiPost(`/chat/conversations/${encodeURIComponent(convId)}/members`, { members: memberEmails });
+    await get().fetchConversations();
+  },
+
+  removeMember: async (convId, memberEmail) => {
+    await apiDelete(`/chat/conversations/${encodeURIComponent(convId)}/members/${encodeURIComponent(memberEmail)}`);
+    if (memberEmail === get().currentUserEmail) {
+      set((state) => ({
+        conversations: state.conversations.filter(c => c.id !== convId),
+        activeConvId: state.activeConvId === convId ? null : state.activeConvId
+      } as any));
+    } else {
+      await get().fetchConversations();
+    }
+  },
+
+  updateMemberRole: async (convId, memberEmail, role) => {
+    await apiPatch(`/chat/conversations/${encodeURIComponent(convId)}/roles`, { targetEmail: memberEmail, role });
+    await get().fetchConversations();
+  },
+
+  updateGroupInfo: async (convId, updates) => {
+    await chatPatch(`/conversations/${encodeURIComponent(convId)}`, updates);
+    await get().fetchConversations();
+  },
+
+  dissolveGroup: async (convId) => {
+    await apiPost(`/chat/conversations/group/${encodeURIComponent(convId)}/dissolve`, {});
+    set((state) => ({
+      conversations: state.conversations.filter(c => c.id !== convId),
+      activeConvId: state.activeConvId === convId ? null : state.activeConvId
+    } as any));
+  },
 
   startDirectChat: async (targetEmail: string) => {
     const normalizedTarget = targetEmail.trim().toLowerCase();

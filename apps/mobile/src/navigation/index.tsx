@@ -1,4 +1,5 @@
 import React from 'react';
+
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, StyleSheet, Platform } from 'react-native';
@@ -21,6 +22,8 @@ import SearchScreen from '../screens/main/SearchScreen';
 import ChatDetailsScreen from '../screens/main/ChatDetailsScreen';
 import MediaDetailScreen from '../screens/main/MediaDetailScreen';
 import ChatGalleryScreen from '../screens/main/ChatGalleryScreen';
+import CreateGroupComponent from '../screens/main/CreateGroup';
+import SecurityAlertsScreen from '../screens/main/SecurityAlertsScreen';
 
 // Profile Screens
 import ProfileScreen from '../screens/profile/ProfileScreen';
@@ -29,6 +32,7 @@ import StatusPickerScreen from '../screens/profile/StatusPickerScreen';
 import ProfileMoreScreen from '../screens/profile/ProfileMoreScreen';
 import SettingsScreen from '../screens/profile/SettingsScreen';
 import ChangePasswordScreen from '../screens/profile/ChangePasswordScreen';
+
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -47,7 +51,7 @@ function wrapModularScreen(Component: any, extraProps: any = {}) {
 
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   return (
-    <Text 
+    <Text
       style={{
         fontFamily: 'Material Symbols Outlined',
         fontSize: 26,
@@ -62,9 +66,9 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
 
 function TabNavigator({ onLogout }: { onLogout: any }) {
   const insets = useSafeAreaInsets();
-  
+
   return (
-    <Tab.Navigator 
+    <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarActiveTintColor: Colors.primary,
@@ -93,31 +97,31 @@ function TabNavigator({ onLogout }: { onLogout: any }) {
           else if (route.name === 'Contacts') iconName = 'contacts';
           else if (route.name === 'AI') iconName = 'smart_toy';
           else if (route.name === 'ProfileTab') iconName = 'person';
-          
+
           return <TabIcon name={iconName} focused={focused} />;
         },
       })}
     >
-      <Tab.Screen 
-        name="Messages" 
+      <Tab.Screen
+        name="Messages"
         options={{ tabBarLabel: 'Tin nhắn' }}
       >
         {(props) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'messages' }} />}
       </Tab.Screen>
-      <Tab.Screen 
-        name="Contacts" 
+      <Tab.Screen
+        name="Contacts"
         options={{ tabBarLabel: 'Danh bạ' }}
       >
         {(props) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'contacts' }} />}
       </Tab.Screen>
-      <Tab.Screen 
-        name="AI" 
+      <Tab.Screen
+        name="AI"
         options={{ tabBarLabel: 'AI Assistant' }}
       >
         {(props) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'ai' }} />}
       </Tab.Screen>
-      <Tab.Screen 
-        name="ProfileTab" 
+      <Tab.Screen
+        name="ProfileTab"
         options={{ tabBarLabel: 'Cá nhân' }}
       >
         {(props) => <ProfileScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} onLogout={onLogout} params={props.route.params} />}
@@ -144,16 +148,18 @@ export function RootNavigator({ user, onLogout }: { user: any; onLogout: any }) 
           </Stack.Screen>
           <Stack.Screen name="Chat" component={wrapModularScreen(ChatScreen)} />
           <Stack.Screen name="Sessions" component={wrapModularScreen(SessionsScreen)} />
+          <Stack.Screen name="SecurityAlerts" component={wrapModularScreen(SecurityAlertsScreen)} />
           <Stack.Screen name="Notifications" component={wrapModularScreen(NotificationScreen)} />
           <Stack.Screen name="Search" component={wrapModularScreen(SearchScreen)} />
           <Stack.Screen name="Profile" component={wrapModularScreen(ProfileScreen, { onLogout })} />
           <Stack.Screen name="QRScanner" component={wrapModularScreen(QRScannerScreen)} />
           <Stack.Screen name="StatusPicker" component={wrapModularScreen(StatusPickerScreen)} />
           <Stack.Screen name="ProfileMore" component={wrapModularScreen(ProfileMoreScreen)} />
-           <Stack.Screen name="Settings" component={wrapModularScreen(SettingsScreen, { onLogout })} />
+          <Stack.Screen name="Settings" component={wrapModularScreen(SettingsScreen, { onLogout })} />
           <Stack.Screen name="ChangePassword" component={wrapModularScreen(ChangePasswordScreen)} />
           <Stack.Screen name="ChatDetails" component={wrapModularScreen(ChatDetailsScreen)} />
           <Stack.Screen name="ChatGallery" component={wrapModularScreen(ChatGalleryScreen)} />
+          <Stack.Screen name="CreateGroup" component={wrapModularScreen(CreateGroupComponent)} />
           <Stack.Screen name="MediaDetail" component={wrapModularScreen(MediaDetailScreen)} options={{ animation: 'fade' }} />
         </Stack.Group>
       )}

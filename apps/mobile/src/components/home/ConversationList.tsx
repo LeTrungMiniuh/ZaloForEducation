@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator } fr
 import styles from '../../screens/main/style/HomeScreen.styles';
 import { Colors } from '../../constants/Theme';
 import { Conversation } from '../../store/types';
+import { useSecurityAlerts } from '../../hooks/useSecurityAlerts';
 
 interface ConversationListProps {
   conversations: Conversation[];
@@ -34,10 +35,26 @@ export const ConversationList: React.FC<ConversationListProps> = ({
     );
   }
 
+  const { alerts, unreadCount: systemUnreadCount } = useSecurityAlerts();
+  const filteredConversations = [...conversations];
+
+  if (alerts.length > 0) {
+    const systemConv = {
+      id: "CONV#SYSTEM",
+      name: "Cảnh báo bảo mật",
+      type: "system",
+      avatar: { uri: "https://ui-avatars.com/api/?name=!&background=ba1a1a&color=fff&rounded=true&bold=true&font-size=0.6" },
+      lastMessageContent: alerts[0].title,
+      updatedAt: alerts[0].at,
+      unreadCount: systemUnreadCount,
+    };
+    filteredConversations.unshift(systemConv as any);
+  }
+
   return (
     <ScrollView key="conversations-list-scroll" style={styles.scrollContainer}>
       <View style={styles.chatList}>
-        {conversations.map((chat) => {
+        {filteredConversations.map((chat) => {
           const partnerEmail =
             chat.type === "direct"
               ? chat.partner ||
@@ -47,14 +64,18 @@ export const ConversationList: React.FC<ConversationListProps> = ({
               : undefined;
           
           const chatName =
-            chat.type === "direct"
+            (chat as any).type === "system"
+              ? chat.name
+              : chat.type === "direct"
               ? getDisplayName(partnerEmail || '')
               : chat.name || chat.id.slice(0, 6);
           
           const chatAvatar =
-            chat.type === "direct"
+            (chat as any).type === "system"
+              ? (chat as any).avatar
+              : chat.type === "direct"
               ? getDisplayAvatar(partnerEmail)
-              : chat.avatar || getDisplayAvatar();
+              : chat.avatar ? { uri: chat.avatar } : getDisplayAvatar();
           
           const isUnread = (chat.unreadCount || 0) > 0;
           const partnerProfile = partnerEmail ? userProfiles[partnerEmail] : null;
@@ -101,7 +122,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                   ]}
                   numberOfLines={1}
                 >
-                  {getConversationPreview(chat)}
+                  {(chat as any).type === "system" ? (chat as any).lastMessageContent : getConversationPreview(chat)}
                 </Text>
               </View>
             </TouchableOpacity>
