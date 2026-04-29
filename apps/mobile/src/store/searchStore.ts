@@ -260,9 +260,9 @@ export const useSearchStore = create<SearchStore>((set, get) => {
       Keyboard.dismiss();
       setTimeout(() => {
         if (item.type === 'CONTACT') {
-          onNavigate('profile', { userId: item.userId || item.id });
+          onNavigate('Profile', { userId: item.userId || item.id });
         } else if (item.type === 'MESSAGE' || item.type === 'FILE') {
-          onNavigate('chat', {
+          onNavigate('Chat', {
             conversationId: item.conversationId,
             targetMessageId: item.messageId || item.id,
             highlightKeyword: get().lastQuery,

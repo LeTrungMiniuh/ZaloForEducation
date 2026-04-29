@@ -9,13 +9,15 @@ interface MediaViewerModalProps {
   mediaUrl: string | null | undefined;
   onClose: () => void;
   fileName?: string | null;
+  mimeType?: string | null;
 }
 
-const MediaViewerModal = ({ visible, mediaUrl, onClose, fileName }: MediaViewerModalProps) => {
+const MediaViewerModal = ({ visible, mediaUrl, onClose, fileName, mimeType }: MediaViewerModalProps) => {
   if (!mediaUrl) return null;
 
   const handleDownload = () => {
-    saveImageToGallery(mediaUrl, fileName || `image_${Date.now()}.jpg`);
+    const isVid = String(mimeType || "").toLowerCase().startsWith("video/") || /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(String(mediaUrl).toLowerCase());
+    saveImageToGallery(mediaUrl, fileName || (isVid ? `video_${Date.now()}.mp4` : `image_${Date.now()}.jpg`));
   };
 
   return (

@@ -8,6 +8,7 @@ export interface ProfileSlice {
   setCurrentUserEmail: (email: string | null) => void;
   upsertProfiles: (newProfiles: Record<string, any>) => void;
   loadUserProfile: (email: string) => Promise<void>;
+  loadMultipleProfiles: (emails: string[]) => Promise<void>;
 }
 
 export const createProfileSlice: StateCreator<ChatStore, [], [], ProfileSlice> = (set, get) => ({
@@ -57,5 +58,22 @@ export const createProfileSlice: StateCreator<ChatStore, [], [], ProfileSlice> =
     } catch (err) {
       console.warn(`[ChatStore] Load profile failed for ${normalizedEmail}`, err);
     }
+  },
+
+  loadMultipleProfiles: async (emails) => {
+    const uniqueEmails = [...new Set(emails.map(e => e.trim().toLowerCase()))];
+    const { currentUserEmail, userProfiles } = get();
+    
+    const emailsToFetch = uniqueEmails.filter(email => {
+      if (email === currentUserEmail) return false;
+      const existing = userProfiles[email];
+      return !(existing && (existing.fullName || existing.fullname));
+    });
+
+    if (emailsToFetch.length === 0) return;
+
+    // Parallel fetch with limit or just all at once if small
+    // For now, all at once
+    await Promise.allSettled(emailsToFetch.map(email => get().loadUserProfile(email)));
   },
 });

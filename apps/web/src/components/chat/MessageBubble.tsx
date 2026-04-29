@@ -52,6 +52,60 @@ Object.keys(FLUENT_EMOJI_MAP).forEach((key) => {
   FLUENT_EMOJI_MAP[key] = FLUENT_EMOJI_MAP[key].replace(/ /g, "%20");
 });
 
+const WebAudioPlayer: React.FC<{ src: string }> = ({ src }) => {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [duration, setDuration] = useState<number | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.load();
+    }
+  }, [src]);
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) {
+      const d = audioRef.current.duration;
+      if (isFinite(d)) {
+        setDuration(d);
+      }
+    }
+  };
+
+  const formatTime = (secs: number) => {
+    if (!secs || !isFinite(secs)) return '0:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="flex items-center gap-3 p-3 w-[280px] md:w-[340px] max-w-full bg-white/80 dark:bg-surface-container-high/80 border border-primary/20 rounded-2xl shadow-sm hover:shadow-md transition-all group">
+      <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all duration-300 ${error ? 'bg-error/10 text-error' : 'bg-primary/10 text-primary group-hover:bg-primary group-hover:text-white'}`}>
+        {error ? <AlertCircle size={20} /> : <AudioLines size={20} className="animate-pulse-slow" />}
+      </div>
+      <div className="flex-1 flex flex-col gap-1">
+        <div className="flex justify-between items-center">
+          <p className="text-[11px] font-extrabold text-primary/80 uppercase tracking-wider">Tin nhắn thoại</p>
+          <span className="text-[10px] font-bold opacity-60">
+            {duration ? formatTime(duration) : '--:--'}
+          </span>
+        </div>
+        <audio 
+          ref={audioRef}
+          controls 
+          preload="metadata" 
+          className="w-full h-8 brightness-95 contrast-125 focus:outline-none"
+          onLoadedMetadata={handleLoadedMetadata}
+          onError={() => setError(true)}
+          src={src}
+        />
+        {error && <p className="text-[9px] text-error font-bold italic">Không thể phát tệp này</p>}
+      </div>
+    </div>
+  );
+};
+
 const FluentEmoji: React.FC<{
   emoji: string;
   className?: string;
@@ -92,10 +146,58 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   } = useChatStore();
   const [isReactionDockOpen, setIsReactionDockOpen] = useState(false);
   const reactionDockRef = useRef<HTMLDivElement | null>(null);
+  const isVideoMedia = (mediaItem: any) => {
+    const mime = String(
+      mediaItem?.mimeType || mediaItem?.fileType || "",
+    ).toLowerCase();
+    const name = String(
+      mediaItem?.name ||
+        mediaItem?.fileName ||
+        mediaItem?.url ||
+        mediaItem?.dataUrl ||
+        "",
+    ).toLowerCase();
+    return (
+      mime.startsWith("video/") ||
+      /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name)
+    );
+  };
+
+  const isStickerMedia = (mediaItem: any) => {
+    const mime = String(
+      mediaItem?.mimeType || mediaItem?.fileType || "",
+    ).toLowerCase();
+    return mime.includes("sticker") || mediaItem?.isSticker === true;
+  };
+
+  const isAudioFile = (fileItem: any) => {
+    const mime = String(fileItem?.mimeType || fileItem?.fileType || '').toLowerCase();
+    const name = String(fileItem?.name || fileItem?.fileName || '').toLowerCase();
+    return mime.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(name);
+  };
+
   const isMe = message.senderId === user?.email;
   const isRecalled = !!message.recalled;
   const isPinned = !!message.pinned;
   const isHighlighted = highlightedMessageId === message.id;
+
+  const isMediaOnly = (() => {
+    if (!message.content) return true;
+    const placeholders = ['[Hình ảnh]', '[Tin nhắn thoại]', '[Ghi âm]', '[Tệp tin]', '[Ảnh/Video]'];
+    if (placeholders.includes(message.content)) {
+      return (message.media && message.media.length > 0) || (message.files && message.files.some(isAudioFile));
+    }
+    return false;
+  })();
+
+  const isSticker = (() => {
+    if (message.media && message.media.length === 1) {
+      return isStickerMedia(message.media[0]);
+    }
+    return false;
+  })();
+
+  const shouldHideBubble = isMediaOnly || isSticker;
   const hasReactions = !!(message.reactions && Object.keys(message.reactions).length > 0 && !isRecalled);
 
   // Reset reaction dock when conversation/message changes
@@ -147,35 +249,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     };
   }, [isReactionDockOpen]);
 
-  const isVideoMedia = (mediaItem: any) => {
-    const mime = String(
-      mediaItem?.mimeType || mediaItem?.fileType || "",
-    ).toLowerCase();
-    const name = String(
-      mediaItem?.name ||
-        mediaItem?.fileName ||
-        mediaItem?.url ||
-        mediaItem?.dataUrl ||
-        "",
-    ).toLowerCase();
-    return (
-      mime.startsWith("video/") ||
-      /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name)
-    );
-  };
-
-  const isStickerMedia = (mediaItem: any) => {
-    const mime = String(
-      mediaItem?.mimeType || mediaItem?.fileType || "",
-    ).toLowerCase();
-    return mime.includes("sticker") || mediaItem?.isSticker === true;
-  };
-
-  const isAudioFile = (fileItem: any) => {
-    const mime = String(fileItem?.mimeType || fileItem?.fileType || '').toLowerCase();
-    const name = String(fileItem?.name || fileItem?.fileName || '').toLowerCase();
-    return mime.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(name);
-  };
 
   const bubbleClass = isMe 
     ? 'bg-primary/10 text-on-surface rounded-2xl rounded-tr-none' 
@@ -308,7 +381,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
         <div className="relative group/bubble">
           {!isRecalled && !isCallOverlayActive && (
-            <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center gap-1.5 z-[220] ${isMe ? '-left-32 flex-row-reverse animate-in slide-in-from-right-4' : '-right-32 animate-in slide-in-from-left-4'}`}>
+            <div className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center gap-1.5 z-[30] ${isMe ? '-left-32 flex-row-reverse animate-in slide-in-from-right-4' : '-right-32 animate-in slide-in-from-left-4'}`}>
                <button 
                  onClick={(e) => {
                    const rect = e.currentTarget.getBoundingClientRect();
@@ -339,7 +412,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           )}
 
           <div
-            className={`p-3 rounded-2xl shadow-sm border ${bubbleClass} ${isHighlighted ? "message-highlighted" : isMe ? "border-primary/20" : "border-outline-variant/20"} relative transition-all duration-500`}
+            className={`rounded-2xl relative transition-all duration-500 ${
+              shouldHideBubble 
+                ? "bg-transparent p-0 border-none shadow-none" 
+                : `p-3 shadow-sm border ${bubbleClass} ${isMe ? "border-primary/20" : "border-outline-variant/20"}`
+            } ${isHighlighted ? "message-highlighted" : ""}`}
           >
             {message.replyTo && (
               <div className="mb-2 rounded-xl bg-black/5 p-2.5 text-[12px] border-l-4 border-primary/50 flex items-center gap-2">
@@ -354,38 +431,45 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
               </div>
             )}
 
-            <p
-              className={`text-[15px] leading-relaxed whitespace-pre-wrap ${isRecalled ? "italic opacity-50 font-medium" : "text-on-surface"}`}
-            >
-              {isRecalled ? "Tin nhắn đã được thu hồi" : message.content}
-            </p>
+            {message.content && !isMediaOnly && (
+              <p
+                className={`text-[15px] leading-relaxed whitespace-pre-wrap ${isRecalled ? "italic opacity-50 font-medium" : "text-on-surface"}`}
+              >
+                {isRecalled ? "Tin nhắn đã được thu hồi" : message.content}
+              </p>
+            )}
 
-             {!isRecalled && message.contactCard && (
-               <div className="mt-2 p-3 rounded-2xl border border-primary/20 bg-white/70 dark:bg-surface-container-high/70 max-w-[320px]">
-                 <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary/80 mb-2">Danh thiếp liên hệ</p>
-                 <div className="flex items-center gap-3">
-                   <img
-                     src={message.contactCard.avatarUrl || getDisplayAvatar(message.contactCard.email, user, userProfiles)}
-                     alt=""
-                     className="w-11 h-11 rounded-full object-cover ring-1 ring-outline-variant/20"
-                   />
-                   <div className="min-w-0 flex-1">
-                     <p className="text-[14px] font-extrabold text-on-surface truncate">{message.contactCard.fullName || message.contactCard.email}</p>
-                     <p className="text-[12px] text-on-surface-variant truncate">{message.contactCard.email}</p>
-                     {message.contactCard.phone && <p className="text-[11px] text-on-surface-variant/80 truncate">{message.contactCard.phone}</p>}
-                   </div>
-                 </div>
-                 {message.contactCard.email && message.contactCard.email !== user?.email && (
-                   <button
-                     type="button"
-                     className="mt-3 px-3 py-1.5 rounded-full bg-primary text-white text-[12px] font-bold hover:opacity-90 active:scale-[0.98]"
-                     onClick={() => startDirectChat(message.contactCard.email)}
-                   >
-                     Nhắn tin
-                   </button>
-                 )}
-               </div>
-             )}
+              {!isRecalled && message.contactCard && (
+                <div 
+                  className="mt-2 p-3 rounded-2xl border border-primary/20 bg-white/70 dark:bg-surface-container-high/70 max-w-[320px] cursor-pointer hover:bg-white dark:hover:bg-surface-container transition-all"
+                  onClick={() => navigate(`/profile?email=${encodeURIComponent(message.contactCard.email)}`)}
+                >
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary/80 mb-2">Danh thiếp liên hệ</p>
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={message.contactCard.avatarUrl || getDisplayAvatar(message.contactCard.email, user, userProfiles)}
+                      alt=""
+                      className="w-11 h-11 rounded-full object-cover ring-1 ring-outline-variant/20"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[14px] font-extrabold text-on-surface truncate">{message.contactCard.fullName || message.contactCard.email}</p>
+                      <p className="text-[12px] text-on-surface-variant truncate">{message.contactCard.email}</p>
+                      {message.contactCard.phone && <p className="text-[11px] text-on-surface-variant/80 truncate">{message.contactCard.phone}</p>}
+                    </div>
+                  </div>
+                  {message.contactCard.email && message.contactCard.email !== user?.email && (
+                    <div className="flex gap-2 mt-3" onClick={e => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="flex-1 py-1.5 rounded-full bg-primary text-white text-[12px] font-bold hover:opacity-90 active:scale-[0.98] transition-all"
+                        onClick={() => startDirectChat(message.contactCard.email)}
+                      >
+                        Nhắn tin
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
              {!isRecalled && message.location && (
                <div className="mt-2 p-3 rounded-2xl border border-sky-200 bg-sky-50/70 dark:bg-sky-900/20 max-w-[340px]">
@@ -479,20 +563,63 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                   
                   {(message.files || []).map((f: any, i: number) => {
                     const file = normalizeAttachment(f);
+                    
+                    if (file.mimeType === 'application/location') {
+                      try {
+                        const loc = JSON.parse(file.dataUrl || "{}");
+                        return (
+                          <div key={i} className="mt-2 p-3 rounded-2xl border border-sky-200 bg-sky-50/70 dark:bg-sky-900/20 max-w-[340px]">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-sky-700 mb-2">Vị trí chia sẻ</p>
+                            <p className="text-[13px] font-semibold text-on-surface">{loc.label || 'Vị trí hiện tại'}</p>
+                            <p className="text-[11px] text-on-surface-variant mt-0.5">{Number(loc.latitude).toFixed(5)}, {Number(loc.longitude).toFixed(5)}</p>
+                            <a
+                              href={`https://www.google.com/maps?q=${loc.latitude},${loc.longitude}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex mt-3 px-3 py-1.5 rounded-full bg-sky-600 text-white text-[12px] font-bold hover:opacity-90"
+                            >
+                              Mở bản đồ
+                            </a>
+                          </div>
+                        );
+                      } catch (e) { return null; }
+                    }
+
+                    if (file.mimeType === 'application/contact') {
+                      try {
+                        const contact = JSON.parse(file.dataUrl || "{}");
+                        return (
+                          <div key={i} className="mt-2 p-3 rounded-2xl border border-primary/20 bg-white/70 dark:bg-surface-container-high/70 max-w-[320px]">
+                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary/80 mb-2">Danh thiếp liên hệ</p>
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={contact.avatarUrl || getDisplayAvatar(contact.email, user, userProfiles)}
+                                alt=""
+                                className="w-11 h-11 rounded-full object-cover ring-1 ring-outline-variant/20"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[14px] font-extrabold text-on-surface truncate">{contact.fullName || contact.email}</p>
+                                <p className="text-[12px] text-on-surface-variant truncate">{contact.email}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="mt-3 px-3 py-1.5 rounded-full bg-primary text-white text-[12px] font-bold hover:opacity-90 active:scale-[0.98]"
+                              onClick={() => startDirectChat(contact.email)}
+                            >
+                              Nhắn tin
+                            </button>
+                          </div>
+                        );
+                      } catch (e) { return null; }
+                    }
 
                     if (isAudioFile(f)) {
                       return (
-                        <div
-                          key={i}
-                          className="flex items-center gap-2 p-2.5 w-[270px] md:w-[320px] max-w-full bg-white/70 dark:bg-surface-container-high/70 border border-outline-variant/15 rounded-xl"
-                        >
-                          <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                            <AudioLines size={18} />
-                          </div>
-                          <audio controls preload="metadata" className="flex-1 h-9">
-                            <source src={file.dataUrl} type={file.mimeType || 'audio/webm'} />
-                          </audio>
-                        </div>
+                        <WebAudioPlayer 
+                          key={i} 
+                          src={file.dataUrl} 
+                        />
                       );
                     }
                     
@@ -550,7 +677,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           {!isRecalled && !isCallOverlayActive && (
             <div
               ref={reactionDockRef}
-              className={`absolute ${hasReactions ? '-bottom-10' : '-bottom-4'} ${isMe ? 'left-2' : 'right-2'} z-[220]`}
+              className={`absolute ${hasReactions ? '-bottom-10' : '-bottom-4'} ${isMe ? 'left-2' : 'right-2'} z-[30]`}
               onMouseEnter={() => setIsReactionDockOpen(true)}
               onMouseLeave={() => setIsReactionDockOpen(false)}
             >
@@ -563,7 +690,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
               </button>
 
               <div
-                className={`absolute bottom-full mb-2 transition-all duration-200 bg-white/95 dark:bg-surface-container/95 backdrop-blur-md border border-outline-variant/20 dark:border-outline-variant/40 rounded-full flex items-center p-1.5 gap-1 shadow-[0_8px_30px_rgba(0,0,0,0.15)] z-[230] ${isMe ? 'right-0' : 'left-0'} ${isReactionDockOpen ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'}`}
+                className={`absolute bottom-full mb-2 transition-all duration-200 bg-white/95 dark:bg-surface-container/95 backdrop-blur-md border border-outline-variant/20 dark:border-outline-variant/40 rounded-full flex items-center p-1.5 gap-1 shadow-[0_8px_30px_rgba(0,0,0,0.15)] z-[40] ${isMe ? 'right-0' : 'left-0'} ${isReactionDockOpen ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'}`}
               >
                 {[
                   { e: '👍', label: 'Thích' },

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { Platform, View, Text, Image } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Alert from '../utils/Alert';
 import SocketService from '../utils/socket';
@@ -23,6 +24,7 @@ export interface AuthContextType {
   pendingGoogleUser: any;
   loginGoogle: (token: string, pendingData: any, currentDeviceId: string) => Promise<void>;
   completeGoogleProfile: (userData: any, accessToken: string, currentDeviceId: string) => Promise<void>;
+  isDataLoaded: boolean;
   requestLockAccount: (p: string) => Promise<any>;
   confirmLockAccount: (otp: string) => Promise<void>;
   requestDeleteAccount: (p: string) => Promise<any>;
@@ -43,6 +45,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
   const [deviceId, setDeviceId] = useState('');
   const [profileVersion, setProfileVersion] = useState(Date.now());
   const [pendingGoogleUser, setPendingGoogleUser] = useState<any>(null);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const isKickingRef = useRef(false);
   const callTimeoutRef = useRef<any>(null);
@@ -98,6 +101,67 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
   if (typeof global !== 'undefined') {
     (global as any).handleForceLogout = handleForceLogout;
   }
+
+  const preloadAppData = useCallback(async (currentUser: any) => {
+    if (!currentUser) {
+      setIsDataLoaded(true);
+      return;
+    }
+
+    try {
+      console.log('🚀 [PRELOAD] Starting data preload for:', currentUser.email);
+      const chatStore = useChatStore.getState();
+      
+      // 1. Initialize Socket
+      const dId = deviceId || await AsyncStorage.getItem('deviceId') || await getDeviceId();
+      SocketService.connect(currentUser.email, dId);
+      
+      // 2. Fetch Conversations
+      const convs = await chatStore.fetchConversations();
+      console.log(`🚀 [PRELOAD] Fetched ${convs.length} conversations`);
+
+      // 3. Extract member emails to fetch profiles
+      const memberEmails = new Set<string>();
+      convs.forEach(c => {
+        if (Array.isArray(c.members)) {
+          c.members.forEach((m: string) => {
+            if (m.toLowerCase() !== currentUser.email.toLowerCase()) {
+              memberEmails.add(m.toLowerCase());
+            }
+          });
+        }
+      });
+
+      // 4. Fetch missing profiles in batch
+      if (memberEmails.size > 0) {
+        console.log(`🚀 [PRELOAD] Fetching profiles for ${memberEmails.size} members`);
+        await chatStore.loadMultipleProfiles(Array.from(memberEmails));
+      }
+
+      // 5. Prefetch Avatars (Current user + Partners)
+      const avatarsToPrefetch = new Set<string>();
+      if (currentUser.avatarUrl) avatarsToPrefetch.add(currentUser.avatarUrl);
+      
+      const updatedProfiles = useChatStore.getState().userProfiles;
+      Object.values(updatedProfiles).forEach((p: any) => {
+        if (p?.avatarUrl) avatarsToPrefetch.add(p.avatarUrl);
+        if (p?.avatar) avatarsToPrefetch.add(p.avatar);
+      });
+
+      console.log(`🚀 [PRELOAD] Prefetching ${avatarsToPrefetch.size} avatars`);
+      const images = Array.from(avatarsToPrefetch).map(url => {
+        const fullUrl = url.startsWith('http') ? url : `${process.env.EXPO_PUBLIC_API_URL}${url}`;
+        return Image.prefetch(fullUrl).catch(e => console.warn('[PRELOAD] Avatar prefetch failed', url));
+      });
+      await Promise.allSettled(images);
+
+      console.log('✅ [PRELOAD] Data preload complete');
+    } catch (err) {
+      console.error('❌ [PRELOAD] Data preload failed:', err);
+    } finally {
+      setIsDataLoaded(true);
+    }
+  }, []);
 
   const handleForceLogoutRef = useRef(handleForceLogout);
   useEffect(() => {
@@ -227,7 +291,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       if (state.activeCallId === data.callId) {
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
-        chimeRef.current?.cleanup('Socket-call:dismiss');
+        chimeRef.current?.cleanup();
         useCallStore.getState().resetCall();
       }
     });
@@ -248,7 +312,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       if (state.activeCallId === data.callId) {
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
-        chimeRef.current?.cleanup('Socket-call:reject');
+        chimeRef.current?.cleanup();
         useCallStore.getState().rejectCall();
       }
     });
@@ -259,7 +323,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
       if (state.activeCallId === data.callId) {
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
-        chimeRef.current?.cleanup('Socket-call:hangup');
+        chimeRef.current?.cleanup();
         useCallStore.getState().hangupCall();
       }
     });
@@ -270,7 +334,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
         if (state.callState === 'CONNECTED' || state.callState === 'JOINING') return;
         if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
         callTimeoutRef.current = null;
-        chimeRef.current?.cleanup('Socket-call:timeout');
+        chimeRef.current?.cleanup();
         useCallStore.getState().rejectCall();
       }
     });
@@ -347,31 +411,38 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
           setUser(parsedUser);
           setToken(savedToken);
           useChatStore.getState().setCurrentUserEmail(parsedUser.email);
+          await preloadAppData(parsedUser);
 
           const currentDeviceId = savedDeviceId || await getDeviceId();
           SocketService.connect(parsedUser.email, currentDeviceId, savedToken);
-
           apiRequest('/auth/sessions').catch(err => {
             if (err.message === 'SESSION_INVALIDATED') handleForceLogout();
           });
-
           setupSocketListeners(currentDeviceId);
         } else if (savedToken) {
           setToken(savedToken);
           try {
             const res = await apiRequest('/users/profile');
-            if (res.ok && res.profile) {
-              await login(res.profile, savedToken, savedDeviceId || await getDeviceId());
-            } else if (savedPending) {
-              setPendingGoogleUser(JSON.parse(savedPending));
+            if (res.ok && res.data) {
+              const profile = res.data;
+              await login(profile, savedToken, savedDeviceId || await getDeviceId());
+              await preloadAppData(profile);
+            } else {
+              setIsDataLoaded(true);
+              if (savedPending) setPendingGoogleUser(JSON.parse(savedPending));
             }
           } catch (err: any) {
             console.warn('[AUTH] Session recovery failed:', err.message);
+            setIsDataLoaded(true);
             if (savedPending) setPendingGoogleUser(JSON.parse(savedPending));
           }
+        } else {
+          setIsDataLoaded(true);
+          if (savedPending) setPendingGoogleUser(JSON.parse(savedPending));
         }
       } catch (e) {
         console.error('[AUTH_CONTEXT] Error loading session:', e);
+        setIsDataLoaded(true);
       } finally {
         setLoading(false);
       }
@@ -466,7 +537,7 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
     <AuthContext.Provider value={{
       user, token, loading, login, logout, updateUser,
       profileVersion, handleForceLogout, deviceId, checkSessionStatus,
-      pendingGoogleUser, loginGoogle, completeGoogleProfile,
+      pendingGoogleUser, loginGoogle, completeGoogleProfile, isDataLoaded,
       requestLockAccount: async (p: string) => apiRequest('/auth/lock-account/request', { method: 'POST', body: JSON.stringify({ currentPassword: p }) }),
       confirmLockAccount: async (otp: string) => { await apiRequest('/auth/lock-account/confirm', { method: 'POST', body: JSON.stringify({ otp }) }); logout(); },
       requestDeleteAccount: async (p: string) => apiRequest('/auth/delete-account/request', { method: 'POST', body: JSON.stringify({ currentPassword: p }) }),

@@ -28,7 +28,7 @@ import { Colors, Shadows, Typography } from '../../constants/Theme';
 import Alert from '../../utils/Alert';
 import { useAuth } from '../../context/AuthContext';
 import { toDateParts, formatDisplayDate } from '../../utils/date';
-import { apiGet, apiPost, apiPut, apiUpload, chatGet } from '../../utils/api';
+import { apiGet, apiPost, apiPut, apiUpload, chatGet, chatPost } from '../../utils/api';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 const COVER_URL =
@@ -79,6 +79,7 @@ export default function ProfileScreen({ onNavigate, onLogout, goBack, params }: 
   const [saving,  setSaving]    = useState(false);
   const [editing, setEditing]   = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [friendship, setFriendship] = useState<any>(null);
 
   const authHeaders = async () => {
     const token = await AsyncStorage.getItem('token');
@@ -138,6 +139,9 @@ interface ProfileData {
         const apiProfile = normalizeProfile(isMe ? (res.profile || res.data) : res.user || res.data);
         setProfile(apiProfile);
         setDraft(apiProfile);
+        if (!isMe && res.friendship) {
+          setFriendship(res.friendship);
+        }
         
         if (isMe) {
           await persistUser(apiProfile);
@@ -275,6 +279,35 @@ interface ProfileData {
       Alert.alert('Lỗi', error.message || 'Không thể lưu hồ sơ.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Handlers for other users ──────────────────────────────────────────────
+  const handleMessage = () => {
+    if (onNavigate) {
+      onNavigate('Chat', { conversationId: undefined, targetEmail: profile.email });
+    }
+  };
+
+  const handleCall = () => {
+    // Navigate to Chat then start call
+    if (onNavigate) {
+      onNavigate('Chat', { conversationId: undefined, targetEmail: profile.email, startCall: 'audio' });
+    }
+  };
+
+  const handleAddFriend = async () => {
+    try {
+      const res = await chatPost("/friends/request", { targetEmail: profile.email });
+      if (res.ok) {
+        Alert.alert("Thành công", "Đã gửi lời mời kết bạn.");
+        // Optional: Update UI to show 'Pending'
+        setFriendship({ status: 'pending' });
+      } else {
+        throw new Error(res.message || "Không thể gửi lời mời.");
+      }
+    } catch (error: any) {
+      Alert.alert("Lỗi", error.message);
     }
   };
 
@@ -446,14 +479,14 @@ interface ProfileData {
               <View style={styles.sheetHeader}>
                 <TouchableOpacity
                   style={styles.headerIconButton}
-                  onPress={() => goBack ? goBack() : onNavigate('home', {}, 'profile')}
+                  onPress={() => goBack ? goBack() : onNavigate('Main', {}, 'profile')}
                 >
                   <Text style={styles.headerIcon}>arrow_back</Text>
                 </TouchableOpacity>
                 <Text style={styles.sheetTitle}>Thông tin tài khoản</Text>
                 <TouchableOpacity
                   style={styles.headerIconButton}
-                  onPress={() => goBack ? goBack() : onNavigate('home', {}, 'profile')}
+                  onPress={() => goBack ? goBack() : onNavigate('Main', {}, 'profile')}
                 >
                   <Text style={styles.headerIcon}>close</Text>
                 </TouchableOpacity>
@@ -504,6 +537,33 @@ interface ProfileData {
                     </TouchableOpacity>
                   )}
                 </View>
+
+                {!isMe && (
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity style={styles.actionBtnPrimary} onPress={handleMessage}>
+                      <Text style={styles.actionBtnIcon}>chat</Text>
+                      <Text style={styles.actionBtnText}>Nhắn tin</Text>
+                    </TouchableOpacity>
+                    {friendship?.status === 'accepted' ? (
+                      <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleCall}>
+                        <Text style={[styles.actionBtnIcon, styles.actionBtnSecondaryIcon]}>call</Text>
+                        <Text style={[styles.actionBtnText, styles.actionBtnSecondaryText]}>Gọi điện</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity 
+                        style={[styles.actionBtnSecondary, friendship?.status === 'pending' && { opacity: 0.7 }]} 
+                        onPress={friendship?.status === 'pending' ? undefined : handleAddFriend}
+                      >
+                        <Text style={[styles.actionBtnIcon, styles.actionBtnSecondaryIcon]}>
+                          {friendship?.status === 'pending' ? 'hourglass_top' : 'person_add'}
+                        </Text>
+                        <Text style={[styles.actionBtnText, styles.actionBtnSecondaryText]}>
+                          {friendship?.status === 'pending' ? 'Đã gửi yêu cầu' : 'Kết bạn'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
               </View>
 
               {/* Thông tin cá nhân */}
@@ -762,4 +822,50 @@ const styles = StyleSheet.create({
   updateButton:        { paddingHorizontal: 22, paddingVertical: 11, borderRadius: 8, backgroundColor: Colors.primary },
   updateButtonDisabled: { opacity: 0.7 },
   updateText:          { ...Typography.heading, fontSize: 16, color: '#fff' },
+
+  actionRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+    gap: 12,
+  },
+  actionBtnPrimary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 8,
+  },
+  actionBtnSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f0f2f5',
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 8,
+  },
+  actionBtnIcon: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 20,
+    color: '#fff',
+  },
+  actionBtnText: {
+    ...Typography.heading,
+    fontSize: 15,
+    color: '#fff',
+  },
+  actionBtnSecondaryIcon: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 20,
+    color: '#1e2f4d',
+  },
+  actionBtnSecondaryText: {
+    ...Typography.heading,
+    fontSize: 15,
+    color: '#1e2f4d',
+  },
 });

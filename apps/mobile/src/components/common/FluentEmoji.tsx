@@ -17,6 +17,7 @@ const FluentEmoji = ({ emoji, style }: FluentEmojiProps) => {
     <Image
       source={{ uri: url }}
       style={style}
+      resizeMode="contain"
       onError={() => setFailed(true)}
     />
   );

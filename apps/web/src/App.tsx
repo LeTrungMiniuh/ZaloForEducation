@@ -39,7 +39,7 @@ import MainLayout from './components/layout/MainLayout';
 import ChatPage from './pages/chat/ChatPage';
 import ContactPage from './pages/contacts/ContactPage';
 import { NotificationPage, CloudPage } from './pages/notifications/NotificationPage';
-import BotChatPanel from './components/chat/BotChatPanel';
+import BotChatPage from './pages/chat/bot/BotChatPage';
 
 const AppContent: React.FC = () => {
   const { loading } = useAuth();
@@ -102,7 +102,7 @@ const AppContent: React.FC = () => {
             <Route path="/friends" element={<Navigate to="/contacts" />} />
             <Route path="/notifications" element={<NotificationPage />} />
             <Route path="/cloud" element={<CloudPage />} />
-            <Route path="/bot" element={<BotChatPanel />} />
+            <Route path="/bot" element={<BotChatPage />} />
             
             {/* These pages now have the Sidebar too */}
             <Route path="/sessions" element={<SessionsPage />} />

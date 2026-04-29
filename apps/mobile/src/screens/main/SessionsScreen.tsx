@@ -14,9 +14,24 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 import SocketService from '../../utils/socket';
 import { apiRequest } from '../../utils/api';
 
-export default function SessionsScreen({ onNavigate, goBack }) {
-  const [activeSessions, setActiveSessions] = useState([]);
-  const [loginHistory, setLoginHistory] = useState([]);
+interface Session {
+  deviceId: string;
+  deviceName?: string;
+  deviceType?: string;
+  loginAt?: string;
+  lastActiveAt?: string;
+  logoutAt?: string;
+  updatedAt?: string;
+}
+
+interface SessionsScreenProps {
+  onNavigate: (screen: string, params?: any) => void;
+  goBack: () => void;
+}
+
+export default function SessionsScreen({ onNavigate, goBack }: SessionsScreenProps) {
+  const [activeSessions, setActiveSessions] = useState<Session[]>([]);
+  const [loginHistory, setLoginHistory] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState('');
   const [currentDeviceId, setCurrentDeviceId] = useState('');
@@ -58,7 +73,7 @@ export default function SessionsScreen({ onNavigate, goBack }) {
           SocketService.on('sessions_update', onSessionUpdate);
           
           // Lắng nghe cả force_logout để cập nhật UI ngay lập tức nêú cần (Gắt!)
-          SocketService.on('force_logout', (data) => {
+          SocketService.on('force_logout', (data: any) => {
              console.log('[Sessions] Received force_logout event in screen context', data);
           });
         }
@@ -73,9 +88,9 @@ export default function SessionsScreen({ onNavigate, goBack }) {
     };
   }, []);
 
-  const fetchSessions = async (userEmail) => {
+  const fetchSessions = async (userEmail: string) => {
     try {
-      const data = await apiRequest('/auth/sessions');
+      const data = await apiRequest('/auth/sessions') as any;
       
       console.log('[Sessions] Received data:', data);
       
@@ -94,8 +109,8 @@ export default function SessionsScreen({ onNavigate, goBack }) {
           Alert.alert('Lỗi', errorMsg);
         }
       }
-    } catch (error) {
-      if (error.message !== 'SESSION_INVALIDATED') {
+    } catch (error: any) {
+      if (error?.message !== 'SESSION_INVALIDATED') {
         console.error('Fetch sessions error', error);
         Alert.alert('Lỗi', 'Không thể lấy danh sách thiết bị. Vui lòng thử lại sau.');
       }
@@ -104,7 +119,7 @@ export default function SessionsScreen({ onNavigate, goBack }) {
     }
   };
 
-  const handleLogoutTarget = async (targetDeviceId, name) => {
+  const handleLogoutTarget = async (targetDeviceId: string, name?: string) => {
     Alert.alert(
       'Đăng xuất thiết bị?',
       `Bạn có chắc chắn muốn đăng xuất khỏi "${name || targetDeviceId}"?`,
@@ -158,7 +173,7 @@ export default function SessionsScreen({ onNavigate, goBack }) {
               
               await Storage.removeItem('token');
               await Storage.removeItem('user');
-              onNavigate('login');
+              onNavigate('Login');
             } catch (err) {
               Alert.alert('Lỗi', 'Không thể thực hiện');
             }
@@ -174,7 +189,7 @@ export default function SessionsScreen({ onNavigate, goBack }) {
       
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => goBack ? goBack() : onNavigate('home')} style={styles.backBtn}>
+        <TouchableOpacity onPress={() => goBack ? goBack() : onNavigate('Main')} style={styles.backBtn}>
           <Text style={styles.icon}>arrow_back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Thiết bị đăng nhập</Text>
@@ -214,7 +229,7 @@ export default function SessionsScreen({ onNavigate, goBack }) {
                       {isCurrent && <View style={styles.currentBadge}><Text style={styles.currentText}>Thiết bị này</Text></View>}
                     </View>
                     <Text style={styles.lastActive}>
-                      Đăng nhập: {new Date(item.loginAt || item.lastActiveAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
+                      Đăng nhập: {new Date(item.loginAt || item.lastActiveAt || Date.now()).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
                     </Text>
                   </View>
                   {!isCurrent && (
@@ -244,7 +259,7 @@ export default function SessionsScreen({ onNavigate, goBack }) {
                     <View style={styles.sessionInfo}>
                       <Text style={styles.historyName}>{item.deviceName || item.deviceId}</Text>
                       <Text style={styles.historyTime}>
-                        Đã đăng xuất: {new Date(item.logoutAt || item.updatedAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
+                        Đã đăng xuất: {new Date(item.logoutAt || item.updatedAt || Date.now()).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
                       </Text>
                     </View>
                     <View style={styles.historyBadge}>

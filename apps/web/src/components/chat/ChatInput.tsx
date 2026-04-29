@@ -123,6 +123,14 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
       socket.emit('typing', { convId: activeConvId, isTyping: false });
     }
 
+    // Clear input immediately for better UX
+    setText('');
+    setAttachments([]);
+    setSendImageAsHD(false);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
     setIsUploading(true);
     try {
       const uploadedAttachments: Attachment[] = await Promise.all(
@@ -157,11 +165,10 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
       );
 
       await onSendMessage(currentText, uploadedAttachments);
-      setText('');
-      setAttachments([]);
-      setSendImageAsHD(false);
     } catch (err) {
       console.error('Send message failed', err);
+      // Restore text if it failed significantly? 
+      // Actually, optimistic UI already shows it as 'error' status if we implement it.
       Swal.fire('Lỗi', 'Không thể gửi tin nhắn. Vui lòng thử lại.', 'error');
     } finally {
       setIsUploading(false);
@@ -193,7 +200,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
       const res = await chatService.upload(file);
       const data = res.data;
 
-      await onSendMessage('', [{
+      await onSendMessage('[Tin nhắn thoại]', [{
         name: data.name || `voice-${durationSec}s.${extension}`,
         mimeType: data.mimeType || mimeType,
         size: data.size || blob.size,
@@ -414,7 +421,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, onSendContactCard,
 
   const handleStickerSelect = async (sticker: { url: string; name: string }) => {
     setShowStickerPicker(false);
-    await onSendMessage('', [{
+    await onSendMessage('[Sticker]', [{
       name: `sticker-${Date.now()}.png`,
       mimeType: 'image/sticker',
       size: 1024,

@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
-import { Edit3, User, Cake, Phone, MapPin, Mail, Camera, Loader2 } from 'lucide-react';
+import { Edit3, User, Cake, Phone, MapPin, Mail, Camera, Loader2, MessageSquare, UserPlus, PhoneCall, Check } from 'lucide-react';
+import { useChatStore } from '../store/chatStore';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 
@@ -75,8 +77,11 @@ const ProfilePage: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [friendStatus, setFriendStatus] = useState<'none' | 'friend' | 'pending' | 'sent'>('none');
   const [profile, setProfile] = useState<ProfileState>(emptyProfile());
   const [draft, setDraft] = useState<ProfileState>(emptyProfile());
+  const chatStore = useChatStore();
+  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
 
@@ -98,6 +103,13 @@ const ProfilePage: React.FC = () => {
           const nextProfile = normalizeProfile(res.data.user, targetEmail);
           setProfile(nextProfile);
           setDraft(nextProfile);
+          
+          // Set friend status from search response
+          if (res.data.isFriend) setFriendStatus('friend');
+          else if (res.data.isPending) setFriendStatus('pending');
+          else if (res.data.isSent) setFriendStatus('sent');
+          else setFriendStatus('none');
+
           return;
         }
 
@@ -118,9 +130,9 @@ const ProfilePage: React.FC = () => {
     load();
   }, [isViewingOther, targetEmail, user?.email]);
 
-  const displayAvatar = profile.avatarUrl || user?.avatarUrl || user?.urlAvatar || '';
-  const displayBackground = profile.backgroundUrl || user?.backgroundUrl || user?.urlBackground || COVER_IMAGE;
-  const displayName = profile.fullName || user?.fullName || user?.fullname || 'Người dùng';
+  const displayAvatar = String(profile.avatarUrl || user?.avatarUrl || user?.urlAvatar || '');
+  const displayBackground = String(profile.backgroundUrl || user?.backgroundUrl || user?.urlBackground || COVER_IMAGE);
+  const displayName = String(profile.fullName || user?.fullName || user?.fullname || 'Người dùng');
   const displayInitial = displayName.charAt(0).toUpperCase();
   const dateParts = toDateParts(draft.dataOfBirth);
 
@@ -227,6 +239,33 @@ const ProfilePage: React.FC = () => {
       setUploading(false);
       event.target.value = '';
     }
+  };
+
+  const handleSendMessage = async () => {
+    if (!targetEmail) return;
+    await chatStore.startDirectChat(targetEmail);
+    navigate('/chat');
+  };
+
+  const handleAddFriend = async () => {
+    if (!targetEmail) return;
+    try {
+      await api.post('/chat/friends/request', { recipientEmail: targetEmail });
+      setFriendStatus('sent');
+      Swal.fire({
+        icon: 'success',
+        title: 'Đã gửi lời mời',
+        text: `Lời mời kết bạn đã được gửi tới ${displayName}`,
+        timer: 1500,
+        showConfirmButton: false,
+      });
+    } catch (error: any) {
+      Swal.fire('Lỗi', error?.response?.data?.message || 'Không thể gửi lời mời kết bạn.', 'error');
+    }
+  };
+
+  const handleCall = () => {
+    Swal.fire('Thông báo', 'Tính năng gọi điện đang được phát triển trên trình duyệt.', 'info');
   };
 
   return (
@@ -353,7 +392,47 @@ const ProfilePage: React.FC = () => {
                   </div>
                 </div>
 
-                {!isViewingOther && (
+                {isViewingOther ? (
+                  <div className="mt-4 sm:mt-0 pb-2 flex flex-wrap gap-2 justify-center sm:justify-end">
+                    <button 
+                      onClick={handleSendMessage}
+                      className="flex items-center gap-2 text-white bg-primary hover:bg-primary/90 px-5 py-2 rounded-xl transition-all text-sm font-bold shadow-sm"
+                    >
+                      <MessageSquare size={16} /> Nhắn tin
+                    </button>
+                    
+                    <button 
+                      onClick={handleCall}
+                      className="flex items-center gap-2 text-slate-700 bg-slate-100 hover:bg-slate-200 px-5 py-2 rounded-xl transition-all text-sm font-bold shadow-sm border border-slate-200"
+                    >
+                      <PhoneCall size={16} /> Gọi điện
+                    </button>
+
+                    {friendStatus === 'none' && (
+                      <button 
+                        onClick={handleAddFriend}
+                        className="flex items-center gap-2 text-white bg-emerald-600 hover:bg-emerald-700 px-5 py-2 rounded-xl transition-all text-sm font-bold shadow-sm"
+                      >
+                        <UserPlus size={16} /> Kết bạn
+                      </button>
+                    )}
+
+                    {friendStatus === 'sent' && (
+                      <button 
+                        disabled
+                        className="flex items-center gap-2 text-emerald-700 bg-emerald-50 px-5 py-2 rounded-xl text-sm font-bold border border-emerald-100 opacity-80"
+                      >
+                        <Check size={16} /> Đã gửi lời mời
+                      </button>
+                    )}
+
+                    {friendStatus === 'friend' && (
+                      <div className="flex items-center gap-2 text-primary bg-primary/5 px-5 py-2 rounded-xl text-sm font-bold border border-primary/10">
+                        <User size={16} /> Bạn bè
+                      </div>
+                    )}
+                  </div>
+                ) : (
                   <div className="mt-4 sm:mt-0 pb-2">
                     <button onClick={handleStartEdit} className="w-full sm:w-auto flex items-center justify-center gap-2 text-white bg-primary hover:bg-primary/90 px-6 py-2.5 rounded-xl transition-all text-sm font-bold shadow-sm">
                       <Edit3 size={16} /> Chỉnh sửa

@@ -41,6 +41,8 @@ export const normalizeMessage = (message: any): Message | null => {
   const id = String(message.id || message.SK || "").trim();
   const senderId = String(message.senderId || message.sender_id || "").trim() || "unknown";
   const content = typeof message.content === "string" ? message.content : message.content ?? "";
+  const replyTo = message.replyTo || message.reply_to || null;
+  const createdAt = message.createdAt || message.created_at || null;
 
   if (!id || !conversationId) return null;
 
@@ -51,7 +53,8 @@ export const normalizeMessage = (message: any): Message | null => {
     convId: conversationId,
     senderId,
     content,
-    createdAt: message.createdAt || message.created_at || null,
+    replyTo,
+    createdAt,
   };
 };
 
@@ -76,4 +79,11 @@ export const normalizeConversation = (conv: any, currentUserEmail: string | null
     unreadCount: Number(conv.unreadCount || 0),
     updatedAt: conv.updatedAt || conv.created_at || new Date().toISOString(),
   };
+};
+export const normalizeAttachment = (f: any) => {
+  const dataUrl = f.dataUrl || f.url || "";
+  const name = f.name || f.fileName || (dataUrl ? dataUrl.split("/").pop() : "file");
+  const size = f.size || f.fileSize || 0;
+  const mimeType = f.mimeType || f.fileType || "";
+  return { ...f, dataUrl, name, size, mimeType };
 };

@@ -1,7 +1,9 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Pressable, Modal, TextInput, Image } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import styles from '../../screens/main/style/ChatScreen.styles';
 import { REACTION_OPTIONS, FLUENT_EMOJI_MAP } from '../../constants/Emojis';
+import Alert from '../../utils/Alert';
 
 interface ChatModalsProps {
   actionMessage: any;
@@ -11,6 +13,7 @@ interface ChatModalsProps {
   onForward: (message: any) => void;
   onRecall: (message: any) => void;
   onDelete: (message: any) => void;
+  onPin: (message: any) => void;
   userEmail: string;
   showMuteMenuModal: boolean;
   setShowMuteMenuModal: (val: boolean) => void;
@@ -49,6 +52,7 @@ export const ChatModals: React.FC<ChatModalsProps> = ({
   onForward,
   onRecall,
   onDelete,
+  onPin,
   userEmail,
   showMuteMenuModal,
   setShowMuteMenuModal,
@@ -75,20 +79,43 @@ export const ChatModals: React.FC<ChatModalsProps> = ({
               ))}
             </View>
             <View style={styles.actionGrid}>
+              {/* RECALL BUTTON - ONLY FOR SENDER AND NOT RECALLED */}
+              {String(actionMessage.senderId || "").trim().toLowerCase() === String(userEmail || "").trim().toLowerCase() && !actionMessage.recalled && (
+                <TouchableOpacity style={styles.actionItem} onPress={() => { onRecall(actionMessage); setActionMessage(null); }}>
+                  <View style={[styles.actionIconBox, { backgroundColor: '#fff1f2' }]}><Text style={[styles.actionIcon, { color: '#f43f5e' }]}>history</Text></View>
+                  <Text style={styles.actionText}>Thu hồi</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity style={styles.actionItem} onPress={() => { onReply(actionMessage); setActionMessage(null); }}>
                 <View style={[styles.actionIconBox, { backgroundColor: '#e0f2fe' }]}><Text style={[styles.actionIcon, { color: '#0ea5e9' }]}>reply</Text></View>
                 <Text style={styles.actionText}>Trả lời</Text>
               </TouchableOpacity>
+              
               <TouchableOpacity style={styles.actionItem} onPress={() => { onForward(actionMessage); setActionMessage(null); }}>
-                <View style={[styles.actionIconBox, { backgroundColor: '#f0fdf4' }]}><Text style={[styles.actionIcon, { color: '#22c55e' }]}>Chuyển tiếp</Text></View>
+                <View style={[styles.actionIconBox, { backgroundColor: '#f0fdf4' }]}><Text style={[styles.actionIcon, { color: '#22c55e' }]}>redo</Text></View>
                 <Text style={styles.actionText}>Chuyển tiếp</Text>
               </TouchableOpacity>
-              {actionMessage.senderId === userEmail && !actionMessage.recalled && (
-                <TouchableOpacity style={styles.actionItem} onPress={() => { onRecall(actionMessage); setActionMessage(null); }}>
-                  <View style={[styles.actionIconBox, { backgroundColor: '#fef2f2' }]}><Text style={[styles.actionIcon, { color: '#ef4444' }]}>settings_backup_restore</Text></View>
-                  <Text style={styles.actionText}>Thu hồi</Text>
-                </TouchableOpacity>
-              )}
+
+              <TouchableOpacity style={styles.actionItem} onPress={() => { onPin(actionMessage); setActionMessage(null); }}>
+                <View style={[styles.actionIconBox, { backgroundColor: '#fefce8' }]}><Text style={[styles.actionIcon, { color: '#ca8a04' }]}>push_pin</Text></View>
+                <Text style={styles.actionText}>{actionMessage.pinned ? 'Bỏ ghim' : 'Ghim'}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.actionItem} 
+                onPress={async () => { 
+                  if (actionMessage.content) {
+                    await Clipboard.setStringAsync(actionMessage.content);
+                    Alert.alert("Thông báo", "Đã sao chép vào bộ nhớ tạm");
+                    setActionMessage(null);
+                  }
+                }}
+              >
+                <View style={[styles.actionIconBox, { backgroundColor: '#f5f3ff' }]}><Text style={[styles.actionIcon, { color: '#8b5cf6' }]}>content_copy</Text></View>
+                <Text style={styles.actionText}>Sao chép</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity style={styles.actionItem} onPress={() => { onDelete(actionMessage); setActionMessage(null); }}>
                 <View style={[styles.actionIconBox, { backgroundColor: '#fdf2f8' }]}><Text style={[styles.actionIcon, { color: '#db2777' }]}>delete</Text></View>
                 <Text style={styles.actionText}>Xóa</Text>

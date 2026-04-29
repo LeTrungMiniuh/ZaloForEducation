@@ -67,10 +67,32 @@ const ChatPage: React.FC = () => {
   // Utility to scroll to bottom
   const scrollToBottom = (instant = false) => {
     if (!scrollRef.current) return;
-    scrollRef.current.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: instant ? 'auto' : 'smooth'
-    });
+    const el = scrollRef.current;
+    
+    const performScroll = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+
+    if (instant) {
+      performScroll();
+      // Multi-pass scroll to handle async layout changes (images, headers, etc)
+      requestAnimationFrame(performScroll);
+      setTimeout(performScroll, 30);
+      setTimeout(performScroll, 100);
+      setTimeout(performScroll, 300);
+    } else {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  };
+
+  const scrollToMessage = (messageId: string, behavior: ScrollBehavior = 'smooth') => {
+    const el = document.getElementById(`msg-${messageId}`);
+    if (el && scrollRef.current) {
+      el.scrollIntoView({ behavior, block: 'center' });
+    }
   };
 
   // Handle scroll for Infinite Load and Scroll Bottom Button
@@ -135,10 +157,8 @@ const ChatPage: React.FC = () => {
 
   useEffect(() => {
     if (messages.length > 0) {
-      // [SENIOR FIX] Không bao giờ tự cuộn khi đang tải lịch sử (prepending)
       if (isPrependingRef.current) {
         prevMessagesLengthRef.current = messages.length;
-        // Reset prepending flag AFTER the messages have been rendered and scroll adjusted
         const timer = setTimeout(() => { isPrependingRef.current = false; }, 100);
         return () => clearTimeout(timer);
       }
@@ -147,9 +167,22 @@ const ChatPage: React.FC = () => {
       const isNewMessage = messages.length > prevMessagesLengthRef.current;
 
       if (isInitialLoad) {
-        scrollToBottom(true); // Cuộn tức thì khi mới vào phòng
+        const currentConv = conversations.find(c => c.id === activeConvId);
+        const unreadCount = currentConv?.unreadCount || 0;
+        
+        if (unreadCount > 0 && unreadCount <= messages.length) {
+          const firstUnreadIndex = messages.length - unreadCount;
+          const firstUnread = messages[firstUnreadIndex];
+          if (firstUnread) {
+            setTimeout(() => scrollToMessage(firstUnread.id, 'auto'), 50);
+            setTimeout(() => scrollToMessage(firstUnread.id, 'auto'), 150);
+          } else {
+            scrollToBottom(true);
+          }
+        } else {
+          scrollToBottom(true);
+        }
       } else if (isNewMessage) {
-        // [SENIOR FIX] Chỉ tự động cuộn xuống nếu người dùng đang ở gần đáy
         const el = scrollRef.current;
         if (el) {
           const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -162,7 +195,7 @@ const ChatPage: React.FC = () => {
     } else {
       prevMessagesLengthRef.current = 0;
     }
-  }, [messages]);
+  }, [messages, activeConvId]);
 
   // Initial fetch when activeConvId changes
   useEffect(() => {
@@ -234,7 +267,7 @@ const ChatPage: React.FC = () => {
     return () => document.removeEventListener('chat_typing_update', handleTypingEvent);
   }, [activeConvId, user]);
 
-  // [SENIOR] Auto-load profiles for all message senders to ensure names/avatars display
+  // [SENIOR] Auto-load profiles for all message senders
   useEffect(() => {
     if (messages.length > 0) {
       const uniqueSenders = new Set<string>();
@@ -250,6 +283,26 @@ const ChatPage: React.FC = () => {
       uniqueSenders.forEach(email => loadUserProfile(email));
     }
   }, [messages, user?.email, loadUserProfile]);
+
+  // [SENIOR] Handle Dynamic Content Height (Images loading after initial render)
+  useEffect(() => {
+    if (!scrollRef.current) return;
+    const el = scrollRef.current;
+    
+    const resizeObserver = new ResizeObserver(() => {
+      // If we are prepending (loading history), the layout effect handles it
+      if (isPrependingRef.current) return;
+
+      // If user is near bottom, keep them at the bottom as images/content expand
+      const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distanceToBottom < IS_NEAR_BOTTOM_THRESHOLD && distanceToBottom > 0) {
+        scrollToBottom();
+      }
+    });
+
+    resizeObserver.observe(el);
+    return () => resizeObserver.disconnect();
+  }, [activeConvId]);
 
   // Mark as read when messages change or room opens
   useEffect(() => {
@@ -433,9 +486,6 @@ const ChatPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Spacer để đẩy tin nhắn xuống dưới cùng */}
-              <div className="flex-1" />
-
               {/* Nút cuộn xuống dưới cùng (Floating Action Button) */}
               {showScrollBottom && (
                 <button
@@ -454,8 +504,16 @@ const ChatPage: React.FC = () => {
                 </div>
               ) : (
                 <div className="flex flex-col">
-                  {messages.map((m, index) => {
-                    const prevMsg = index > 0 ? messages[index - 1] : undefined;
+                  {[...messages]
+                    .sort((a, b) => {
+                      const t1 = new Date(a.createdAt).getTime();
+                      const t2 = new Date(b.createdAt).getTime();
+                      if (isNaN(t1)) return 1;
+                      if (isNaN(t2)) return -1;
+                      return t1 - t2;
+                    })
+                    .map((m, index, sortedMsgs) => {
+                      const prevMsg = index > 0 ? sortedMsgs[index - 1] : undefined;
                     const { dateHeader, showTimeHeader, formattedTime } =
                       getMessageTimeContext(
                         new Date(m.createdAt),

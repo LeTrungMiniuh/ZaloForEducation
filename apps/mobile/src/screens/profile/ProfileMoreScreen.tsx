@@ -57,12 +57,12 @@ export default function ProfileMoreScreen({ onNavigate }: ProfileMoreProps) {
 
   const handleItemPress = (label: string) => {
     if (label === 'Change your avatar' || label === 'Change your cover' || label === 'Update Bio') {
-      onNavigate('profile');
+      onNavigate('Profile');
       return;
     }
 
     if (label === 'Privacy' || label === 'General settings' || label === 'My account') {
-      onNavigate('settings');
+      onNavigate('Settings');
       return;
     }
 
@@ -74,7 +74,7 @@ export default function ProfileMoreScreen({ onNavigate }: ProfileMoreProps) {
       <StatusBar barStyle="light-content" />
 
       <LinearGradient colors={['#0058bc', '#00b5ff']} style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => onNavigate('profile')}>
+        <TouchableOpacity style={styles.backButton} onPress={() => onNavigate('Profile')}>
           <Text style={styles.headerIcon}>arrow_back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{displayName}</Text>

@@ -141,7 +141,9 @@ export const formatFileSize = (bytes: number): string => {
 };
 
 export const formatDate = (date: string | number | Date): string => {
+  if (!date) return "--:--";
   const d = new Date(date);
+  if (isNaN(d.getTime())) return "--:--";
   return d.toLocaleDateString("vi-VN", {
     hour: "2-digit",
     minute: "2-digit",
@@ -231,6 +233,14 @@ export const getMessagePreview = (message: any): string => {
     return `[Cuộc gọi ${label}]`;
   }
 
+  if (message.type === "contact_card") return "[Danh thiếp]";
+
+  // ★ Check known placeholder content FIRST before inspecting media
+  // This ensures [Sticker] saved in content is always respected
+  const knownPlaceholders = ['[Sticker]', '[Hình ảnh]', '[Ảnh HD]', '[Ảnh/Video]', '[Tin nhắn thoại]', '[Ghi âm]', '[Tệp tin]', '[Tệp đính kèm]', '[Danh thiếp]', '[Vị trí]'];
+  const rawContent = String(message.content || '');
+  if (knownPlaceholders.includes(rawContent)) return rawContent;
+
   if (Array.isArray(message.media) && message.media.length > 0) {
     const hasSticker = message.media.some((item: any) => {
       const mime = String(item?.mimeType || item?.fileType || "").toLowerCase();
@@ -245,8 +255,8 @@ export const getMessagePreview = (message: any): string => {
   }
   if (Array.isArray(message.files) && message.files.length > 0)
     return "[Tệp đính kèm]";
-  return String(message.content || "Tin nhắn");
-};
+  return String(message.content || (message.type === 'media' ? '[Tệp tin]' : 'Tin nhắn'));
+}
 
 export const normalizeAttachment = (item: any) => {
   const name = item?.name || item?.fileName || "Tệp";
