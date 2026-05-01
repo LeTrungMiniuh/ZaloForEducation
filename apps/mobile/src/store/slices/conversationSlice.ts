@@ -1,5 +1,5 @@
 import { StateCreator } from 'zustand';
-import { chatGet, apiPost } from '../../utils/api';
+import { chatGet, apiPost, chatPatch } from '../../utils/api';
 import { normalizeConversation } from '../chatHelpers';
 import { ChatStore } from '../chatStore';
 
@@ -15,6 +15,8 @@ export interface ConversationSlice {
   muteConversationFor: (convId: string, duration: '1h' | '4h' | 'until-8am' | 'until-open' | boolean) => void;
   clearConversationMuted: (convId: string) => void;
   startDirectChat: (targetEmail: string) => Promise<string>;
+  setPinConversation: (convId: string, isPinned: boolean) => Promise<boolean>;
+  setHiddenConversation: (convId: string, isHidden: boolean) => Promise<boolean>;
 }
 
 export const createConversationSlice: StateCreator<ChatStore, [], [], ConversationSlice> = (set, get) => ({
@@ -162,4 +164,56 @@ export const createConversationSlice: StateCreator<ChatStore, [], [], Conversati
       
       return { conversations: nextConversations } as any;
     }),
+
+  setPinConversation: async (convId: string, isPinned: boolean) => {
+    try {
+      // Try to sync with backend
+      const res = await chatPatch(`/conversations/${convId}`, { pinned: isPinned });
+      if (!res?.ok) throw new Error('SYNC_FAILED');
+      
+      // Update local state
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, pinned: isPinned } : c
+        )
+      } as any));
+      
+      return true;
+    } catch (err) {
+      console.error('Failed to sync pin state', err);
+      // Fallback: just update local state
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, pinned: isPinned } : c
+        )
+      } as any));
+      return false;
+    }
+  },
+
+  setHiddenConversation: async (convId: string, isHidden: boolean) => {
+    try {
+      // Try to sync with backend
+      const res = await chatPatch(`/conversations/${convId}`, { hidden: isHidden });
+      if (!res?.ok) throw new Error('SYNC_FAILED');
+      
+      // Update local state
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, hidden: isHidden } : c
+        )
+      } as any));
+      
+      return true;
+    } catch (err) {
+      console.error('Failed to sync hidden state', err);
+      // Fallback: just update local state
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, hidden: isHidden } : c
+        )
+      } as any));
+      return false;
+    }
+  },
 });

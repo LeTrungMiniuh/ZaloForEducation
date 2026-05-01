@@ -315,7 +315,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageSlice> =
         if (state.activeConvId === convId) setCachedMessages(convId, nextMessages);
         return { messages: nextMessages } as any;
       });
-      await chatPost(`/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}/delete`, {});
+      await chatPatch(`/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}`, { action: 'deleteForMe' });
     } catch (err) {}
   },
   

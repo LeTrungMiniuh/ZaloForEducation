@@ -25,6 +25,18 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   getDisplayAvatar,
   getConversationPreview,
 }) => {
+  const visibleConversations = conversations
+    .filter((chat) => !chat.hidden)
+    .sort((left, right) => {
+      const leftPinned = !!left.pinned;
+      const rightPinned = !!right.pinned;
+      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+
+      const leftTime = left.updatedAt ? new Date(left.updatedAt).getTime() : 0;
+      const rightTime = right.updatedAt ? new Date(right.updatedAt).getTime() : 0;
+      return rightTime - leftTime;
+    });
+
   if (loading && conversations.length === 0) {
     return (
       <View style={styles.centeredView}>
@@ -37,7 +49,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   return (
     <ScrollView key="conversations-list-scroll" style={styles.scrollContainer}>
       <View style={styles.chatList}>
-        {conversations.map((chat) => {
+        {visibleConversations.map((chat) => {
           const partnerEmail =
             chat.type === "direct"
               ? chat.partner ||
@@ -48,8 +60,8 @@ export const ConversationList: React.FC<ConversationListProps> = ({
           
           const chatName =
             chat.type === "direct"
-              ? getDisplayName(partnerEmail || '')
-              : chat.name || chat.id.slice(0, 6);
+              ? (chat.alias || getDisplayName(partnerEmail || ''))
+              : (chat.alias || chat.name || chat.id.slice(0, 6));
           
           const chatAvatar =
             chat.type === "direct"
