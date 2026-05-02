@@ -1,11 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { GoogleOAuthProvider } from '@react-oauth/google';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { ThemeProvider } from './context/ThemeContext';
-import IncomingCallModal from './components/call/IncomingCallModal';
-import CallOverlay from './components/call/CallOverlay';
-import ChimeSessionManager from './components/call/ChimeSessionManager';
+import React, { useState, useEffect } from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import { GoogleOAuthProvider } from "@react-oauth/google";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { ThemeProvider } from "./context/ThemeContext";
+import IncomingCallModal from "./components/call/IncomingCallModal";
+import CallOverlay from "./components/call/CallOverlay";
+import ChimeSessionManager from "./components/call/ChimeSessionManager";
 
 import SplashScreen from "./components/SplashScreen";
 import LoginPage from "./pages/LoginPage";
@@ -35,11 +40,15 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 // Import Layouts & Pages
-import MainLayout from './components/layout/MainLayout';
-import ChatPage from './pages/chat/ChatPage';
-import ContactPage from './pages/contacts/ContactPage';
-import { NotificationPage, CloudPage } from './pages/notifications/NotificationPage';
-import BotChatPanel from './components/chat/BotChatPanel';
+import MainLayout from "./components/layout/MainLayout";
+import ChatPage from "./pages/chat/ChatPage";
+import ContactPage from "./pages/contacts/ContactPage";
+import GroupPage from "./pages/group/GroupPage";
+import {
+  NotificationPage,
+  CloudPage,
+} from "./pages/notifications/NotificationPage";
+import BotChatPanel from "./components/chat/BotChatPanel";
 
 const AppContent: React.FC = () => {
   const { loading } = useAuth();
@@ -98,12 +107,13 @@ const AppContent: React.FC = () => {
             }
           >
             <Route path="/chat" element={<ChatPage />} />
+            <Route path="/group" element={<GroupPage />} />
             <Route path="/contacts" element={<ContactsPage />} />
             <Route path="/friends" element={<Navigate to="/contacts" />} />
             <Route path="/notifications" element={<NotificationPage />} />
             <Route path="/cloud" element={<CloudPage />} />
             <Route path="/bot" element={<BotChatPanel />} />
-            
+
             {/* These pages now have the Sidebar too */}
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
@@ -119,7 +129,17 @@ const AppContent: React.FC = () => {
       <ChimeSessionManager />
       <IncomingCallModal />
       <CallOverlay />
-      <audio id="chime-audio" autoPlay style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} />
+      <audio
+        id="chime-audio"
+        autoPlay
+        style={{
+          position: "absolute",
+          width: 0,
+          height: 0,
+          opacity: 0,
+          pointerEvents: "none",
+        }}
+      />
     </>
   );
 };

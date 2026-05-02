@@ -17,14 +17,17 @@ export interface ConversationMuteSchedule {
   endTime: string;
 }
 
-const MUTE_SCHEDULE_STORAGE_PREFIX = 'chat_notification_mute_schedule:';
-export const DEFAULT_GROUP_AVATAR = "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
+const MUTE_SCHEDULE_STORAGE_PREFIX = "chat_notification_mute_schedule:";
+export const DEFAULT_GROUP_AVATAR =
+  "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
 
 const getMuteScheduleStorageKey = (convId: string) =>
   `${MUTE_SCHEDULE_STORAGE_PREFIX}${convId}`;
 
 const timeToMinutes = (time: string) => {
-  const [hours, minutes] = String(time || '00:00').split(':').map(Number);
+  const [hours, minutes] = String(time || "00:00")
+    .split(":")
+    .map(Number);
   if (Number.isNaN(hours) || Number.isNaN(minutes)) return 0;
   return hours * 60 + minutes;
 };
@@ -33,15 +36,15 @@ const minutesToTime = (totalMinutes: number) => {
   const safeMinutes = ((totalMinutes % 1440) + 1440) % 1440;
   const hours = Math.floor(safeMinutes / 60)
     .toString()
-    .padStart(2, '0');
-  const minutes = (safeMinutes % 60).toString().padStart(2, '0');
+    .padStart(2, "0");
+  const minutes = (safeMinutes % 60).toString().padStart(2, "0");
   return `${hours}:${minutes}`;
 };
 
 export const getConversationMuteSchedule = (
   convId: string,
 ): ConversationMuteSchedule | null => {
-  if (typeof window === 'undefined' || !convId) return null;
+  if (typeof window === "undefined" || !convId) return null;
 
   const raw = localStorage.getItem(getMuteScheduleStorageKey(convId));
   if (!raw) return null;
@@ -60,7 +63,7 @@ export const setConversationMuteSchedule = (
   convId: string,
   schedule: ConversationMuteSchedule,
 ) => {
-  if (typeof window === 'undefined' || !convId) return;
+  if (typeof window === "undefined" || !convId) return;
 
   localStorage.setItem(
     getMuteScheduleStorageKey(convId),
@@ -69,14 +72,11 @@ export const setConversationMuteSchedule = (
 };
 
 export const clearConversationMuteSchedule = (convId: string) => {
-  if (typeof window === 'undefined' || !convId) return;
+  if (typeof window === "undefined" || !convId) return;
   localStorage.removeItem(getMuteScheduleStorageKey(convId));
 };
 
-export const isConversationMutedNow = (
-  convId: string,
-  now = new Date(),
-) => {
+export const isConversationMutedNow = (convId: string, now = new Date()) => {
   const schedule = getConversationMuteSchedule(convId);
   if (!schedule) return false;
 
@@ -94,7 +94,7 @@ export const isConversationMutedNow = (
 };
 
 export const formatMuteScheduleLabel = (schedule: ConversationMuteSchedule) => {
-  if (!schedule.enabled) return 'Đã tắt';
+  if (!schedule.enabled) return "Đã tắt";
   return `${minutesToTime(timeToMinutes(schedule.startTime))} - ${minutesToTime(
     timeToMinutes(schedule.endTime),
   )}`;
@@ -120,9 +120,8 @@ export const createConversationMuteScheduleUntilMorning = (
 ): ConversationMuteSchedule => {
   const startMinutes = now.getHours() * 60 + now.getMinutes();
   const targetMinutes = targetHour * 60;
-  const endMinutes = startMinutes < targetMinutes
-    ? targetMinutes
-    : targetMinutes + 24 * 60;
+  const endMinutes =
+    startMinutes < targetMinutes ? targetMinutes : targetMinutes + 24 * 60;
 
   return {
     enabled: true,
@@ -193,12 +192,16 @@ export const getDisplayName = (
 ) => {
   if (!email) return "Người dùng";
   const normalized = String(email).trim().toLowerCase();
-  const myEmail = String(currentUser?.email || "").trim().toLowerCase();
+  const myEmail = String(currentUser?.email || "")
+    .trim()
+    .toLowerCase();
   if (normalized === myEmail)
     return currentUser?.fullName || currentUser?.fullname || "Bạn";
   const profile = userProfiles[normalized] || userProfiles[email];
   return (
-    profile?.nickname || profile?.fullName || profile?.fullname ||
+    profile?.nickname ||
+    profile?.fullName ||
+    profile?.fullname ||
     String(email).split("@")[0]
   );
 };
@@ -210,9 +213,15 @@ export const getDisplayAvatar = (
 ) => {
   if (!email) return DEFAULT_GROUP_AVATAR;
   const normalized = String(email).trim().toLowerCase();
-  const myEmail = String(currentUser?.email || "").trim().toLowerCase();
+  const myEmail = String(currentUser?.email || "")
+    .trim()
+    .toLowerCase();
   if (normalized === myEmail) return currentUser?.avatarUrl || "/logo_blue.png";
-  return userProfiles[normalized]?.avatarUrl || userProfiles[email]?.avatarUrl || "/logo_blue.png";
+  return (
+    userProfiles[normalized]?.avatarUrl ||
+    userProfiles[email]?.avatarUrl ||
+    "/logo_blue.png"
+  );
 };
 
 // --- CHAT LOGIC HELPERS ---
@@ -223,11 +232,19 @@ export const getMessagePreview = (message: any): string => {
   // Rich Preview for Calls
   if (message.type === "SYSTEM_CALL" || message.type === "call") {
     const callType = message.callType || message.metadata?.callType || "audio";
-    const callStatus = (message.callStatus || message.metadata?.callStatus || "").toLowerCase();
+    const callStatus = (
+      message.callStatus ||
+      message.metadata?.callStatus ||
+      ""
+    ).toLowerCase();
     const isVideo = callType === "video";
     const label = isVideo ? "Video" : "Thoại";
-    
-    if (callStatus === "missed" || callStatus === "no_answer" || callStatus === "cancelled") {
+
+    if (
+      callStatus === "missed" ||
+      callStatus === "no_answer" ||
+      callStatus === "cancelled"
+    ) {
       return `[Cuộc gọi ${label} nhỡ]`;
     }
     return `[Cuộc gọi ${label}]`;
@@ -237,8 +254,19 @@ export const getMessagePreview = (message: any): string => {
 
   // ★ Check known placeholder content FIRST before inspecting media
   // This ensures [Sticker] saved in content is always respected
-  const knownPlaceholders = ['[Sticker]', '[Hình ảnh]', '[Ảnh HD]', '[Ảnh/Video]', '[Tin nhắn thoại]', '[Ghi âm]', '[Tệp tin]', '[Tệp đính kèm]', '[Danh thiếp]', '[Vị trí]'];
-  const rawContent = String(message.content || '');
+  const knownPlaceholders = [
+    "[Sticker]",
+    "[Hình ảnh]",
+    "[Ảnh HD]",
+    "[Ảnh/Video]",
+    "[Tin nhắn thoại]",
+    "[Ghi âm]",
+    "[Tệp tin]",
+    "[Tệp đính kèm]",
+    "[Danh thiếp]",
+    "[Vị trí]",
+  ];
+  const rawContent = String(message.content || "");
   if (knownPlaceholders.includes(rawContent)) return rawContent;
 
   if (Array.isArray(message.media) && message.media.length > 0) {
@@ -260,12 +288,18 @@ export const getMessagePreview = (message: any): string => {
       const parsed = JSON.parse(message.content);
       if (parsed.action) {
         switch (parsed.action) {
-          case 'member_added': return '[Thêm thành viên]';
-          case 'member_removed': return '[Xóa thành viên]';
-          case 'member_left': return '[Rời nhóm]';
-          case 'role_updated': return '[Cập nhật vai trò]';
-          case 'info_updated': return '[Cập nhật thông tin]';
-          case 'group_created': return '[Tạo nhóm]';
+          case "member_added":
+            return "[Thêm thành viên]";
+          case "member_removed":
+            return "[Xóa thành viên]";
+          case "member_left":
+            return "[Rời nhóm]";
+          case "role_updated":
+            return "[Cập nhật vai trò]";
+          case "info_updated":
+            return "[Cập nhật thông tin]";
+          case "group_created":
+            return "[Tạo nhóm]";
         }
       }
     } catch (e) {
@@ -274,8 +308,141 @@ export const getMessagePreview = (message: any): string => {
     return message.content || "[Hệ thống]";
   }
 
-  return String(message.content || (message.type === 'media' ? '[Tệp tin]' : 'Tin nhắn'));
-}
+  return String(
+    message.content || (message.type === "media" ? "[Tệp tin]" : "Tin nhắn"),
+  );
+};
+
+const formatConversationActorLabel = (
+  email: string | undefined,
+  currentUser: any,
+  userProfiles: Record<string, any>,
+) => {
+  if (!email) return "Người dùng";
+  const normalized = String(email).trim().toLowerCase();
+  const myEmail = String(currentUser?.email || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === myEmail) return "Bạn";
+  return getDisplayName(email, currentUser, userProfiles);
+};
+
+const formatSystemPreview = (
+  rawContent: string,
+  senderId: string | undefined,
+  currentUser: any,
+  userProfiles: Record<string, any>,
+) => {
+  const myEmail = String(currentUser?.email || "")
+    .trim()
+    .toLowerCase();
+
+  const buildTargetLabel = (target?: string) => {
+    if (!target) return "thành viên";
+    const normalizedTarget = String(target).trim().toLowerCase();
+    return normalizedTarget === myEmail
+      ? "bạn"
+      : getDisplayName(target, currentUser, userProfiles);
+  };
+
+  try {
+    const parsed = JSON.parse(rawContent);
+    if (parsed?.action) {
+      const actorEmail =
+        senderId && String(senderId).trim().toLowerCase() !== "system"
+          ? senderId
+          : parsed.actor;
+      const actorLabel = formatConversationActorLabel(
+        actorEmail,
+        currentUser,
+        userProfiles,
+      );
+      switch (parsed.action) {
+        case "group_created":
+          return `${actorLabel} đã tạo nhóm`;
+        case "group_name_updated":
+          return `${actorLabel} đã đổi tên nhóm`;
+        case "member_added":
+          return `${actorLabel} đã thêm ${buildTargetLabel(parsed.target)} vào nhóm`;
+        case "member_removed":
+          return `${actorLabel} đã xóa ${buildTargetLabel(parsed.target)} khỏi nhóm`;
+        case "member_left":
+          return `${actorLabel} left the group`;
+        case "role_updated": {
+          if (parsed.role === "owner") {
+            return `${actorLabel} transferred ownership to ${buildTargetLabel(parsed.target)}`;
+          }
+          if (parsed.role === "deputy") {
+            return `${actorLabel} set CO_ADMIN for ${buildTargetLabel(parsed.target)}`;
+          }
+          return `${actorLabel} updated member role for ${buildTargetLabel(parsed.target)}`;
+        }
+        case "info_updated":
+          return `${actorLabel} đã cập nhật thông tin nhóm`;
+        default:
+          break;
+      }
+    }
+  } catch {
+    // Fall through to legacy label mapping.
+  }
+
+  const actorLabel = formatConversationActorLabel(
+    senderId,
+    currentUser,
+    userProfiles,
+  );
+  const legacy = String(rawContent || "").trim();
+  switch (legacy) {
+    case "[Tạo nhóm]":
+      return `${actorLabel} đã tạo nhóm`;
+    case "[Thêm thành viên]":
+      return `${actorLabel} đã thêm thành viên vào nhóm`;
+    case "[Xóa thành viên]":
+      return `${actorLabel} đã xóa thành viên khỏi nhóm`;
+    case "[Rời nhóm]":
+      return `${actorLabel} đã rời nhóm`;
+    case "[Cập nhật vai trò]":
+      return `${actorLabel} đã cập nhật vai trò thành viên`;
+    case "[Cập nhật thông tin]":
+      return `${actorLabel} đã cập nhật thông tin nhóm`;
+    default:
+      return legacy || "[Hệ thống]";
+  }
+};
+
+export const getConversationPreviewText = (
+  conv: any,
+  currentUser: any,
+  userProfiles: Record<string, any>,
+) => {
+  if (!conv) return "";
+
+  const rawContent = String(conv.lastMessageContent || conv.lastMessage || "");
+  const senderId = conv.lastMessageSenderId || conv.senderId;
+  const messageType = String(conv.lastMessageType || "").toLowerCase();
+
+  if (messageType === "system" || rawContent.trim().startsWith("{")) {
+    return formatSystemPreview(rawContent, senderId, currentUser, userProfiles);
+  }
+
+  const preview = getMessagePreview({
+    type: conv.lastMessageType,
+    content: rawContent,
+    media: conv.lastMessageMedia,
+    files: conv.lastMessageFiles,
+    recalled: conv.recalled,
+  });
+
+  if (!senderId) return preview;
+
+  const senderLabel = formatConversationActorLabel(
+    senderId,
+    currentUser,
+    userProfiles,
+  );
+  return `${senderLabel}: ${preview}`;
+};
 
 export const normalizeAttachment = (item: any) => {
   const name = item?.name || item?.fileName || "Tệp";

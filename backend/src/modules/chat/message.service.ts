@@ -25,7 +25,7 @@ export class MessageService {
     const metadata = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: 'METADATA' },
+        Key: { PK: convId, SK: "METADATA" },
       }),
     );
 
@@ -34,11 +34,14 @@ export class MessageService {
       : [];
 
     const isMember = members.some(
-      (member) => String(member).toLowerCase() === String(userEmail).toLowerCase(),
+      (member) =>
+        String(member).toLowerCase() === String(userEmail).toLowerCase(),
     );
 
     if (!isMember) {
-      throw new BadRequestException('You are not a member of this conversation');
+      throw new BadRequestException(
+        "You are not a member of this conversation",
+      );
     }
 
     return metadata.Item as any;
@@ -57,7 +60,7 @@ export class MessageService {
     replyTo?: any,
     extraFields: Record<string, any> = {},
   ) {
-    if (senderEmail !== 'system') {
+    if (senderEmail !== "system") {
       await this.ensureConversationMember(convId, senderEmail);
     }
 
@@ -73,38 +76,44 @@ export class MessageService {
     let location = (extraFields as any)?.location || null;
 
     if (filteredFiles.length > 0) {
-      filteredFiles = filteredFiles.filter(f => {
-        const fileName = (f.name || '').toLowerCase();
-        const mimeType = (f.mimeType || '').toLowerCase();
+      filteredFiles = filteredFiles.filter((f) => {
+        const fileName = (f.name || "").toLowerCase();
+        const mimeType = (f.mimeType || "").toLowerCase();
 
         // 1. Extract Contact Card data
-        if (fileName === 'contact.json') {
+        if (fileName === "contact.json") {
           try {
             if (!contactCard) {
-              const data = typeof f.dataUrl === 'string' ? JSON.parse(f.dataUrl) : f.dataUrl;
+              const data =
+                typeof f.dataUrl === "string"
+                  ? JSON.parse(f.dataUrl)
+                  : f.dataUrl;
               contactCard = data;
             }
           } catch (e) {
-            console.error('[MessageService] Failed to parse contact.json', e);
+            console.error("[MessageService] Failed to parse contact.json", e);
           }
           return false;
         }
 
         // 2. Extract Location data
-        if (fileName === 'location.json') {
+        if (fileName === "location.json") {
           try {
             if (!location) {
-              const data = typeof f.dataUrl === 'string' ? JSON.parse(f.dataUrl) : f.dataUrl;
+              const data =
+                typeof f.dataUrl === "string"
+                  ? JSON.parse(f.dataUrl)
+                  : f.dataUrl;
               location = data;
             }
           } catch (e) {
-            console.error('[MessageService] Failed to parse location.json', e);
+            console.error("[MessageService] Failed to parse location.json", e);
           }
           return false;
         }
 
         // 3. Extract audio recordings to top-level field and remove from files array
-        if (mimeType.startsWith('audio/')) {
+        if (mimeType.startsWith("audio/")) {
           if (!audioUrl) audioUrl = f.url || f.dataUrl;
           return false;
         }
@@ -184,18 +193,21 @@ export class MessageService {
         Update: {
           TableName: this.db.tableName,
           Key: { PK: convId, SK: "METADATA" },
-          UpdateExpression: "SET lastMessage = :sk, lastMessageContent = :content, lastMessageSenderId = :senderId, lastMessageTimestamp = :ts, updatedAt = :time, listClearedAt = :cleared ADD totalMessages :inc",
+          UpdateExpression:
+            "SET lastMessage = :sk, lastMessageContent = :content, lastMessageSenderId = :senderId, lastMessageTimestamp = :ts, updatedAt = :time, listClearedAt = :cleared ADD totalMessages :inc",
           ExpressionAttributeValues: {
             ":sk": SK,
             ":content": (() => {
-              if (type === 'system') return content;
-              if (type === 'SYSTEM_CALL') {
-                const callType = extraFields?.callType || 'audio';
-                return callType === 'video' ? '[Cuộc gọi video]' : '[Cuộc gọi thoại]';
+              if (type === "system") return content;
+              if (type === "SYSTEM_CALL") {
+                const callType = extraFields?.callType || "audio";
+                return callType === "video"
+                  ? "[Cuộc gọi video]"
+                  : "[Cuộc gọi thoại]";
               }
-              if (type === 'contact_card') return '[Danh thiếp]';
-              if (type === 'location') return '[Vị trí]';
-              if (!content || content.startsWith('MSG#')) {
+              if (type === "contact_card") return "[Danh thiếp]";
+              if (type === "location") return "[Vị trí]";
+              if (!content || content.startsWith("MSG#")) {
                 if (media && media.length > 0) {
                   const hasSticker = media.some((item: any) => {
                     const mime = String(
@@ -222,8 +234,8 @@ export class MessageService {
             ":senderId": senderEmail,
             ":ts": Date.now(),
             ":time": timestamp,
-            ":cleared": {}, 
-            ":inc": 1
+            ":cleared": {},
+            ":inc": 1,
           },
         },
       },
@@ -252,7 +264,7 @@ export class MessageService {
           UpdateExpression: "SET updatedAt = :ts ADD unreadCount :inc",
           ExpressionAttributeValues: {
             ":ts": timestamp,
-            ":inc": 1
+            ":inc": 1,
           },
         },
       });
@@ -494,6 +506,142 @@ export class MessageService {
     throw new BadRequestException("Unsupported patch action");
   }
 
+  async votePoll(
+    convId: string,
+    messageId: string,
+    userEmail: string,
+    optionIndex: number,
+  ) {
+    await this.ensureConversationMember(convId, userEmail);
+
+    if (!Number.isInteger(optionIndex) || optionIndex < 0) {
+      throw new BadRequestException("Invalid option index");
+    }
+
+    const existingRes = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: convId, SK: messageId },
+      }),
+    );
+
+    const existing = existingRes.Item as any;
+    if (!existing) {
+      throw new BadRequestException("Message not found");
+    }
+
+    const poll = existing?.payload?.poll || existing?.poll;
+    if (!poll || !Array.isArray(poll.options) || poll.options.length < 2) {
+      throw new BadRequestException("This message is not a valid poll");
+    }
+
+    if (poll.isClosed) {
+      throw new BadRequestException("Bình chọn đã đóng. Không thể bình chọn.");
+    }
+
+    if (optionIndex >= poll.options.length) {
+      throw new BadRequestException("Selected option is out of range");
+    }
+
+    const votes: Record<string, string> = { ...(poll.votes || {}) };
+    // Allow changing vote - just update the user's vote
+    votes[userEmail] = String(optionIndex);
+    const updatedAt = new Date().toISOString();
+
+    const payload = {
+      ...(existing.payload || {}),
+      poll: {
+        ...poll,
+        allowMultiple: false,
+        votes,
+      },
+    };
+
+    await this.db.docClient.send(
+      new UpdateCommand({
+        TableName: this.db.tableName,
+        Key: { PK: convId, SK: messageId },
+        UpdateExpression: "SET payload = :payload, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":payload": payload,
+          ":updatedAt": updatedAt,
+        },
+      }),
+    );
+
+    return {
+      ...existing,
+      payload,
+      updatedAt,
+    };
+  }
+
+  async closePoll(convId: string, messageId: string, userEmail: string) {
+    await this.ensureConversationMember(convId, userEmail);
+
+    const existingRes = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: convId, SK: messageId },
+      }),
+    );
+
+    const existing = existingRes.Item as any;
+    if (!existing) {
+      throw new BadRequestException("Message not found");
+    }
+
+    const poll = existing?.payload?.poll || existing?.poll;
+    if (!poll) {
+      throw new BadRequestException("This message is not a valid poll");
+    }
+
+    // Check if user is the sender of the message
+    if (
+      String(existing.senderId || "")
+        .trim()
+        .toLowerCase() !==
+      String(userEmail || "")
+        .trim()
+        .toLowerCase()
+    ) {
+      throw new BadRequestException(
+        "Chỉ người tạo bình chọn mới có thể đóng nó.",
+      );
+    }
+
+    if (poll.isClosed) {
+      throw new BadRequestException("Bình chọn đã đóng rồi.");
+    }
+
+    const updatedAt = new Date().toISOString();
+    const payload = {
+      ...(existing.payload || {}),
+      poll: {
+        ...poll,
+        isClosed: true,
+      },
+    };
+
+    await this.db.docClient.send(
+      new UpdateCommand({
+        TableName: this.db.tableName,
+        Key: { PK: convId, SK: messageId },
+        UpdateExpression: "SET payload = :payload, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":payload": payload,
+          ":updatedAt": updatedAt,
+        },
+      }),
+    );
+
+    return {
+      ...existing,
+      payload,
+      updatedAt,
+    };
+  }
+
   /**
    * MARK MESSAGE AS SEEN
    */
@@ -618,7 +766,7 @@ export class MessageService {
 
     return {
       messages: (filteredItems as any[])
-        .map(msg => ({ ...msg, id: msg.id || msg.SK }))
+        .map((msg) => ({ ...msg, id: msg.id || msg.SK }))
         .sort((a, b) => b.id.localeCompare(a.id)), // Force newest-first (descending) by id (which contains SK)
       nextCursor,
     };
@@ -771,26 +919,30 @@ export class MessageService {
     convId: string,
     messageId: string,
     userEmail: string,
-    limit: number = 50
+    limit: number = 50,
   ) {
     await this.ensureConversationMember(convId, userEmail);
 
     // 1. Get user's lastClearedAt timestamp
-    const userMapping = await this.db.docClient.send(new GetCommand({
-      TableName: this.db.tableName,
-      Key: { PK: `USER#${userEmail}`, SK: convId }
-    }));
+    const userMapping = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: `USER#${userEmail}`, SK: convId },
+      }),
+    );
     const lastClearedAt = userMapping.Item?.lastClearedAt || "";
     const msgPrefix = `MSG#${lastClearedAt}`;
 
     // 2. Fetch the target message
-    const targetRes = await this.db.docClient.send(new GetCommand({
-      TableName: this.db.tableName,
-      Key: { PK: convId, SK: messageId }
-    }));
+    const targetRes = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: convId, SK: messageId },
+      }),
+    );
     const targetItem = targetRes.Item as any;
     if (!targetItem || (lastClearedAt && targetItem.SK <= msgPrefix)) {
-      throw new BadRequestException('Target message not found or cleared');
+      throw new BadRequestException("Target message not found or cleared");
     }
 
     // 3. Query messages OLDER than target (for nextCursor)
@@ -814,34 +966,36 @@ export class MessageService {
         ":pk": convId,
         ":targetSk": messageId,
       },
-      ScanIndexForward: true, 
+      ScanIndexForward: true,
       Limit: 2000, // Fetch up to 2000 newer messages (virtually all for most chats)
     };
 
     const [olderRes, newerRes] = await Promise.all([
       this.db.docClient.send(new QueryCommand(olderParams)),
-      this.db.docClient.send(new QueryCommand(newerParams))
+      this.db.docClient.send(new QueryCommand(newerParams)),
     ]);
 
     const olderItems = (olderRes.Items || []) as any[];
     const newerItems = (newerRes.Items || []) as any[];
-    
+
     // Result: [Older (some)] + [Target] + [Newer (all to latest)]
     const combined = [
-      ...olderItems.filter(m => m.SK !== messageId).reverse(),
+      ...olderItems.filter((m) => m.SK !== messageId).reverse(),
       targetItem,
-      ...newerItems
+      ...newerItems,
     ];
 
     let nextCursor = null;
     if (olderRes.LastEvaluatedKey) {
-      nextCursor = Buffer.from(JSON.stringify(olderRes.LastEvaluatedKey)).toString('base64');
+      nextCursor = Buffer.from(
+        JSON.stringify(olderRes.LastEvaluatedKey),
+      ).toString("base64");
     }
 
     return {
       messages: (combined as any[])
-        .filter(msg => !msg.removed?.includes(userEmail))
-        .map(msg => ({ ...msg, id: msg.id || msg.SK })),
+        .filter((msg) => !msg.removed?.includes(userEmail))
+        .map((msg) => ({ ...msg, id: msg.id || msg.SK })),
       nextCursor,
     };
   }

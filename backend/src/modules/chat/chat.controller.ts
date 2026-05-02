@@ -28,7 +28,7 @@ import { FriendshipService } from "./friendship.service";
 import { MessageService } from "./message.service";
 import { NotificationService } from "./notification.service";
 import { BotService } from "../bot/bot.service";
-import { BOT_EMAIL } from '@zalo-edu/shared';
+import { BOT_EMAIL } from "@zalo-edu/shared";
 
 @Controller("chat")
 @UseGuards(JwtAuthGuard, ProfileCompleteGuard)
@@ -47,7 +47,7 @@ export class ChatController {
     private readonly chatGateway: ChatGateway,
     private readonly notificationService: NotificationService,
     private readonly botService: BotService,
-  ) { }
+  ) {}
 
   // --- CONVERSATIONS ---
   @Get("conversations")
@@ -72,7 +72,13 @@ export class ChatController {
 
   @Post("conversations/group")
   async createGroup(
-    @Body() body: { name: string; members?: string[]; memberEmails?: string[]; avatar?: string },
+    @Body()
+    body: {
+      name: string;
+      members?: string[];
+      memberEmails?: string[];
+      avatar?: string;
+    },
     @Req() req: any,
   ) {
     const email = req.user.email;
@@ -81,20 +87,41 @@ export class ChatController {
       email,
       members,
       body.name,
-      body.avatar
+      body.avatar,
     );
 
     // Send system message
-    await this.messageService.sendMessage(
+    const sysMsg = await this.messageService.sendMessage(
       res.id,
-      'system',
+      "system",
       JSON.stringify({
-        action: 'group_created',
+        action: "group_created",
         actor: email,
-        groupName: body.name
+        groupName: body.name,
       }),
-      'system'
+      "system",
     );
+
+    // Broadcast the system message in real-time to the new group's room and each member's personal room
+    try {
+      const normalizedConvId = res.id.toLowerCase();
+      if (this.chatGateway?.server) {
+        this.chatGateway.server
+          .to(normalizedConvId)
+          .emit("receiveMessage", sysMsg);
+        if (Array.isArray(res.members)) {
+          for (const member of res.members) {
+            const userRoom = `user#${String(member).toLowerCase()}`;
+            this.chatGateway.server.to(userRoom).emit("receiveMessage", sysMsg);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(
+        "[CHAT] Failed to broadcast group_created system message",
+        e,
+      );
+    }
 
     return res;
   }
@@ -103,26 +130,26 @@ export class ChatController {
   async updateGroupInfo(
     @Param("id") id: string,
     @Body() body: { name?: string; avatar?: string },
-    @Req() req: any
+    @Req() req: any,
   ) {
     const email = req.user.email;
     const res = await this.chatService.updateGroupInfo(id, email, body);
-    
+
     if (body.name) {
       await this.messageService.sendMessage(
         id,
-        'system',
+        "system",
         JSON.stringify({
-          action: 'group_name_updated',
+          action: "group_name_updated",
           actor: email,
-          newName: body.name
+          newName: body.name,
         }),
-        'system'
+        "system",
       );
     }
 
     this.chatGateway.emitConversationUpdated(id, body);
-    
+
     return res;
   }
 
@@ -130,24 +157,28 @@ export class ChatController {
   async addMembers(
     @Param("id") id: string,
     @Body() body: { members: string[] },
-    @Req() req: any
+    @Req() req: any,
   ) {
     const email = req.user.email;
-    const res = await this.chatService.addMembersToGroup(id, email, body.members);
-    
+    const res = await this.chatService.addMembersToGroup(
+      id,
+      email,
+      body.members,
+    );
+
     for (const target of body.members) {
       await this.messageService.sendMessage(
         id,
-        'system',
+        "system",
         JSON.stringify({
-          action: 'member_added',
+          action: "member_added",
           actor: email,
-          target: target
+          target: target,
         }),
-        'system'
+        "system",
       );
     }
-    
+
     return res;
   }
 
@@ -155,51 +186,60 @@ export class ChatController {
   async removeMember(
     @Param("id") id: string,
     @Param("targetEmail") targetEmail: string,
-    @Req() req: any
+    @Req() req: any,
   ) {
     const email = req.user.email;
-    const res = await this.chatService.removeMemberFromGroup(id, email, targetEmail);
-    
-    const action = email === targetEmail ? 'member_left' : 'member_kicked';
+    const res = await this.chatService.removeMemberFromGroup(
+      id,
+      email,
+      targetEmail,
+    );
+
+    const action = email === targetEmail ? "member_left" : "member_kicked";
     await this.messageService.sendMessage(
       id,
-      'system',
+      "system",
       JSON.stringify({
         action,
         actor: email,
-        target: targetEmail
+        target: targetEmail,
       }),
-      'system'
+      "system",
     );
-    
+
     return res;
   }
 
   @Patch("conversations/:id/roles")
   async updateRole(
     @Param("id") id: string,
-    @Body() body: { targetEmail: string; role: 'deputy' | 'member' | 'owner' },
-    @Req() req: any
+    @Body() body: { targetEmail: string; role: "deputy" | "member" | "owner" },
+    @Req() req: any,
   ) {
     const email = req.user.email;
-    const res = await this.chatService.updateMemberRole(id, email, body.targetEmail, body.role);
-    
-    let action = 'role_updated';
-    if (body.role === 'deputy') action = 'promoted_to_deputy';
-    if (body.role === 'owner') action = 'transferred_owner';
-    if (body.role === 'member') action = 'demoted_to_member';
+    const res = await this.chatService.updateMemberRole(
+      id,
+      email,
+      body.targetEmail,
+      body.role,
+    );
+
+    let action = "role_updated";
+    if (body.role === "deputy") action = "promoted_to_deputy";
+    if (body.role === "owner") action = "transferred_owner";
+    if (body.role === "member") action = "demoted_to_member";
 
     await this.messageService.sendMessage(
       id,
-      'system',
+      "system",
       JSON.stringify({
         action,
         actor: email,
-        target: body.targetEmail
+        target: body.targetEmail,
       }),
-      'system'
+      "system",
     );
-    
+
     return res;
   }
 
@@ -207,7 +247,7 @@ export class ChatController {
   async updateSettings(
     @Param("id") id: string,
     @Body() body: { isMuted?: boolean; isPinned?: boolean },
-    @Req() req: any
+    @Req() req: any,
   ) {
     const email = req.user.email;
     return await this.chatService.updateGroupSettings(id, email, body);
@@ -239,7 +279,12 @@ export class ChatController {
 
     if (targetId) {
       // Use a larger limit for context fetch (100 older)
-      return await this.messageService.getMessagesContext(convId, targetId, email, 100);
+      return await this.messageService.getMessagesContext(
+        convId,
+        targetId,
+        email,
+        100,
+      );
     }
 
     let lastEvaluatedKey = undefined;
@@ -277,7 +322,11 @@ export class ChatController {
     @Req() req: any,
   ) {
     const email = req.user.email;
-    return await this.messageService.getMessagesContext(convId, messageId, email);
+    return await this.messageService.getMessagesContext(
+      convId,
+      messageId,
+      email,
+    );
   }
 
   @Post("conversations/:convId/messages")
@@ -305,6 +354,32 @@ export class ChatController {
         sentAt?: string;
         expiresAt?: string;
       };
+      payload?: {
+        poll?: {
+          topic: string;
+          options: string[];
+          votes?: Record<string, string>;
+          allowMultiple?: boolean;
+        };
+        reminder?: {
+          content: string;
+          time: string;
+          date: string;
+          repeatType: "none" | "daily" | "weekly" | "monthly";
+        };
+      };
+      poll?: {
+        topic: string;
+        options: string[];
+        votes?: Record<string, string>;
+        allowMultiple?: boolean;
+      };
+      reminder?: {
+        content: string;
+        time: string;
+        date: string;
+        repeatType: "none" | "daily" | "weekly" | "monthly";
+      };
     },
     @Req() req: any,
   ) {
@@ -318,8 +393,18 @@ export class ChatController {
       body.files,
       body.replyTo,
       {
+        // Keep backward compatibility while normalizing poll/reminder into payload.
+        ...(!body.payload && (body.poll || body.reminder)
+          ? {
+              payload: {
+                ...(body.poll ? { poll: body.poll } : {}),
+                ...(body.reminder ? { reminder: body.reminder } : {}),
+              },
+            }
+          : {}),
         ...(body.contactCard ? { contactCard: body.contactCard } : {}),
         ...(body.location ? { location: body.location } : {}),
+        ...(body.payload ? { payload: body.payload } : {}),
       },
     );
 
@@ -341,7 +426,9 @@ export class ChatController {
         }
       }
     } else {
-      console.warn(`[SOCKET] Skipping real-time broadcast for ${normalizedConvId} - Gateway server not initialized`);
+      console.warn(
+        `[SOCKET] Skipping real-time broadcast for ${normalizedConvId} - Gateway server not initialized`,
+      );
     }
 
     // 3. SEND PUSH NOTIFICATION (FRAMEWORK READY)
@@ -360,24 +447,74 @@ export class ChatController {
         body.media.some((item: any) => item?.isHD === true);
 
       this.notificationService.broadcastNotification(recipients, {
-        title: convMetadata.name || 'Tin nhắn mới',
-        body: body.type === 'contact_card'
-          ? '[Danh thiếp]'
-          : body.type === 'location'
-            ? '[Vị trí]'
-            : (body.content || (hasSticker ? '[Sticker]' : hasHDImage ? '[Ảnh HD]' : '[Hình ảnh/Tệp tin]')),
-        data: { convId, messageId: res.id }
+        title: convMetadata.name || "Tin nhắn mới",
+        body:
+          body.type === "contact_card"
+            ? "[Danh thiếp]"
+            : body.type === "location"
+              ? "[Vị trí]"
+              : body.content ||
+                (hasSticker
+                  ? "[Sticker]"
+                  : hasHDImage
+                    ? "[Ảnh HD]"
+                    : "[Hình ảnh/Tệp tin]"),
+        data: { convId, messageId: res.id },
       });
     }
 
     // Bot conversation: fire-and-forget
-    if (normalizedConvId.includes(BOT_EMAIL) && body.type !== 'system') {
-      this.botService.handleIncomingMessage(convId, email, body.content, body.media, body.files).catch((err) => {
-        console.error('[ChatController] Bot handler error:', err);
-      });
+    if (normalizedConvId.includes(BOT_EMAIL) && body.type !== "system") {
+      this.botService
+        .handleIncomingMessage(
+          convId,
+          email,
+          body.content,
+          body.media,
+          body.files,
+        )
+        .catch((err) => {
+          console.error("[ChatController] Bot handler error:", err);
+        });
     }
 
     return res;
+  }
+
+  @Post("conversations/:convId/messages/:messageId/poll/vote")
+  async votePoll(
+    @Param("convId") convId: string,
+    @Param("messageId") messageId: string,
+    @Body("optionIndex", ParseIntPipe) optionIndex: number,
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    const updated = await this.messageService.votePoll(
+      convId,
+      messageId,
+      email,
+      optionIndex,
+    );
+
+    this.chatGateway.emitMessagePatched(convId, updated);
+    return updated;
+  }
+
+  @Post("conversations/:convId/messages/:messageId/poll/close")
+  async closePoll(
+    @Param("convId") convId: string,
+    @Param("messageId") messageId: string,
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    const updated = await this.messageService.closePoll(
+      convId,
+      messageId,
+      email,
+    );
+
+    this.chatGateway.emitMessagePatched(convId, updated);
+    return updated;
   }
 
   @Post("uploads")
@@ -448,27 +585,27 @@ export class ChatController {
 
     if (this.chatGateway?.server) {
       // [BACKWARD COMPATIBILITY] Specialized events
-      if (body.action === 'react') {
-        this.chatGateway.server.to(convId).emit('message_reaction', {
+      if (body.action === "react") {
+        this.chatGateway.server.to(convId).emit("message_reaction", {
           messageId,
-          reactions: res.reactions
+          reactions: res.reactions,
         });
 
         // [SENIOR] Emit a virtual system message for the reaction notification
-        const emoji = body.emoji || '❤️';
+        const emoji = body.emoji || "❤️";
         const senderProfile = await this.userService.getUserProfile(email);
         const senderName = senderProfile?.profile?.fullName || email;
         const systemMsg = {
           id: `SYS_REACT_${Date.now()}_${messageId}`,
           conversationId: convId,
-          senderId: 'system',
-          type: 'system',
+          senderId: "system",
+          type: "system",
           content: `${senderName} đã thả cảm xúc ${emoji} về một tin nhắn`,
           createdAt: new Date().toISOString(),
           metadata: {
             targetMessageId: messageId,
-            type: 'reaction_notification'
-          }
+            type: "reaction_notification",
+          },
         };
         this.chatGateway.server.to(convId).emit("receiveMessage", systemMsg);
       } else if (body.action === "recall") {
@@ -535,10 +672,10 @@ export class ChatController {
         user: profile.profile,
         friendship: friendship
           ? {
-            senderEmail: friendship.sender_id,
-            receiverEmail: friendship.receiver_id,
-            status: friendship.status,
-          }
+              senderEmail: friendship.sender_id,
+              receiverEmail: friendship.receiver_id,
+              status: friendship.status,
+            }
           : null,
       };
     } catch (error) {
@@ -557,7 +694,7 @@ export class ChatController {
   @Post("friends/request")
   async sendFriendRequest(
     @Body() body: { targetEmail: string },
-    @Req() req: any
+    @Req() req: any,
   ) {
     const email = req.user.email;
     return await this.friendshipService.sendRequest(email, body.targetEmail);
@@ -566,7 +703,7 @@ export class ChatController {
   @Post("friends/accept")
   async acceptFriendRequest(
     @Body() body: { senderEmail: string },
-    @Req() req: any
+    @Req() req: any,
   ) {
     const email = req.user.email;
     return await this.friendshipService.acceptRequest(email, body.senderEmail);

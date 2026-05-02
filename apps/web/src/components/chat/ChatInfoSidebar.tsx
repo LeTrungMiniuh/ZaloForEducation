@@ -1,16 +1,16 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { 
-  BellOff, 
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  BellOff,
   Bell,
-  Clock3, 
-  FileDigit, 
-  FileImage, 
-  FileText, 
-  Link as LinkIcon, 
-  Music, 
-  Trash2, 
-  Video, 
+  Clock3,
+  FileDigit,
+  FileImage,
+  FileText,
+  Link as LinkIcon,
+  Music,
+  Trash2,
+  Video,
   X,
   Check,
   ChevronDown,
@@ -20,16 +20,18 @@ import {
   LogOut,
   Settings,
   Plus,
-  Camera
-} from 'lucide-react';
-import Swal from 'sweetalert2';
-import api from '../../services/api';
-import { useAuth } from '../../context/AuthContext';
-import { useChatStore } from '../../store/chatStore';
-import { 
-  formatFileSize, 
-  getDisplayAvatar, 
-  getDisplayName, 
+  Camera,
+  CheckCircle2,
+  Loader2,
+} from "lucide-react";
+import Swal from "sweetalert2";
+import api from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
+import { useChatStore } from "../../store/chatStore";
+import {
+  formatFileSize,
+  getDisplayAvatar,
+  getDisplayName,
   normalizeAttachment,
   clearConversationMuteSchedule,
   createConversationMuteScheduleFromDuration,
@@ -37,8 +39,9 @@ import {
   formatMuteScheduleLabel,
   getConversationMuteSchedule,
   setConversationMuteSchedule,
-  type ConversationMuteSchedule
-} from '../../utils/chatUtils';
+  type ConversationMuteSchedule,
+} from "../../utils/chatUtils";
+import AddMembersModal from "./AddMembersModal";
 
 const ChatInfoSidebar: React.FC = () => {
   const navigate = useNavigate();
@@ -62,22 +65,32 @@ const ChatInfoSidebar: React.FC = () => {
     dissolveGroup,
   } = useChatStore();
 
-  const activeChat = conversations.find(c => c.id === activeConvId);
+  const activeChat = conversations.find((c) => c.id === activeConvId);
 
   // HEAD States
-  const [activeStorageTab, setActiveStorageTab] = useState<'media' | 'file' | 'link'>('media');
-  const [senderFilter, setSenderFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('all');
+  const [activeStorageTab, setActiveStorageTab] = useState<
+    "media" | "file" | "link"
+  >("media");
+  const [senderFilter, setSenderFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
   const [showAutoDeleteModal, setShowAutoDeleteModal] = useState(false);
-  const [pendingAutoDeleteDays, setPendingAutoDeleteDays] = useState<1 | 7 | 30 | null>(null);
+  const [pendingAutoDeleteDays, setPendingAutoDeleteDays] = useState<
+    1 | 7 | 30 | null
+  >(null);
   const [savingAutoDelete, setSavingAutoDelete] = useState(false);
 
   // tin_notification States
   const [showMutePanel, setShowMutePanel] = useState(false);
   const [showCustomMuteInputs, setShowCustomMuteInputs] = useState(false);
-  const [muteStartTime, setMuteStartTime] = useState('22:00');
-  const [muteEndTime, setMuteEndTime] = useState('07:00');
+  const [isAddMembersModalOpen, setIsAddMembersModalOpen] = useState(false);
+  const [muteStartTime, setMuteStartTime] = useState("22:00");
+  const [muteEndTime, setMuteEndTime] = useState("07:00");
   const [muteSummary, setMuteSummary] = useState<string | null>(null);
+  const [showTransferOwnerModal, setShowTransferOwnerModal] = useState(false);
+  const [isTransferringOwnership, setIsTransferringOwnership] = useState(false);
+  const [selectedNewOwnerEmail, setSelectedNewOwnerEmail] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if (!activeChat) return;
@@ -93,44 +106,69 @@ const ChatInfoSidebar: React.FC = () => {
     setShowCustomMuteInputs(false);
   }, [activeChat]);
 
+  const normalizedUserEmail = String(user?.email || "")
+    .trim()
+    .toLowerCase();
+  const isGroupOwner =
+    activeChat?.type === "group" &&
+    ((activeChat.owner || activeChat.admin || "").trim().toLowerCase() ===
+      normalizedUserEmail ||
+      (activeChat.admin || "").trim().toLowerCase() === normalizedUserEmail);
+  const groupMembers = Array.isArray(activeChat?.members)
+    ? activeChat.members.filter(Boolean)
+    : [];
+  const transferOwnerCandidates = groupMembers.filter(
+    (memberEmail) =>
+      String(memberEmail || "")
+        .trim()
+        .toLowerCase() !== normalizedUserEmail,
+  );
+
   if (!activeChat) return null;
 
-  const partnerEmail = activeChat.type === 'direct'
-    ? (Array.isArray(activeChat.members) ? activeChat.members.find(m => m !== user?.email) : undefined)
-    : undefined;
+  const partnerEmail =
+    activeChat.type === "direct"
+      ? Array.isArray(activeChat.members)
+        ? activeChat.members.find((m) => m !== user?.email)
+        : undefined
+      : undefined;
 
-  const chatName = activeChat.type === 'direct'
-    ? getDisplayName(partnerEmail, user, userProfiles)
-    : activeChat.name || 'Group';
+  const chatName =
+    activeChat.type === "direct"
+      ? getDisplayName(partnerEmail, user, userProfiles)
+      : activeChat.name || "Group";
 
-  const chatAvatar = activeChat.type === 'direct'
-    ? getDisplayAvatar(partnerEmail, user, userProfiles)
-    : (activeChat.avatar || '/logo_blue.png');
+  const chatAvatar =
+    activeChat.type === "direct"
+      ? getDisplayAvatar(partnerEmail, user, userProfiles)
+      : activeChat.avatar || "/logo_blue.png";
 
   const currentAutoDeleteDays = activeChat.autoDeleteDays ?? null;
   const muted = !!(activeConvId && isConversationMuted(activeConvId));
-  const muteSetting = activeConvId ? mutedConversations[activeConvId] : undefined;
+  const muteSetting = activeConvId
+    ? mutedConversations[activeConvId]
+    : undefined;
 
   const getMuteStatusLabel = () => {
-    if (!activeConvId || !muted) return 'ĐANG BẬT';
-    if (muteSetting === 'until-open') return 'ĐẾN KHI MỞ LẠI';
-    if (muteSetting === true) return 'VĨNH VIỄN';
-    if (typeof muteSetting === 'number') {
+    if (!activeConvId || !muted) return "ĐANG BẬT";
+    if (muteSetting === "until-open") return "ĐẾN KHI MỞ LẠI";
+    if (muteSetting === true) return "VĨNH VIỄN";
+    if (typeof muteSetting === "number") {
       const diff = muteSetting - Date.now();
-      if (diff <= 0) return 'ĐANG BẬT';
+      if (diff <= 0) return "ĐANG BẬT";
       const hours = Math.floor(diff / (60 * 60 * 1000));
       const minutes = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
       if (hours > 0) return `${hours}G ${minutes}P`;
       return `${Math.max(1, minutes)} PHÚT`;
     }
-    return 'ĐANG TẮT';
+    return "ĐANG TẮT";
   };
 
   const autoDeleteLabel = (days: 1 | 7 | 30 | null) => {
-    if (days === 1) return '1 ngày';
-    if (days === 7) return '7 ngày';
-    if (days === 30) return '30 ngày';
-    return 'Không bao giờ';
+    if (days === 1) return "1 ngày";
+    if (days === 7) return "7 ngày";
+    if (days === 30) return "30 ngày";
+    return "Không bao giờ";
   };
 
   const openAutoDeleteModal = () => {
@@ -158,11 +196,16 @@ const ChatInfoSidebar: React.FC = () => {
   }) => {
     if (!activeChat) return;
 
-    setConversationMuteSchedule(activeChat.id, schedule as ConversationMuteSchedule);
-    setMuteSummary(formatMuteScheduleLabel(schedule as ConversationMuteSchedule));
+    setConversationMuteSchedule(
+      activeChat.id,
+      schedule as ConversationMuteSchedule,
+    );
+    setMuteSummary(
+      formatMuteScheduleLabel(schedule as ConversationMuteSchedule),
+    );
     setShowMutePanel(false);
     setShowCustomMuteInputs(false);
-    
+
     // Also trigger store-level mute (manual) to be safe or just rely on scheduler
     // For now, let's keep schedule as a separate UI/UX enhancement
   };
@@ -185,24 +228,39 @@ const ChatInfoSidebar: React.FC = () => {
   };
 
   const FileIconComponent = ({ fileName }: { fileName: string }) => {
-    if (fileName.match(/\.(jpg|jpeg|png|gif|webp)$/i)) return <FileImage size={20} className="text-primary" />;
-    if (fileName.match(/\.(mp4|mov|avi|wmv)$/i)) return <Video size={20} className="text-primary" />;
-    if (fileName.match(/\.(mp3|wav|ogg|m4a)$/i)) return <Music size={20} className="text-primary" />;
-    if (fileName.match(/\.(zip|rar|7z|tar)$/i)) return <FileDigit size={20} className="text-primary" />;
+    if (fileName.match(/\.(jpg|jpeg|png|gif|webp)$/i))
+      return <FileImage size={20} className="text-primary" />;
+    if (fileName.match(/\.(mp4|mov|avi|wmv)$/i))
+      return <Video size={20} className="text-primary" />;
+    if (fileName.match(/\.(mp3|wav|ogg|m4a)$/i))
+      return <Music size={20} className="text-primary" />;
+    if (fileName.match(/\.(zip|rar|7z|tar)$/i))
+      return <FileDigit size={20} className="text-primary" />;
     return <FileText size={20} className="text-primary" />;
   };
 
-  const allAttachments = messages.flatMap(m => {
-    const arr = [...(m.media || []), ...(m.files || [])];
-    return arr.map(a => ({ ...a, senderId: m.senderId, createdAt: m.createdAt }));
-  }).map(f => ({ ...normalizeAttachment(f), senderId: f.senderId, createdAt: f.createdAt })).reverse();
+  const allAttachments = messages
+    .flatMap((m) => {
+      const arr = [...(m.media || []), ...(m.files || [])];
+      return arr.map((a) => ({
+        ...a,
+        senderId: m.senderId,
+        createdAt: m.createdAt,
+      }));
+    })
+    .map((f) => ({
+      ...normalizeAttachment(f),
+      senderId: f.senderId,
+      createdAt: f.createdAt,
+    }))
+    .reverse();
 
   const isStickerOrGif = (f: any) => {
-    const mime = String(f?.mimeType || '').toLowerCase();
-    const name = String(f?.name || '').toLowerCase();
+    const mime = String(f?.mimeType || "").toLowerCase();
+    const name = String(f?.name || "").toLowerCase();
     return (
-      mime.includes('sticker') ||
-      mime === 'image/gif' ||
+      mime.includes("sticker") ||
+      mime === "image/gif" ||
       /^sticker-/.test(name) ||
       /\.gif(\?.*)?$/.test(name)
     );
@@ -211,53 +269,74 @@ const ChatInfoSidebar: React.FC = () => {
   const isMedia = (f: any) => {
     if (isStickerOrGif(f)) return false;
     return (
-      f.mimeType?.startsWith('image/') ||
-      f.mimeType?.startsWith('video/') ||
+      f.mimeType?.startsWith("image/") ||
+      f.mimeType?.startsWith("video/") ||
       f.name?.match(/\.(jpg|jpeg|png|webp|mp4|mov|avi|wmv)$/i)
     );
   };
 
   const isVideoMedia = (f: any) => {
-    const mime = String(f?.mimeType || '').toLowerCase();
-    const name = String(f?.name || '').toLowerCase();
-    return mime.startsWith('video/') || /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name);
+    const mime = String(f?.mimeType || "").toLowerCase();
+    const name = String(f?.name || "").toLowerCase();
+    return (
+      mime.startsWith("video/") ||
+      /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name)
+    );
   };
 
   let filteredAttachments = allAttachments;
-  if (senderFilter !== 'all') {
-    filteredAttachments = filteredAttachments.filter(f => f.senderId === senderFilter);
+  if (senderFilter !== "all") {
+    filteredAttachments = filteredAttachments.filter(
+      (f) => f.senderId === senderFilter,
+    );
   }
-  if (dateFilter !== 'all') {
-    if (dateFilter === 'oldest') {
+  if (dateFilter !== "all") {
+    if (dateFilter === "oldest") {
       filteredAttachments = [...filteredAttachments].reverse();
-    } else if (dateFilter !== 'newest') {
-      const d = new Date(dateFilter).setHours(0,0,0,0);
-      filteredAttachments = filteredAttachments.filter(f => new Date(f.createdAt || Date.now()).setHours(0,0,0,0) === d);
+    } else if (dateFilter !== "newest") {
+      const d = new Date(dateFilter).setHours(0, 0, 0, 0);
+      filteredAttachments = filteredAttachments.filter(
+        (f) => new Date(f.createdAt || Date.now()).setHours(0, 0, 0, 0) === d,
+      );
     }
   }
 
-  const storageAttachments = filteredAttachments.filter((f) => !isStickerOrGif(f));
+  const storageAttachments = filteredAttachments.filter(
+    (f) => !isStickerOrGif(f),
+  );
   const sharedMedia = storageAttachments.filter(isMedia);
   const sharedFiles = storageAttachments.filter((f) => !isMedia(f));
 
   const urlRegex = /(https?:\/\/[^\s]+)/g;
   let allLinks = messages
-    .filter(m => m.content && typeof m.content === 'string' && (m.content as string).match(urlRegex))
-    .flatMap(m => {
+    .filter(
+      (m) =>
+        m.content &&
+        typeof m.content === "string" &&
+        (m.content as string).match(urlRegex),
+    )
+    .flatMap((m) => {
       const urls = (m.content as string).match(urlRegex) || [];
-      return urls.map(url => ({ url, messageId: m.id, senderId: m.senderId, createdAt: m.createdAt }));
+      return urls.map((url) => ({
+        url,
+        messageId: m.id,
+        senderId: m.senderId,
+        createdAt: m.createdAt,
+      }));
     })
     .reverse();
 
-  if (senderFilter !== 'all') {
-    allLinks = allLinks.filter(l => l.senderId === senderFilter);
+  if (senderFilter !== "all") {
+    allLinks = allLinks.filter((l) => l.senderId === senderFilter);
   }
-  if (dateFilter !== 'all') {
-    if (dateFilter === 'oldest') {
+  if (dateFilter !== "all") {
+    if (dateFilter === "oldest") {
       allLinks = [...allLinks].reverse();
-    } else if (dateFilter !== 'newest') {
-      const d = new Date(dateFilter).setHours(0,0,0,0);
-      allLinks = allLinks.filter(l => new Date(l.createdAt || Date.now()).setHours(0,0,0,0) === d);
+    } else if (dateFilter !== "newest") {
+      const d = new Date(dateFilter).setHours(0, 0, 0, 0);
+      allLinks = allLinks.filter(
+        (l) => new Date(l.createdAt || Date.now()).setHours(0, 0, 0, 0) === d,
+      );
     }
   }
   const sharedLinks = allLinks;
@@ -275,8 +354,8 @@ const ChatInfoSidebar: React.FC = () => {
     if (muted) {
       clearConversationMuted(activeConvId);
       await Swal.fire({
-        icon: 'success',
-        title: 'Đã bật lại thông báo',
+        icon: "success",
+        title: "Đã bật lại thông báo",
         timer: 1300,
         showConfirmButton: false,
       });
@@ -284,7 +363,7 @@ const ChatInfoSidebar: React.FC = () => {
     }
 
     const choice = await Swal.fire({
-      title: 'Xác nhận',
+      title: "Xác nhận",
       html: `
         <div style="text-align:left; margin-top:8px; font-size:18px; color:#1f2a44;">
           Bạn có chắc muốn tắt thông báo hội thoại này:
@@ -297,21 +376,26 @@ const ChatInfoSidebar: React.FC = () => {
         </div>
       `,
       showCancelButton: true,
-      confirmButtonText: 'Đồng ý',
-      cancelButtonText: 'Hủy',
+      confirmButtonText: "Đồng ý",
+      cancelButtonText: "Hủy",
       focusConfirm: false,
       preConfirm: () => {
-        const selected = document.querySelector('input[name="mute-option"]:checked') as HTMLInputElement | null;
-        return selected?.value || '1h';
+        const selected = document.querySelector(
+          'input[name="mute-option"]:checked',
+        ) as HTMLInputElement | null;
+        return selected?.value || "1h";
       },
     });
 
     if (!choice.isConfirmed || !choice.value) return;
 
-    muteConversationFor(activeConvId, choice.value as '1h' | '4h' | 'until-8am' | 'until-open');
+    muteConversationFor(
+      activeConvId,
+      choice.value as "1h" | "4h" | "until-8am" | "until-open",
+    );
     await Swal.fire({
-      icon: 'success',
-      title: 'Đã tắt thông báo',
+      icon: "success",
+      title: "Đã tắt thông báo",
       timer: 1300,
       showConfirmButton: false,
     });
@@ -321,13 +405,13 @@ const ChatInfoSidebar: React.FC = () => {
     if (!activeConvId) return;
 
     const confirm = await Swal.fire({
-      icon: 'warning',
-      title: 'Xóa cuộc trò chuyện phía bạn?',
-      text: 'Tin nhắn sẽ bị xóa ở tài khoản của bạn, phía đối phương vẫn giữ nguyên.',
+      icon: "warning",
+      title: "Xóa cuộc trò chuyện phía bạn?",
+      text: "Tin nhắn sẽ bị xóa ở tài khoản của bạn, phía đối phương vẫn giữ nguyên.",
       showCancelButton: true,
-      confirmButtonText: 'Xóa',
-      cancelButtonText: 'Hủy',
-      confirmButtonColor: '#d93025',
+      confirmButtonText: "Xóa",
+      cancelButtonText: "Hủy",
+      confirmButtonColor: "#d93025",
     });
 
     if (!confirm.isConfirmed) return;
@@ -335,54 +419,59 @@ const ChatInfoSidebar: React.FC = () => {
     try {
       await clearHistory(activeConvId);
       await Swal.fire({
-        icon: 'success',
-        title: 'Đã xóa cuộc trò chuyện',
+        icon: "success",
+        title: "Đã xóa cuộc trò chuyện",
         timer: 1400,
         showConfirmButton: false,
       });
     } catch {
       await Swal.fire({
-        icon: 'error',
-        title: 'Không thể xóa cuộc trò chuyện',
-        text: 'Vui lòng thử lại sau.',
+        icon: "error",
+        title: "Không thể xóa cuộc trò chuyện",
+        text: "Vui lòng thử lại sau.",
       });
     }
   };
 
   const handleLeaveGroup = async () => {
-    if (!activeConvId) return;
-    const confirm = await Swal.fire({
-      title: 'Rời nhóm?',
-      text: 'Bạn sẽ không còn nhận được tin nhắn từ nhóm này.',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonText: 'Rời nhóm',
-      cancelButtonColor: '#d33'
-    });
-    if (confirm.isConfirmed) {
-      try {
-        await removeMember(activeConvId, user?.email || '');
-      } catch (err: any) {
-        Swal.fire('Lỗi', err.response?.data?.message || 'Không thể rời nhóm', 'error');
-      }
+    if (!activeConvId || !user?.email) return;
+    if (isGroupOwner) {
+      setSelectedNewOwnerEmail(transferOwnerCandidates[0] || null);
+      setShowTransferOwnerModal(true);
+      return;
+    }
+
+    try {
+      await removeMember(activeConvId, user.email);
+      navigate("/chat");
+    } catch (err: any) {
+      Swal.fire(
+        "Lỗi",
+        err.response?.data?.message || "Không thể rời nhóm",
+        "error",
+      );
     }
   };
 
   const handleDissolveGroup = async () => {
     if (!activeConvId) return;
     const confirm = await Swal.fire({
-      title: 'Giải tán nhóm?',
-      text: 'Tất cả thành viên sẽ bị xóa khỏi nhóm và lịch sử chat sẽ bị xóa.',
-      icon: 'warning',
+      title: "Giải tán nhóm?",
+      text: "Tất cả thành viên sẽ bị xóa khỏi nhóm và lịch sử chat sẽ bị xóa.",
+      icon: "warning",
       showCancelButton: true,
-      confirmButtonText: 'Giải tán',
-      cancelButtonColor: '#d33'
+      confirmButtonText: "Giải tán",
+      cancelButtonColor: "#d33",
     });
     if (confirm.isConfirmed) {
       try {
         await dissolveGroup(activeConvId);
       } catch (err: any) {
-        Swal.fire('Lỗi', err.response?.data?.message || 'Không thể giải tán nhóm', 'error');
+        Swal.fire(
+          "Lỗi",
+          err.response?.data?.message || "Không thể giải tán nhóm",
+          "error",
+        );
       }
     }
   };
@@ -390,111 +479,156 @@ const ChatInfoSidebar: React.FC = () => {
   const handleKickMember = async (targetEmail: string) => {
     if (!activeConvId) return;
     const confirm = await Swal.fire({
-      title: 'Xóa thành viên?',
+      title: "Xóa thành viên?",
       text: `Bạn có chắc muốn xóa ${getDisplayName(targetEmail, user, userProfiles)} khỏi nhóm?`,
-      icon: 'warning',
+      icon: "warning",
       showCancelButton: true,
-      confirmButtonText: 'Xóa'
+      confirmButtonText: "Xóa",
     });
     if (confirm.isConfirmed) {
       try {
         await removeMember(activeConvId, targetEmail);
       } catch (err: any) {
-        Swal.fire('Lỗi', err.response?.data?.message || 'Không thể xóa thành viên', 'error');
+        Swal.fire(
+          "Lỗi",
+          err.response?.data?.message || "Không thể xóa thành viên",
+          "error",
+        );
       }
     }
   };
 
-  const handleChangeRole = async (targetEmail: string, role: 'member' | 'deputy' | 'owner') => {
+  const handleChangeRole = async (
+    targetEmail: string,
+    role: "member" | "deputy" | "owner",
+  ) => {
     if (!activeConvId) return;
-    const roleName = role === 'owner' ? 'Trưởng nhóm' : role === 'deputy' ? 'Phó nhóm' : 'Thành viên';
-    const confirm = await Swal.fire({
-      title: 'Thay đổi vai trò?',
-      text: `Bạn có chắc muốn đặt ${getDisplayName(targetEmail, user, userProfiles)} làm ${roleName}?`,
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonText: 'Đồng ý'
-    });
-    if (confirm.isConfirmed) {
-      try {
-        await updateMemberRole(activeConvId, targetEmail, role);
-      } catch (err: any) {
-        Swal.fire('Lỗi', err.response?.data?.message || 'Không thể thay đổi vai trò', 'error');
-      }
+    try {
+      await updateMemberRole(activeConvId, targetEmail, role);
+    } catch (err: any) {
+      Swal.fire(
+        "Lỗi",
+        err.response?.data?.message || "Không thể thay đổi vai trò",
+        "error",
+      );
     }
   };
+
+  const handleTransferOwnershipAndLeave = async (targetEmail: string) => {
+    if (!activeConvId || !user?.email || isTransferringOwnership) return;
+
+    setIsTransferringOwnership(true);
+    try {
+      await updateMemberRole(activeConvId, targetEmail, "owner");
+      await removeMember(activeConvId, user.email);
+      setShowTransferOwnerModal(false);
+      setSelectedNewOwnerEmail(null);
+      navigate("/chat");
+    } catch (err: any) {
+      Swal.fire(
+        "Lỗi",
+        err.response?.data?.message || "Không thể chuyển quyền hoặc rời nhóm",
+        "error",
+      );
+    } finally {
+      setIsTransferringOwnership(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showTransferOwnerModal) return;
+    if (!transferOwnerCandidates.length) {
+      setSelectedNewOwnerEmail(null);
+      return;
+    }
+
+    const selectedStillValid = selectedNewOwnerEmail
+      ? transferOwnerCandidates.includes(selectedNewOwnerEmail)
+      : false;
+
+    if (!selectedStillValid) {
+      setSelectedNewOwnerEmail(transferOwnerCandidates[0]);
+    }
+  }, [showTransferOwnerModal, transferOwnerCandidates, selectedNewOwnerEmail]);
 
   const handleAddMembers = async () => {
-    Swal.fire({
-      title: 'Thêm thành viên',
-      input: 'text',
-      inputPlaceholder: 'Nhập email thành viên...',
-      showCancelButton: true,
-      confirmButtonText: 'Thêm'
-    }).then(async (result) => {
-      if (result.isConfirmed && result.value) {
-        try {
-          await addMembers(activeConvId!, [result.value.trim()]);
-          Swal.fire('Thành công', 'Đã thêm thành viên', 'success');
-        } catch (err: any) {
-          Swal.fire('Lỗi', err.response?.data?.message || 'Không thể thêm thành viên', 'error');
-        }
-      }
-    });
+    setIsAddMembersModalOpen(true);
   };
 
-  const handleUpdateGroupAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpdateGroupAvatar = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = e.target.files?.[0];
     if (!file || !activeConvId) return;
 
     try {
       const formData = new FormData();
-      formData.append('file', file);
-      const uploadRes = await api.post('/chat/uploads', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      formData.append("file", file);
+      const uploadRes = await api.post("/chat/uploads", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
-      const avatarUrl = uploadRes.data.fileUrl || uploadRes.data.dataUrl || '';
+      const avatarUrl = uploadRes.data.fileUrl || uploadRes.data.dataUrl || "";
       await updateGroupInfo(activeConvId, { avatar: avatarUrl });
       Swal.fire({
-        icon: 'success',
-        title: 'Thành công',
-        text: 'Đã cập nhật ảnh đại diện nhóm',
+        icon: "success",
+        title: "Thành công",
+        text: "Đã cập nhật ảnh đại diện nhóm",
         timer: 1500,
-        showConfirmButton: false
+        showConfirmButton: false,
       });
-    } catch (err) {
-      Swal.fire('Lỗi', 'Không thể cập nhật ảnh đại diện', 'error');
+    } catch (err: any) {
+      Swal.fire(
+        "Lỗi",
+        err.response?.data?.message || "Không thể cập nhật ảnh đại diện",
+        "error",
+      );
     }
   };
 
-  const DEFAULT_GROUP_AVATAR = "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
+  const DEFAULT_GROUP_AVATAR =
+    "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
 
   return (
     <div className="w-[320px] h-full border-l border-outline-variant/30 dark:border-outline-variant/30 bg-white dark:bg-surface-container flex flex-col shrink-0 animate-in slide-in-from-right-4 duration-300">
       <div className="p-6 border-b border-outline-variant/10 flex flex-col items-center">
         <div className="relative group mb-3">
           <img
-            className={`w-20 h-20 rounded-full object-cover shadow-md border-2 border-white dark:border-surface-container-high ${partnerEmail ? 'cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
-            src={activeChat.avatar || (activeChat.type === 'group' ? DEFAULT_GROUP_AVATAR : chatAvatar)}
+            className={`w-20 h-20 rounded-full object-cover shadow-md border-2 border-white dark:border-surface-container-high ${partnerEmail ? "cursor-pointer hover:opacity-90 transition-opacity" : ""}`}
+            src={
+              activeChat.avatar ||
+              (activeChat.type === "group" ? DEFAULT_GROUP_AVATAR : chatAvatar)
+            }
             alt=""
-            onClick={activeChat.type === 'group' ? undefined : handleOpenProfile}
-            title={partnerEmail ? 'Xem trang cá nhân' : activeChat.type === 'group' ? 'Đổi ảnh đại diện' : undefined}
+            onClick={
+              activeChat.type === "group" ? undefined : handleOpenProfile
+            }
+            title={
+              partnerEmail
+                ? "Xem trang cá nhân"
+                : activeChat.type === "group"
+                  ? "Đổi ảnh đại diện"
+                  : undefined
+            }
           />
-          {activeChat.type === 'group' && (
+          {activeChat.type === "group" && (
             <label className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
               <Camera size={24} className="text-white" />
-              <input 
-                type="file" 
-                accept="image/*" 
-                className="hidden" 
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
                 onChange={handleUpdateGroupAvatar}
               />
             </label>
           )}
         </div>
-        <h3 className="font-bold text-[16px] text-on-surface text-center leading-tight">{chatName}</h3>
+        <h3 className="font-bold text-[16px] text-on-surface text-center leading-tight">
+          {chatName}
+        </h3>
         <p className="text-[12px] text-on-surface-variant font-medium mt-1">
-          {activeChat.type === 'direct' ? 'Trò chuyện cá nhân' : 'Hội thoại nhóm'}
+          {activeChat.type === "direct"
+            ? "Trò chuyện cá nhân"
+            : "Hội thoại nhóm"}
         </p>
       </div>
 
@@ -503,51 +637,61 @@ const ChatInfoSidebar: React.FC = () => {
           {/* Section: Kho lưu trữ Tabs & Filters */}
           <div className="border-b border-outline-variant/10 pb-4">
             <div className="flex px-4 pt-2 mb-3 border-b border-outline-variant/10">
-              <button 
-                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === 'media' ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}
-                onClick={() => setActiveStorageTab('media')}
+              <button
+                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "media" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
+                onClick={() => setActiveStorageTab("media")}
               >
                 Ảnh/Video
               </button>
-              <button 
-                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === 'file' ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}
-                onClick={() => setActiveStorageTab('file')}
+              <button
+                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "file" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
+                onClick={() => setActiveStorageTab("file")}
               >
                 Files
               </button>
-              <button 
-                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === 'link' ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}
-                onClick={() => setActiveStorageTab('link')}
+              <button
+                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "link" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
+                onClick={() => setActiveStorageTab("link")}
               >
                 Links
               </button>
             </div>
 
             <div className="flex gap-2 px-4 mb-4">
-              <select 
+              <select
                 value={senderFilter}
                 onChange={(e) => setSenderFilter(e.target.value)}
                 className="flex-1 bg-surface-container-highest px-3 py-2 rounded-xl text-[12px] text-on-surface outline-none border border-transparent focus:border-primary/30 appearance-none cursor-pointer"
               >
                 <option value="all">Người gửi</option>
-                {uniqueSenders.map(email => (
-                  <option key={email} value={email}>{getDisplayName(email, user, userProfiles)}</option>
+                {uniqueSenders.map((email) => (
+                  <option key={email} value={email}>
+                    {getDisplayName(email, user, userProfiles)}
+                  </option>
                 ))}
               </select>
-              
-              <input 
+
+              <input
                 type="date"
-                value={dateFilter === 'all' || dateFilter === 'newest' || dateFilter === 'oldest' ? '' : dateFilter}
-                onChange={(e) => setDateFilter(e.target.value || 'all')}
+                value={
+                  dateFilter === "all" ||
+                  dateFilter === "newest" ||
+                  dateFilter === "oldest"
+                    ? ""
+                    : dateFilter
+                }
+                onChange={(e) => setDateFilter(e.target.value || "all")}
                 className="flex-1 bg-surface-container-highest px-3 py-2 rounded-xl text-[12px] text-on-surface outline-none border border-transparent focus:border-primary/30 cursor-pointer"
                 title="Chọn ngày"
               />
             </div>
 
             <div className="px-4 space-y-2">
-              {activeStorageTab === 'media' && (
-                sharedMedia.length === 0 ? (
-                  <p className="text-[11px] text-on-surface-variant italic text-center py-4">Chưa có ảnh/video nào</p>
+              {activeStorageTab === "media" &&
+                (sharedMedia.length === 0 ? (
+                  <p className="text-[11px] text-on-surface-variant italic text-center py-4">
+                    Chưa có ảnh/video nào
+                  </p>
                 ) : (
                   <div className="grid grid-cols-3 gap-1">
                     {sharedMedia.map((m, i) => (
@@ -565,60 +709,94 @@ const ChatInfoSidebar: React.FC = () => {
                             src={m.dataUrl}
                             className="w-full aspect-square object-cover rounded-lg border border-outline-variant/10 cursor-pointer hover:opacity-80 transition-opacity"
                             alt=""
-                            onClick={() => setPreviewImage(m.dataUrl, m.name || `image-${i + 1}.png`)}
+                            onClick={() =>
+                              setPreviewImage(
+                                m.dataUrl,
+                                m.name || `image-${i + 1}.png`,
+                              )
+                            }
                           />
                         )}
-                        <div className="absolute inset-x-0 bottom-0 pointer-events-none bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-b-lg p-1 flex justify-end">
-                           <span className="text-[9px] font-medium text-white/90">
-                             {m.createdAt ? new Date(m.createdAt).toLocaleDateString('vi-VN') : ''}
-                           </span>
+                        <div className="absolute inset-x-0 bottom-0 pointer-events-none bg-linear-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-b-lg p-1 flex justify-end">
+                          <span className="text-[9px] font-medium text-white/90">
+                            {m.createdAt
+                              ? new Date(m.createdAt).toLocaleDateString(
+                                  "vi-VN",
+                                )
+                              : ""}
+                          </span>
                         </div>
                       </div>
                     ))}
                   </div>
-                )
-              )}
+                ))}
 
-              {activeStorageTab === 'file' && (
-                sharedFiles.length === 0 ? (
-                  <p className="text-[11px] text-on-surface-variant italic text-center py-4">Chưa có tệp nào</p>
+              {activeStorageTab === "file" &&
+                (sharedFiles.length === 0 ? (
+                  <p className="text-[11px] text-on-surface-variant italic text-center py-4">
+                    Chưa có tệp nào
+                  </p>
                 ) : (
                   sharedFiles.map((f, i) => (
-                    <a key={i} href={f.dataUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-2 bg-surface-container/50 rounded-xl hover:bg-surface-container transition-all cursor-pointer">
+                    <a
+                      key={i}
+                      href={f.dataUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-3 p-2 bg-surface-container/50 rounded-xl hover:bg-surface-container transition-all cursor-pointer"
+                    >
                       <FileIconComponent fileName={f.name} />
                       <div className="min-w-0 flex-1">
-                        <p className="text-[12px] font-bold truncate text-on-surface">{f.name}</p>
+                        <p className="text-[12px] font-bold truncate text-on-surface">
+                          {f.name}
+                        </p>
                         <div className="flex items-center justify-between mt-0.5">
-                          <p className="text-[10px] text-on-surface-variant">{formatFileSize(f.size)}</p>
+                          <p className="text-[10px] text-on-surface-variant">
+                            {formatFileSize(f.size)}
+                          </p>
                           <p className="text-[10px] text-on-surface-variant opacity-70">
-                            {f.createdAt ? new Date(f.createdAt).toLocaleDateString('vi-VN') : ''}
+                            {f.createdAt
+                              ? new Date(f.createdAt).toLocaleDateString(
+                                  "vi-VN",
+                                )
+                              : ""}
                           </p>
                         </div>
                       </div>
                     </a>
                   ))
-                )
-              )}
+                ))}
 
-              {activeStorageTab === 'link' && (
-                sharedLinks.length === 0 ? (
-                    <p className="text-[11px] text-on-surface-variant italic text-center py-4">Chưa có link nào</p>
+              {activeStorageTab === "link" &&
+                (sharedLinks.length === 0 ? (
+                  <p className="text-[11px] text-on-surface-variant italic text-center py-4">
+                    Chưa có link nào
+                  </p>
                 ) : (
                   sharedLinks.map((l, i) => (
-                    <a key={i} href={l.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-2 bg-surface-container/50 rounded-xl hover:bg-surface-container transition-all cursor-pointer">
-                       <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                         <LinkIcon size={16} className="text-primary" />
-                       </div>
-                       <div className="min-w-0 flex-1">
-                          <p className="text-[12px] text-primary hover:underline truncate">{l.url}</p>
-                          <p className="text-[10px] text-on-surface-variant opacity-70 mt-0.5">
-                            {l.createdAt ? new Date(l.createdAt).toLocaleDateString('vi-VN') : ''}
-                          </p>
-                       </div>
+                    <a
+                      key={i}
+                      href={l.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-3 p-2 bg-surface-container/50 rounded-xl hover:bg-surface-container transition-all cursor-pointer"
+                    >
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                        <LinkIcon size={16} className="text-primary" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12px] text-primary hover:underline truncate">
+                          {l.url}
+                        </p>
+                        <p className="text-[10px] text-on-surface-variant opacity-70 mt-0.5">
+                          {l.createdAt
+                            ? new Date(l.createdAt).toLocaleDateString("vi-VN")
+                            : ""}
+                        </p>
+                      </div>
                     </a>
                   ))
-                )
-              )}
+                ))}
             </div>
           </div>
 
@@ -632,19 +810,26 @@ const ChatInfoSidebar: React.FC = () => {
                 <Clock3 size={20} className="text-on-surface-variant" />
                 Tin nhắn tự xóa
               </span>
-              <span className="text-[12px] font-bold text-primary">{autoDeleteLabel(currentAutoDeleteDays as 1 | 7 | 30 | null)}</span>
+              <span className="text-[12px] font-bold text-primary">
+                {autoDeleteLabel(currentAutoDeleteDays as 1 | 7 | 30 | null)}
+              </span>
             </button>
 
             {/* Mute Setting (HEAD Quick Toggle) */}
             <button
               onClick={handleToggleMute}
-              className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all ${muted ? 'bg-surface-container/70' : ''}`}
+              className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all ${muted ? "bg-surface-container/70" : ""}`}
             >
               <span className="flex items-center gap-3">
-                <BellOff size={20} className={muted ? 'text-primary' : 'text-on-surface-variant'} />
-                {muted ? 'Bật lại thông báo' : 'Tắt thông báo'}
+                <BellOff
+                  size={20}
+                  className={muted ? "text-primary" : "text-on-surface-variant"}
+                />
+                {muted ? "Bật lại thông báo" : "Tắt thông báo"}
               </span>
-              <span className={`text-[11px] font-bold ${muted ? 'text-primary' : 'text-on-surface-variant/70'}`}>
+              <span
+                className={`text-[11px] font-bold ${muted ? "text-primary" : "text-on-surface-variant/70"}`}
+              >
                 {getMuteStatusLabel()}
               </span>
             </button>
@@ -659,8 +844,15 @@ const ChatInfoSidebar: React.FC = () => {
                 Khung giờ tắt thông báo
               </span>
               <div className="flex items-center gap-1">
-                {muteSummary && <span className="text-[11px] font-medium text-primary">{muteSummary}</span>}
-                <ChevronDown size={14} className={`text-on-surface-variant transition-transform ${showMutePanel ? 'rotate-180' : ''}`} />
+                {muteSummary && (
+                  <span className="text-[11px] font-medium text-primary">
+                    {muteSummary}
+                  </span>
+                )}
+                <ChevronDown
+                  size={14}
+                  className={`text-on-surface-variant transition-transform ${showMutePanel ? "rotate-180" : ""}`}
+                />
               </div>
             </button>
 
@@ -682,25 +874,41 @@ const ChatInfoSidebar: React.FC = () => {
 
                 <div className="grid grid-cols-2 gap-2">
                   <button
-                    onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(1))}
+                    onClick={() =>
+                      applyMuteSchedule(
+                        createConversationMuteScheduleFromDuration(1),
+                      )
+                    }
                     className="rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high px-2 py-2 text-[12px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
                   >
                     1 tiếng
                   </button>
                   <button
-                    onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(4))}
+                    onClick={() =>
+                      applyMuteSchedule(
+                        createConversationMuteScheduleFromDuration(4),
+                      )
+                    }
                     className="rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high px-2 py-2 text-[12px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
                   >
                     4 tiếng
                   </button>
                   <button
-                    onClick={() => applyMuteSchedule(createConversationMuteScheduleFromDuration(8))}
+                    onClick={() =>
+                      applyMuteSchedule(
+                        createConversationMuteScheduleFromDuration(8),
+                      )
+                    }
                     className="rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high px-2 py-2 text-[12px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
                   >
                     8 tiếng
                   </button>
                   <button
-                    onClick={() => applyMuteSchedule(createConversationMuteScheduleUntilMorning(8))}
+                    onClick={() =>
+                      applyMuteSchedule(
+                        createConversationMuteScheduleUntilMorning(8),
+                      )
+                    }
                     className="rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high px-2 py-2 text-[12px] font-semibold text-on-surface hover:border-primary/40 hover:bg-primary/5"
                   >
                     Đến 8:00 AM
@@ -711,27 +919,37 @@ const ChatInfoSidebar: React.FC = () => {
                   onClick={() => setShowCustomMuteInputs((prev) => !prev)}
                   className="w-full rounded-xl bg-primary/10 px-3 py-2 text-[12px] font-semibold text-primary"
                 >
-                  {showCustomMuteInputs ? 'Ẩn khung giờ tuỳ chỉnh' : 'Chọn khung giờ tuỳ chỉnh'}
+                  {showCustomMuteInputs
+                    ? "Ẩn khung giờ tuỳ chỉnh"
+                    : "Chọn khung giờ tuỳ chỉnh"}
                 </button>
 
                 {showCustomMuteInputs && (
                   <div className="space-y-3 rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container-high p-3">
                     <div className="grid grid-cols-2 gap-2">
                       <label className="space-y-1">
-                        <span className="block text-[10px] text-on-surface-variant">Từ</span>
+                        <span className="block text-[10px] text-on-surface-variant">
+                          Từ
+                        </span>
                         <input
                           type="time"
                           value={muteStartTime}
-                          onChange={(event) => setMuteStartTime(event.target.value)}
+                          onChange={(event) =>
+                            setMuteStartTime(event.target.value)
+                          }
                           className="w-full rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container px-2 py-1.5 text-[12px] outline-none focus:border-primary"
                         />
                       </label>
                       <label className="space-y-1">
-                        <span className="block text-[10px] text-on-surface-variant">Đến</span>
+                        <span className="block text-[10px] text-on-surface-variant">
+                          Đến
+                        </span>
                         <input
                           type="time"
                           value={muteEndTime}
-                          onChange={(event) => setMuteEndTime(event.target.value)}
+                          onChange={(event) =>
+                            setMuteEndTime(event.target.value)
+                          }
                           className="w-full rounded-xl border border-outline-variant/20 bg-white dark:bg-surface-container px-2 py-1.5 text-[12px] outline-none focus:border-primary"
                         />
                       </label>
@@ -756,12 +974,14 @@ const ChatInfoSidebar: React.FC = () => {
               Xóa lịch sử trò chuyện
             </button>
 
-            {activeChat.type === 'group' && (
+            {activeChat.type === "group" && (
               <>
                 <div className="pt-4 pb-2">
-                  <h4 className="px-3 text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider">Quản lý nhóm</h4>
+                  <h4 className="px-3 text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider">
+                    Quản lý nhóm
+                  </h4>
                 </div>
-                
+
                 <button
                   onClick={handleLeaveGroup}
                   className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-error/10 text-error font-bold text-[13px] transition-all"
@@ -770,7 +990,8 @@ const ChatInfoSidebar: React.FC = () => {
                   Rời nhóm
                 </button>
 
-                {(activeChat.owner === user?.email || activeChat.admin === user?.email) && (
+                {(activeChat.owner === user?.email ||
+                  activeChat.admin === user?.email) && (
                   <button
                     onClick={handleDissolveGroup}
                     className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-error/10 text-error font-extrabold text-[13px] transition-all"
@@ -781,8 +1002,10 @@ const ChatInfoSidebar: React.FC = () => {
                 )}
 
                 <div className="pt-6 pb-2 flex items-center justify-between px-3">
-                  <h4 className="text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider">Thành viên ({activeChat.members?.length || 0})</h4>
-                  <button 
+                  <h4 className="text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider">
+                    Thành viên ({activeChat.members?.length || 0})
+                  </h4>
+                  <button
                     onClick={handleAddMembers}
                     className="p-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all"
                   >
@@ -791,23 +1014,42 @@ const ChatInfoSidebar: React.FC = () => {
                 </div>
 
                 <div className="space-y-1 mt-1">
-                  {activeChat.members?.map(memberEmail => {
+                  {activeChat.members?.map((memberEmail) => {
                     const isMe = memberEmail === user?.email;
-                    const isOwner = activeChat.owner === memberEmail || activeChat.admin === memberEmail;
-                    const isDeputy = (activeChat.deputies || []).includes(memberEmail);
-                    const myRole = (activeChat.owner === user?.email || activeChat.admin === user?.email) ? 'owner' : (activeChat.deputies || []).includes(user?.email || '') ? 'deputy' : 'member';
+                    const isOwner =
+                      activeChat.owner === memberEmail ||
+                      activeChat.admin === memberEmail;
+                    const isDeputy = (activeChat.deputies || []).includes(
+                      memberEmail,
+                    );
+                    const myRole = isGroupOwner
+                      ? "owner"
+                      : (activeChat.deputies || []).includes(user?.email || "")
+                        ? "deputy"
+                        : "member";
 
                     return (
-                      <div key={memberEmail} className="group/member flex items-center gap-3 p-2 rounded-xl hover:bg-surface-container transition-all">
-                        <img 
-                          src={getDisplayAvatar(memberEmail, user, userProfiles)} 
-                          className="w-9 h-9 rounded-full object-cover border border-outline-variant/10" 
-                          alt="" 
+                      <div
+                        key={memberEmail}
+                        className="group/member flex items-center gap-3 p-2 rounded-xl hover:bg-surface-container transition-all"
+                      >
+                        <img
+                          src={getDisplayAvatar(
+                            memberEmail,
+                            user,
+                            userProfiles,
+                          )}
+                          className="w-9 h-9 rounded-full object-cover border border-outline-variant/10"
+                          alt=""
                         />
                         <div className="flex-1 min-w-0">
                           <p className="text-[13px] font-bold text-on-surface truncate">
                             {getDisplayName(memberEmail, user, userProfiles)}
-                            {isMe && <span className="ml-1 opacity-50 font-medium">(Bạn)</span>}
+                            {isMe && (
+                              <span className="ml-1 opacity-50 font-medium">
+                                (Bạn)
+                              </span>
+                            )}
                           </p>
                           <div className="flex items-center gap-1">
                             {isOwner && (
@@ -817,7 +1059,7 @@ const ChatInfoSidebar: React.FC = () => {
                             )}
                             {isDeputy && (
                               <span className="flex items-center gap-0.5 text-[10px] font-extrabold text-secondary uppercase">
-                                <ShieldAlert size={10} /> Phó nhóm
+                                <ShieldAlert size={10} /> CO_ADMIN
                               </span>
                             )}
                           </div>
@@ -825,36 +1067,42 @@ const ChatInfoSidebar: React.FC = () => {
 
                         {!isMe && (
                           <div className="flex items-center opacity-0 group-hover/member:opacity-100 transition-opacity">
-                            {myRole === 'owner' && (
+                            {myRole === "owner" && (
                               <div className="flex items-center gap-1">
                                 {!isOwner && !isDeputy && (
-                                  <button 
-                                    onClick={() => handleChangeRole(memberEmail, 'deputy')}
-                                    title="Chỉ định làm phó nhóm"
+                                  <button
+                                    onClick={() =>
+                                      handleChangeRole(memberEmail, "deputy")
+                                    }
+                                    title="Chỉ định làm CO_ADMIN"
                                     className="p-1.5 rounded-lg hover:bg-surface-container-highest text-on-surface-variant hover:text-primary"
                                   >
                                     <ShieldCheck size={16} />
                                   </button>
                                 )}
                                 {isDeputy && (
-                                  <button 
-                                    onClick={() => handleChangeRole(memberEmail, 'member')}
-                                    title="Gỡ vai trò phó nhóm"
+                                  <button
+                                    onClick={() =>
+                                      handleChangeRole(memberEmail, "member")
+                                    }
+                                    title="Gỡ vai trò CO_ADMIN"
                                     className="p-1.5 rounded-lg hover:bg-surface-container-highest text-on-surface-variant hover:text-error"
                                   >
                                     <ShieldAlert size={16} />
                                   </button>
                                 )}
                                 {!isOwner && (
-                                  <button 
-                                    onClick={() => handleChangeRole(memberEmail, 'owner')}
+                                  <button
+                                    onClick={() =>
+                                      handleChangeRole(memberEmail, "owner")
+                                    }
                                     title="Chuyển quyền trưởng nhóm"
                                     className="p-1.5 rounded-lg hover:bg-surface-container-highest text-on-surface-variant hover:text-amber-500"
                                   >
                                     <Settings size={16} />
                                   </button>
                                 )}
-                                <button 
+                                <button
                                   onClick={() => handleKickMember(memberEmail)}
                                   title="Xóa khỏi nhóm"
                                   className="p-1.5 rounded-lg hover:bg-error/10 text-error"
@@ -863,8 +1111,8 @@ const ChatInfoSidebar: React.FC = () => {
                                 </button>
                               </div>
                             )}
-                            {myRole === 'deputy' && !isOwner && !isDeputy && (
-                              <button 
+                            {myRole === "deputy" && !isOwner && !isDeputy && (
+                              <button
                                 onClick={() => handleKickMember(memberEmail)}
                                 title="Xóa khỏi nhóm"
                                 className="p-1.5 rounded-lg hover:bg-error/10 text-error"
@@ -884,11 +1132,137 @@ const ChatInfoSidebar: React.FC = () => {
         </div>
       </div>
 
+      {showTransferOwnerModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/35">
+          <button
+            type="button"
+            className="absolute inset-0 h-full w-full cursor-default"
+            aria-label="Đóng chuyển quyền trưởng nhóm"
+            onClick={() => {
+              if (!isTransferringOwnership) {
+                setShowTransferOwnerModal(false);
+              }
+            }}
+          />
+          <div className="relative z-10 w-full max-w-140 rounded-t-[28px] bg-white dark:bg-surface-container shadow-[0_-16px_40px_rgba(0,0,0,0.18)] border border-outline-variant/10 px-5 pb-6 pt-3">
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-outline-variant/30" />
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-[18px] font-extrabold text-on-surface">
+                  Bầu trưởng nhóm mới
+                </h3>
+                <p className="mt-1 text-[12px] text-on-surface-variant">
+                  Chọn một thành viên để chuyển quyền ngay rồi rời nhóm.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isTransferringOwnership) {
+                    setShowTransferOwnerModal(false);
+                  }
+                }}
+                className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-surface-container-high text-on-surface-variant"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="max-h-[48vh] space-y-2 overflow-y-auto pr-1 custom-scrollbar">
+              {transferOwnerCandidates.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-outline-variant/20 bg-surface-container-low px-4 py-8 text-center">
+                  <p className="text-[13px] font-medium text-on-surface-variant">
+                    Không có thành viên nào khác để chuyển quyền.
+                  </p>
+                </div>
+              ) : (
+                transferOwnerCandidates.map((memberEmail) => {
+                  const isDeputy = (activeChat.deputies || []).includes(
+                    memberEmail,
+                  );
+                  const isSelected = selectedNewOwnerEmail === memberEmail;
+                  return (
+                    <button
+                      key={memberEmail}
+                      type="button"
+                      disabled={isTransferringOwnership}
+                      onClick={() => setSelectedNewOwnerEmail(memberEmail)}
+                      className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+                        isSelected
+                          ? "border-primary/40 bg-primary/5"
+                          : "border-outline-variant/10 bg-surface-container-lowest hover:bg-primary/5"
+                      }`}
+                    >
+                      <img
+                        src={getDisplayAvatar(memberEmail, user, userProfiles)}
+                        className="h-11 w-11 rounded-full object-cover border border-outline-variant/10"
+                        alt=""
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[14px] font-bold text-on-surface">
+                          {getDisplayName(memberEmail, user, userProfiles)}
+                        </p>
+                        <p className="text-[12px] text-on-surface-variant">
+                          {isDeputy ? "CO_ADMIN" : "Thành viên"}
+                        </p>
+                      </div>
+                      <div
+                        className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${
+                          isSelected
+                            ? "border-primary bg-primary"
+                            : "border-outline-variant/40"
+                        }`}
+                      >
+                        {isSelected && (
+                          <Check size={14} className="text-white" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2 border-t border-outline-variant/10 pt-4">
+              <button
+                type="button"
+                disabled={isTransferringOwnership}
+                onClick={() => setShowTransferOwnerModal(false)}
+                className="rounded-xl bg-surface-container-high px-4 py-2 text-[13px] font-semibold text-on-surface disabled:opacity-60"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={
+                  isTransferringOwnership ||
+                  !selectedNewOwnerEmail ||
+                  transferOwnerCandidates.length === 0
+                }
+                onClick={() => {
+                  if (selectedNewOwnerEmail) {
+                    void handleTransferOwnershipAndLeave(selectedNewOwnerEmail);
+                  }
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isTransferringOwnership && (
+                  <Loader2 size={16} className="animate-spin" />
+                )}
+                Bầu và rời nhóm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAutoDeleteModal && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
-          <div className="w-full max-w-[460px] rounded-2xl bg-white dark:bg-surface-container shadow-2xl border border-outline-variant/20 overflow-hidden">
+          <div className="w-full max-w-115 rounded-2xl bg-white dark:bg-surface-container shadow-2xl border border-outline-variant/20 overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20">
-              <h3 className="text-[18px] font-extrabold text-on-surface">Cài đặt tin nhắn tự xóa</h3>
+              <h3 className="text-[18px] font-extrabold text-on-surface">
+                Cài đặt tin nhắn tự xóa
+              </h3>
               <button
                 onClick={() => setShowAutoDeleteModal(false)}
                 type="button"
@@ -900,14 +1274,21 @@ const ChatInfoSidebar: React.FC = () => {
 
             <div className="px-6 py-5 space-y-5">
               {[1, 7, 30].map((days) => (
-                <label key={days} className="flex items-center gap-3 cursor-pointer">
+                <label
+                  key={days}
+                  className="flex items-center gap-3 cursor-pointer"
+                >
                   <input
                     type="radio"
                     checked={pendingAutoDeleteDays === days}
-                    onChange={() => setPendingAutoDeleteDays(days as 1 | 7 | 30)}
+                    onChange={() =>
+                      setPendingAutoDeleteDays(days as 1 | 7 | 30)
+                    }
                     className="w-4 h-4"
                   />
-                  <span className="text-[18px] text-on-surface">{days} ngày</span>
+                  <span className="text-[18px] text-on-surface">
+                    {days} ngày
+                  </span>
                 </label>
               ))}
 
@@ -918,7 +1299,9 @@ const ChatInfoSidebar: React.FC = () => {
                   onChange={() => setPendingAutoDeleteDays(null)}
                   className="w-4 h-4"
                 />
-                <span className="text-[18px] text-on-surface">Không bao giờ</span>
+                <span className="text-[18px] text-on-surface">
+                  Không bao giờ
+                </span>
               </label>
             </div>
 
@@ -932,16 +1315,26 @@ const ChatInfoSidebar: React.FC = () => {
               </button>
               <button
                 onClick={confirmAutoDelete}
-                disabled={savingAutoDelete || pendingAutoDeleteDays === currentAutoDeleteDays}
+                disabled={
+                  savingAutoDelete ||
+                  pendingAutoDeleteDays === currentAutoDeleteDays
+                }
                 className="px-6 py-3 rounded-lg bg-primary text-white font-bold disabled:opacity-50"
                 type="button"
               >
-                {savingAutoDelete ? 'Đang lưu...' : 'Xác nhận'}
+                {savingAutoDelete ? "Đang lưu..." : "Xác nhận"}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <AddMembersModal
+        isOpen={isAddMembersModalOpen}
+        onClose={() => setIsAddMembersModalOpen(false)}
+        conversationId={activeConvId || ""}
+        currentMembers={activeChat?.members || []}
+      />
     </div>
   );
 };
