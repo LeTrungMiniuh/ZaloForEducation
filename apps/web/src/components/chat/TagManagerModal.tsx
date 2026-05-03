@@ -72,30 +72,30 @@ const TagManagerModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
               {(tags || []).map((t: any) => (
                 <div
                   key={t.id}
-                  className="flex items-center justify-between gap-3 p-2 border rounded-md"
+                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-2 border rounded-md"
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <div
                       style={{ background: t.color }}
                       className="w-8 h-8 rounded-full"
                     />
-                    <div>
-                      <div className="font-bold">{t.name}</div>
-                      <div className="text-xs text-on-surface-variant">
+                    <div className="min-w-0">
+                      <div className="truncate font-bold">{t.name}</div>
+                      <div className="truncate text-xs text-on-surface-variant">
                         {t.id}
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                     <button
                       onClick={() => startEdit(t)}
-                      className="p-2 hover:bg-surface-container rounded-md"
+                      className="shrink-0 rounded-md p-2 hover:bg-surface-container"
                     >
                       <Edit3 size={16} />
                     </button>
                     <button
                       onClick={() => handleDelete(t.id)}
-                      className="p-2 hover:bg-error/10 rounded-md text-error"
+                      className="shrink-0 rounded-md p-2 text-error hover:bg-error/10"
                     >
                       <Trash2 size={16} />
                     </button>
