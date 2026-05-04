@@ -1,6 +1,6 @@
-import { StateCreator } from 'zustand';
-import { chatGet, apiRequest } from '../../utils/api';
-import { ChatStore } from '../chatStore';
+import { StateCreator } from "zustand";
+import { chatGet, apiRequest } from "../../utils/api";
+import { ChatStore } from "../chatStore";
 
 export interface ProfileSlice {
   userProfiles: Record<string, any>;
@@ -11,30 +11,38 @@ export interface ProfileSlice {
   loadMultipleProfiles: (emails: string[]) => Promise<void>;
 }
 
-export const createProfileSlice: StateCreator<ChatStore, [], [], ProfileSlice> = (set, get) => ({
+export const createProfileSlice: StateCreator<
+  ChatStore,
+  [],
+  [],
+  ProfileSlice
+> = (set, get) => ({
   userProfiles: {},
   currentUserEmail: null,
 
-  setCurrentUserEmail: (email) => set({ currentUserEmail: email?.toLowerCase() }),
+  setCurrentUserEmail: (email) =>
+    set({ currentUserEmail: email?.toLowerCase() }),
 
-  upsertProfiles: (newProfiles) => 
-    set((state) => ({ 
-      userProfiles: { ...state.userProfiles, ...newProfiles } 
+  upsertProfiles: (newProfiles) =>
+    set((state) => ({
+      userProfiles: { ...state.userProfiles, ...newProfiles },
     })),
-  
+
   loadUserProfile: async (email) => {
     if (!email) return;
     const normalizedEmail = email.trim().toLowerCase();
     const { currentUserEmail, userProfiles } = get();
     if (normalizedEmail === currentUserEmail) return;
-    
+
     const existing = userProfiles[normalizedEmail];
     if (existing && (existing.fullName || existing.fullname)) return;
 
     try {
       let res = await chatGet("/friends/search", { email: normalizedEmail });
       if (!res?.ok || !res?.found) {
-        const fallbackRes = await apiRequest(`/api/chat/friends/search?email=${encodeURIComponent(normalizedEmail)}`);
+        const fallbackRes = await chatGet("/friends/search", {
+          email: normalizedEmail,
+        });
         if (fallbackRes?.ok) {
           const data = fallbackRes.data || {};
           if (data.found && data.user) {
@@ -50,21 +58,26 @@ export const createProfileSlice: StateCreator<ChatStore, [], [], ProfileSlice> =
             [normalizedEmail]: {
               ...state.userProfiles[normalizedEmail],
               ...res.user,
-              email: normalizedEmail
-            }
-          }
+              email: normalizedEmail,
+            },
+          },
         }));
       }
     } catch (err) {
-      console.warn(`[ChatStore] Load profile failed for ${normalizedEmail}`, err);
+      console.warn(
+        `[ChatStore] Load profile failed for ${normalizedEmail}`,
+        err,
+      );
     }
   },
 
   loadMultipleProfiles: async (emails) => {
-    const uniqueEmails = [...new Set(emails.map(e => e.trim().toLowerCase()))];
+    const uniqueEmails = [
+      ...new Set(emails.map((e) => e.trim().toLowerCase())),
+    ];
     const { currentUserEmail, userProfiles } = get();
-    
-    const emailsToFetch = uniqueEmails.filter(email => {
+
+    const emailsToFetch = uniqueEmails.filter((email) => {
       if (email === currentUserEmail) return false;
       const existing = userProfiles[email];
       return !(existing && (existing.fullName || existing.fullname));
@@ -74,6 +87,8 @@ export const createProfileSlice: StateCreator<ChatStore, [], [], ProfileSlice> =
 
     // Parallel fetch with limit or just all at once if small
     // For now, all at once
-    await Promise.allSettled(emailsToFetch.map(email => get().loadUserProfile(email)));
+    await Promise.allSettled(
+      emailsToFetch.map((email) => get().loadUserProfile(email)),
+    );
   },
 });

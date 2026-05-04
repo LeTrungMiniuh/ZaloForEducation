@@ -19,7 +19,9 @@ const resolveApiUrl = (): string => {
     return `http://${host}:3000`;
   }
 
-  return Platform.OS === "android" ? "http://10.0.2.2:3000" : "http://localhost:3000";
+  return Platform.OS === "android"
+    ? "http://10.0.2.2:3000"
+    : "http://localhost:3000";
 };
 
 export const API_URL = resolveApiUrl();
@@ -33,14 +35,20 @@ export interface ApiResponse<T = any> {
   [key: string]: any;
 }
 
-export async function apiRequest<T = any>(endpoint: string, options: any = {}): Promise<ApiResponse<T>> {
+export async function apiRequest<T = any>(
+  endpoint: string,
+  options: any = {},
+): Promise<ApiResponse<T>> {
   const token = await AsyncStorage.getItem("token");
   const timeoutMs = Number(options.timeoutMs || DEFAULT_TIMEOUT_MS);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   const headers: Record<string, string> = {
-    ...(!options.headers?.["Content-Type"] && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
+    ...(!options.headers?.["Content-Type"] &&
+    !(options.body instanceof FormData)
+      ? { "Content-Type": "application/json" }
+      : {}),
     ...options.headers,
   };
 
@@ -83,7 +91,12 @@ export async function apiRequest<T = any>(endpoint: string, options: any = {}): 
       data = { message: text };
     }
 
-    return { ok: response.ok, status: response.status, ...data, data: data?.data ?? data };
+    return {
+      ok: response.ok,
+      status: response.status,
+      ...data,
+      data: data?.data ?? data,
+    };
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error?.name === "AbortError") {
@@ -98,10 +111,10 @@ export const chatGet = (path: string, query?: any) => {
   return apiRequest(`/chat${path}${queryString}`, { method: "GET" });
 };
 
-export const chatPost = (path: string, body: any) => 
+export const chatPost = (path: string, body: any) =>
   apiRequest(`/chat${path}`, { method: "POST", body: JSON.stringify(body) });
 
-export const apiPut = (path: string, body: any) => 
+export const apiPut = (path: string, body: any) =>
   apiRequest(`${path}`, { method: "PUT", body: JSON.stringify(body) });
 
 export const apiGet = (path: string, query?: any) => {
@@ -109,29 +122,60 @@ export const apiGet = (path: string, query?: any) => {
   return apiRequest(`${path}${queryString}`, { method: "GET" });
 };
 
-export const apiPost = (path: string, body: any) => 
+export const apiPost = (path: string, body: any) =>
   apiRequest(`${path}`, { method: "POST", body: JSON.stringify(body) });
 
-export const apiPatch = (path: string, body: any) => 
+export const apiPatch = (path: string, body: any) =>
   apiRequest(`${path}`, { method: "PATCH", body: JSON.stringify(body) });
 
-export const apiDelete = (path: string, body?: any) => 
-  apiRequest(`${path}`, { method: "DELETE", body: body ? JSON.stringify(body) : undefined });
+export const apiDelete = (path: string, body?: any) =>
+  apiRequest(`${path}`, {
+    method: "DELETE",
+    body: body ? JSON.stringify(body) : undefined,
+  });
 
 export const apiUpload = async (endpoint: string, file: any) => {
   const formData = new FormData();
-  formData.append('file', {
-    uri: Platform.OS === 'android' ? file.uri : file.uri.replace('file://', ''),
-    name: file.name || `upload_${Date.now()}.jpg`,
-    type: file.type || 'image/jpeg',
-  } as any);
-  return apiRequest(endpoint, { method: "POST", body: formData, timeoutMs: 60000 });
+  // On web, FormData expects a Blob/File; convert URI to Blob first
+  if (Platform.OS === "web") {
+    try {
+      const uri: string = file.uri;
+      let blob: Blob;
+      if (uri.startsWith("data:")) {
+        const res = await fetch(uri);
+        blob = await res.blob();
+      } else {
+        const res = await fetch(uri);
+        blob = await res.blob();
+      }
+      const filename = file.name || `upload_${Date.now()}.jpg`;
+      formData.append("file", blob, filename as any);
+    } catch (err) {
+      formData.append("file", file as any);
+    }
+  } else {
+    formData.append("file", {
+      uri:
+        Platform.OS === "android" ? file.uri : file.uri.replace("file://", ""),
+      name: file.name || `upload_${Date.now()}.jpg`,
+      type: file.type || "image/jpeg",
+    } as any);
+  }
+
+  return apiRequest(endpoint, {
+    method: "POST",
+    body: formData,
+    timeoutMs: 60000,
+  });
 };
 
-export const chatPatch = (path: string, body: any) => 
+export const chatPatch = (path: string, body: any) =>
   apiRequest(`/chat${path}`, { method: "PATCH", body: JSON.stringify(body) });
 
-export const chatDelete = (path: string, body?: any) => 
-  apiRequest(`/chat${path}`, { method: "DELETE", body: body ? JSON.stringify(body) : undefined });
+export const chatDelete = (path: string, body?: any) =>
+  apiRequest(`/chat${path}`, {
+    method: "DELETE",
+    body: body ? JSON.stringify(body) : undefined,
+  });
 
 export const chatUpload = (file: any) => apiUpload("/chat/uploads", file);

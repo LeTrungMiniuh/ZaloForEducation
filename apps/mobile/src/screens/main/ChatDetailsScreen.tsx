@@ -1,34 +1,39 @@
-import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  Image, 
-  Switch, 
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Image,
+  Switch,
   Alert,
-  Dimensions
-} from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors } from '../../constants/Theme';
-import { useChatStore } from '../../store/chatStore';
-import { useAuth } from '../../context/AuthContext';
-import { chatUpload } from '../../utils/api';
-import { normalizeAttachment } from '../../store/chatHelpers';
-import { LinearGradient } from 'expo-linear-gradient';
+  Dimensions,
+} from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import { Modal, ActivityIndicator } from "react-native";
+import { ASSETS } from "../../utils/assets";
+import { Colors } from "../../constants/Theme";
+import { useChatStore } from "../../store/chatStore";
+import { useAuth } from "../../context/AuthContext";
+import { chatUpload } from "../../utils/api";
+import { normalizeAttachment } from "../../store/chatHelpers";
+import { LinearGradient } from "expo-linear-gradient";
 
-const { width } = Dimensions.get('window');
+const { width } = Dimensions.get("window");
 
 const ChatDetailsScreen = ({ route, navigation }: any) => {
   const { conversationId } = route.params;
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { 
-    conversations, 
-    messages, 
-    userProfiles, 
+  const {
+    conversations,
+    messages,
+    userProfiles,
     clearHistory,
     isConversationMuted,
     muteConversationFor,
@@ -37,32 +42,56 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
     updateMemberRole,
     updateGroupInfo,
     dissolveGroup,
-    addMembers
+    addMembers,
   } = useChatStore();
 
-  const chat = conversations.find(c => c.id === conversationId);
+  const chat = conversations.find((c) => c.id === conversationId);
   const [isFavorite, setIsFavorite] = useState(false);
   const [isPinned, setIsPinned] = useState(false);
   const [isHidden, setIsHidden] = useState(false);
+  const [showSuccessorPicker, setShowSuccessorPicker] = useState(false);
+  const [succLoading, setSuccLoading] = useState(false);
+  const [successorMode, setSuccessorMode] = useState<"transfer" | "leave">(
+    "transfer",
+  );
 
   if (!chat) return null;
 
-  const partnerEmail = chat.type === 'direct'
-    ? (Array.isArray(chat.members) ? chat.members.find((m: string) => m !== user?.email) : undefined)
-    : undefined;
+  const partnerEmail =
+    chat.type === "direct"
+      ? Array.isArray(chat.members)
+        ? chat.members.find((m: string) => m !== user?.email)
+        : undefined
+      : undefined;
 
   const profile = partnerEmail ? userProfiles[partnerEmail] : null;
-  const chatName = profile?.nickname || profile?.fullName || profile?.fullname || partnerEmail || chat.name || "Hội thoại";
-  const chatAvatar = profile?.avatarUrl || profile?.urlAvatar || chat.avatar || 'https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png';
+  const chatName =
+    profile?.nickname ||
+    profile?.fullName ||
+    profile?.fullname ||
+    partnerEmail ||
+    chat.name ||
+    "Hội thoại";
+  const chatAvatar =
+    profile?.avatarUrl ||
+    profile?.urlAvatar ||
+    chat.avatar ||
+    "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
 
-  const allAttachments = messages.flatMap((m: any) => {
-    const arr = [...(m.media || []), ...(m.files || [])];
-    return arr.map(a => ({ ...a, createdAt: m.createdAt }));
-  }).map(f => normalizeAttachment(f)).reverse();
+  const allAttachments = messages
+    .flatMap((m: any) => {
+      const arr = [...(m.media || []), ...(m.files || [])];
+      return arr.map((a) => ({ ...a, createdAt: m.createdAt }));
+    })
+    .map((f) => normalizeAttachment(f))
+    .reverse();
 
-  const mediaFiles = allAttachments.filter(f => 
-    f.mimeType?.startsWith('image/') || f.mimeType?.startsWith('video/')
-  ).slice(0, 4);
+  const mediaFiles = allAttachments
+    .filter(
+      (f) =>
+        f.mimeType?.startsWith("image/") || f.mimeType?.startsWith("video/"),
+    )
+    .slice(0, 4);
 
   const handleClearChat = () => {
     Alert.alert(
@@ -70,37 +99,52 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
       "Bạn có chắc chắn muốn xóa toàn bộ tin nhắn? Hành động này không thể hoàn tác.",
       [
         { text: "Hủy", style: "cancel" },
-        { 
-          text: "Xóa", 
+        {
+          text: "Xóa",
           style: "destructive",
           onPress: async () => {
             try {
               await clearHistory(conversationId);
               navigation.goBack();
-            } catch (err) { Alert.alert("Lỗi", "Không thể xóa lịch sử"); }
-          }
-        }
-      ]
+            } catch (err) {
+              Alert.alert("Lỗi", "Không thể xóa lịch sử");
+            }
+          },
+        },
+      ],
     );
   };
 
   const handleLeaveGroup = () => {
+    const isOwner = chat.owner === user?.email || chat.admin === user?.email;
+    if (isOwner && (chat.members?.length || 0) > 1) {
+      // Owners must choose a successor before leaving.
+      setSuccessorMode("leave");
+      setShowSuccessorPicker(true);
+      return;
+    }
+
     Alert.alert(
       "Rời nhóm",
       "Bạn sẽ không còn nhận được tin nhắn từ nhóm này.",
       [
         { text: "Hủy", style: "cancel" },
-        { 
-          text: "Rời nhóm", 
+        {
+          text: "Rời nhóm",
           style: "destructive",
           onPress: async () => {
             try {
               await removeMember(conversationId, user?.email || "");
-              navigation.navigate('Home');
-            } catch (err: any) { Alert.alert("Lỗi", err.response?.data?.message || "Không thể rời nhóm"); }
-          }
-        }
-      ]
+              navigation.navigate("Main");
+            } catch (err: any) {
+              Alert.alert(
+                "Lỗi",
+                err.response?.data?.message || "Không thể rời nhóm",
+              );
+            }
+          },
+        },
+      ],
     );
   };
 
@@ -110,56 +154,97 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
       "Tất cả thành viên sẽ bị xóa và lịch sử chat sẽ bị xóa.",
       [
         { text: "Hủy", style: "cancel" },
-        { 
-          text: "Giải tán", 
+        {
+          text: "Giải tán",
           style: "destructive",
           onPress: async () => {
             try {
               await dissolveGroup(conversationId);
-              navigation.navigate('Home');
-            } catch (err: any) { Alert.alert("Lỗi", err.response?.data?.message || "Không thể giải tán nhóm"); }
-          }
-        }
-      ]
+              navigation.navigate("Main");
+            } catch (err: any) {
+              Alert.alert(
+                "Lỗi",
+                err.response?.data?.message || "Không thể giải tán nhóm",
+              );
+            }
+          },
+        },
+      ],
     );
   };
 
   const handleKickMember = (email: string) => {
-    Alert.alert(
-      "Xóa thành viên",
-      `Xóa ${email} khỏi nhóm?`,
-      [
-        { text: "Hủy", style: "cancel" },
-        { 
-          text: "Xóa", 
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await removeMember(conversationId, email);
-            } catch (err: any) { Alert.alert("Lỗi", err.response?.data?.message || "Không thể xóa thành viên"); }
+    Alert.alert("Xóa thành viên", `Xóa ${email} khỏi nhóm?`, [
+      { text: "Hủy", style: "cancel" },
+      {
+        text: "Xóa",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await removeMember(conversationId, email);
+          } catch (err: any) {
+            Alert.alert(
+              "Lỗi",
+              err.response?.data?.message || "Không thể xóa thành viên",
+            );
           }
-        }
-      ]
-    );
+        },
+      },
+    ]);
   };
 
-  const handleChangeRole = (email: string, role: 'owner' | 'deputy' | 'member') => {
-    const label = role === 'owner' ? 'Trưởng nhóm' : role === 'deputy' ? 'Phó nhóm' : 'Thành viên';
-    Alert.alert(
-      "Thay đổi vai trò",
-      `Đặt ${email} làm ${label}?`,
-      [
-        { text: "Hủy", style: "cancel" },
-        { 
-          text: "Xác nhận", 
-          onPress: async () => {
-            try {
-              await updateMemberRole(conversationId, email, role);
-            } catch (err: any) { Alert.alert("Lỗi", err.response?.data?.message || "Không thể đổi vai trò"); }
+  const handleSelectSuccessor = async (targetEmail: string) => {
+    setSuccLoading(true);
+    try {
+      // Transfer ownership
+      await updateMemberRole(conversationId, targetEmail, "owner");
+
+      if (successorMode === "leave") {
+        // After handing over ownership, leave the group.
+        await removeMember(conversationId, user?.email || "");
+        navigation.navigate("Main");
+      } else {
+        // Keep the current user in the group after transferring ownership.
+        await useChatStore.getState().fetchConversations();
+      }
+
+      setShowSuccessorPicker(false);
+    } catch (err: any) {
+      Alert.alert(
+        "Lỗi",
+        err.response?.data?.message || "Không thể chuyển quyền hoặc rời nhóm",
+      );
+    } finally {
+      setSuccLoading(false);
+    }
+  };
+
+  const handleChangeRole = (
+    email: string,
+    role: "owner" | "deputy" | "member",
+  ) => {
+    const label =
+      role === "owner"
+        ? "Trưởng nhóm"
+        : role === "deputy"
+          ? "Phó nhóm"
+          : "Thành viên";
+    Alert.alert("Thay đổi vai trò", `Đặt ${email} làm ${label}?`, [
+      { text: "Hủy", style: "cancel" },
+      {
+        text: "Xác nhận",
+        onPress: async () => {
+          try {
+            await updateMemberRole(conversationId, email, role);
+          } catch (err: any) {
+            Alert.alert(
+              "Lỗi",
+              err.response?.data?.message || "Không thể đổi vai trò",
+            );
           }
-        }
-      ]
-    );
+        },
+      },
+    ]);
   };
 
   const handleUpdateGroupName = () => {
@@ -168,24 +253,26 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
       "Nhập tên nhóm mới",
       [
         { text: "Hủy", style: "cancel" },
-        { 
-          text: "Lưu", 
+        {
+          text: "Lưu",
           onPress: async (name: string | undefined) => {
             if (!name) return;
             try {
               await updateGroupInfo(conversationId, { name });
-            } catch (err: any) { Alert.alert("Lỗi", "Không thể đổi tên"); }
-          }
-        }
+            } catch (err: any) {
+              Alert.alert("Lỗi", "Không thể đổi tên");
+            }
+          },
+        },
       ],
-      'plain-text',
-      chat.name
+      "plain-text",
+      chat.name,
     );
   };
 
   const handleUpdateGroupAvatar = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: 'images',
+      mediaTypes: "images",
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
@@ -195,11 +282,12 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
       try {
         const uploadRes = await chatUpload({
           uri: result.assets[0].uri,
-          name: 'group_avatar.jpg',
-          type: 'image/jpeg'
+          name: "group_avatar.jpg",
+          type: "image/jpeg",
         });
         if (uploadRes.ok) {
-          const avatarUrl = uploadRes.data?.fileUrl || uploadRes.data?.dataUrl || '';
+          const avatarUrl =
+            uploadRes.data?.fileUrl || uploadRes.data?.dataUrl || "";
           await updateGroupInfo(conversationId, { avatar: avatarUrl });
         } else {
           Alert.alert("Lỗi", "Không thể tải ảnh lên");
@@ -216,13 +304,27 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
     </View>
   );
 
-  const renderMenuItem = (icon: string, title: string, rightElement?: React.ReactNode, onPress?: () => void, color = '#1f2631') => (
-    <TouchableOpacity style={styles.menuItem} onPress={onPress} disabled={!onPress}>
+  const renderMenuItem = (
+    icon: string,
+    title: string,
+    rightElement?: React.ReactNode,
+    onPress?: () => void,
+    color = "#1f2631",
+  ) => (
+    <TouchableOpacity
+      style={styles.menuItem}
+      onPress={onPress}
+      disabled={!onPress}
+    >
       <View style={styles.menuLeft}>
         <Text style={[styles.menuIcon, { color }]}>{icon}</Text>
         <Text style={styles.menuText}>{title}</Text>
       </View>
-      {rightElement ? rightElement : <Text style={styles.chevron}>chevron_right</Text>}
+      {rightElement ? (
+        rightElement
+      ) : (
+        <Text style={styles.chevron}>chevron_right</Text>
+      )}
     </TouchableOpacity>
   );
 
@@ -230,44 +332,60 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
     <View style={styles.container}>
       {/* Header Bar */}
       <View style={[styles.header, { paddingTop: insets.top }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+        >
           <Text style={styles.headerIcon}>arrow_back_ios</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Tuỳ chọn</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 40 }}
+      >
         {/* Profile Section */}
         <View style={styles.profileBox}>
-          <TouchableOpacity 
+          <TouchableOpacity
             activeOpacity={0.8}
-            onPress={chat.type === 'group' ? handleUpdateGroupAvatar : undefined}
+            onPress={
+              chat.type === "group" ? handleUpdateGroupAvatar : undefined
+            }
           >
             <Image source={{ uri: chatAvatar }} style={styles.largeAvatar} />
-            {chat.type === 'group' && (
+            {chat.type === "group" && (
               <View style={styles.avatarEditBadge}>
                 <Text style={styles.avatarEditIcon}>camera_alt</Text>
               </View>
             )}
           </TouchableOpacity>
           <Text style={styles.profileName}>{chatName}</Text>
-          
+
           <View style={styles.quickActions}>
             <TouchableOpacity style={styles.actionItem}>
-              <View style={styles.actionCircle}><Text style={styles.actionIcon}>search</Text></View>
+              <View style={styles.actionCircle}>
+                <Text style={styles.actionIcon}>search</Text>
+              </View>
               <Text style={styles.actionLabel}>Tìm{"\n"}tin nhắn</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionItem}>
-              <View style={styles.actionCircle}><Text style={styles.actionIcon}>person</Text></View>
+              <View style={styles.actionCircle}>
+                <Text style={styles.actionIcon}>person</Text>
+              </View>
               <Text style={styles.actionLabel}>Trang{"\n"}cá nhân</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionItem}>
-              <View style={styles.actionCircle}><Text style={styles.actionIcon}>palette</Text></View>
+              <View style={styles.actionCircle}>
+                <Text style={styles.actionIcon}>palette</Text>
+              </View>
               <Text style={styles.actionLabel}>Đổi{"\n"}hình nền</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionItem}>
-              <View style={styles.actionCircle}><Text style={styles.actionIcon}>notifications_none</Text></View>
+              <View style={styles.actionCircle}>
+                <Text style={styles.actionIcon}>notifications_none</Text>
+              </View>
               <Text style={styles.actionLabel}>Tắt{"\n"}thông báo</Text>
             </TouchableOpacity>
           </View>
@@ -277,17 +395,19 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
 
         {/* Settings List */}
         {renderMenuItem("edit", "Đổi tên gợi nhớ")}
-        {renderMenuItem("star_outline", "Đánh dấu bạn thân", 
-          <Switch value={isFavorite} onValueChange={setIsFavorite} />
+        {renderMenuItem(
+          "star_outline",
+          "Đánh dấu bạn thân",
+          <Switch value={isFavorite} onValueChange={setIsFavorite} />,
         )}
         {renderMenuItem("schedule", "Nhật ký chung")}
 
         <View style={styles.divider} />
 
         {/* Media Section */}
-        <TouchableOpacity 
-          style={styles.mediaRow} 
-          onPress={() => navigation.navigate('ChatGallery', { conversationId })}
+        <TouchableOpacity
+          style={styles.mediaRow}
+          onPress={() => navigation.navigate("ChatGallery", { conversationId })}
         >
           <View style={styles.mediaHeader}>
             <View style={styles.menuLeft}>
@@ -299,10 +419,16 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
           <View style={styles.mediaPreview}>
             {mediaFiles.length > 0 ? (
               mediaFiles.map((m, i) => (
-                <Image key={i} source={{ uri: m.dataUrl || m.url }} style={styles.previewImg} />
+                <Image
+                  key={i}
+                  source={{ uri: m.dataUrl || m.url }}
+                  style={styles.previewImg}
+                />
               ))
             ) : (
-              <View style={styles.emptyMedia}><Text style={styles.emptyText}>Chưa có media</Text></View>
+              <View style={styles.emptyMedia}>
+                <Text style={styles.emptyText}>Chưa có media</Text>
+              </View>
             )}
             <View style={styles.previewMore}>
               <Text style={styles.headerIcon}>arrow_forward</Text>
@@ -318,95 +444,273 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
 
         <View style={styles.divider} />
 
-        {renderMenuItem("push_pin", "Ghim trò chuyện", 
-          <Switch value={isPinned} onValueChange={setIsPinned} />
+        {renderMenuItem(
+          "push_pin",
+          "Ghim trò chuyện",
+          <Switch value={isPinned} onValueChange={setIsPinned} />,
         )}
-        {renderMenuItem("visibility_off", "Ẩn trò chuyện", 
-          <Switch value={isHidden} onValueChange={setIsHidden} />
+        {renderMenuItem(
+          "visibility_off",
+          "Ẩn trò chuyện",
+          <Switch value={isHidden} onValueChange={setIsHidden} />,
         )}
-        {renderMenuItem("phone_in_talk", "Báo cuộc gọi đến", 
-          <Switch value={true} onValueChange={() => {}} />
+        {renderMenuItem(
+          "phone_in_talk",
+          "Báo cuộc gọi đến",
+          <Switch value={true} onValueChange={() => {}} />,
         )}
         {renderMenuItem("person_outline", "Cài đặt cá nhân")}
-        {renderMenuItem("history", "Tin nhắn tự xóa", <Text style={styles.subText}>Không tự xóa</Text>)}
+        {renderMenuItem(
+          "history",
+          "Tin nhắn tự xóa",
+          <Text style={styles.subText}>Không tự xóa</Text>,
+        )}
 
         <View style={styles.divider} />
 
-        {renderMenuItem("report", "Báo xấu", undefined, undefined, '#ef4444')}
+        {renderMenuItem("report", "Báo xấu", undefined, undefined, "#ef4444")}
         {renderMenuItem("block", "Quản lý chặn")}
         {renderMenuItem("storage", "Dung lượng trò chuyện")}
-        {renderMenuItem("delete_outline", "Xóa lịch sử trò chuyện", undefined, handleClearChat, '#ef4444')}
+        {renderMenuItem(
+          "delete_outline",
+          "Xóa lịch sử trò chuyện",
+          undefined,
+          handleClearChat,
+          "#ef4444",
+        )}
 
-        {chat.type === 'group' && (
+        {chat.type === "group" && (
           <>
             <View style={styles.divider} />
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Quản lý nhóm</Text>
             </View>
-            {renderMenuItem("edit", "Đổi tên nhóm", undefined, handleUpdateGroupName)}
-            {(chat.owner === user?.email || chat.admin === user?.email) && (
-              renderMenuItem("delete_forever", "Giải tán nhóm", undefined, handleDissolveGroup, '#ef4444')
+            {renderMenuItem(
+              "edit",
+              "Đổi tên nhóm",
+              undefined,
+              handleUpdateGroupName,
             )}
-            {renderMenuItem("logout", "Rời nhóm", undefined, handleLeaveGroup, '#ef4444')}
+            {(chat.owner === user?.email || chat.admin === user?.email) &&
+              renderMenuItem(
+                "delete_forever",
+                "Giải tán nhóm",
+                undefined,
+                handleDissolveGroup,
+                "#ef4444",
+              )}
+            {(chat.owner === user?.email || chat.admin === user?.email) &&
+              renderMenuItem(
+                "how_to_vote",
+                "Bầu lại trưởng nhóm",
+                undefined,
+                () => {
+                  setSuccessorMode("transfer");
+                  setShowSuccessorPicker(true);
+                },
+              )}
+            {renderMenuItem(
+              "logout",
+              "Rời nhóm",
+              undefined,
+              handleLeaveGroup,
+              "#ef4444",
+            )}
 
             <View style={styles.divider} />
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Thành viên ({chat.members?.length || 0})</Text>
+              <Text style={styles.sectionTitle}>
+                Thành viên ({chat.members?.length || 0})
+              </Text>
             </View>
-            <TouchableOpacity style={styles.addMemberBtn} onPress={() => {
-               Alert.prompt("Thêm thành viên", "Nhập email", async (email) => {
+            <TouchableOpacity
+              style={styles.addMemberBtn}
+              onPress={() => {
+                Alert.prompt("Thêm thành viên", "Nhập email", async (email) => {
                   if (email) await addMembers(conversationId, [email]);
-               });
-            }}>
-               <Text style={styles.addMemberIcon}>add</Text>
-               <Text style={styles.addMemberText}>Thêm thành viên</Text>
+                });
+              }}
+            >
+              <Text style={styles.addMemberIcon}>add</Text>
+              <Text style={styles.addMemberText}>Thêm thành viên</Text>
             </TouchableOpacity>
 
             {chat.members?.map((m: string) => {
-               const p = userProfiles[m.trim().toLowerCase()];
-               const isMe = m === user?.email;
-               const isOwner = chat.owner === m || chat.admin === m;
-               const isDeputy = (chat.deputies || []).includes(m);
-               const myRole = (chat.owner === user?.email || chat.admin === user?.email) ? 'owner' : (chat.deputies || []).includes(user?.email || "") ? 'deputy' : 'member';
+              const p = userProfiles[m.trim().toLowerCase()];
+              const isMe = m === user?.email;
+              const isOwner = chat.owner === m || chat.admin === m;
+              const isDeputy = (chat.deputies || []).includes(m);
+              const myRole =
+                chat.owner === user?.email || chat.admin === user?.email
+                  ? "owner"
+                  : (chat.deputies || []).includes(user?.email || "")
+                    ? "deputy"
+                    : "member";
 
-               return (
-                 <View key={m} style={styles.memberItem}>
-                    <Image source={{ uri: p?.avatarUrl || 'https://via.placeholder.com/150' }} style={styles.memberAvatar} />
-                    <View style={styles.memberInfo}>
-                       <Text style={styles.memberName}>{p?.nickname || p?.fullName || m} {isMe && "(Bạn)"}</Text>
-                       <Text style={styles.memberRole}>
-                          {isOwner ? "Trưởng nhóm" : isDeputy ? "Phó nhóm" : "Thành viên"}
-                       </Text>
+              return (
+                <View key={m} style={styles.memberItem}>
+                  <Image
+                    source={
+                      p?.avatarUrl
+                        ? { uri: p?.avatarUrl }
+                        : ASSETS.DEFAULT_AVATAR
+                    }
+                    style={styles.memberAvatar}
+                  />
+                  <View style={styles.memberInfo}>
+                    <Text style={styles.memberName}>
+                      {p?.nickname || p?.fullName || m} {isMe && "(Bạn)"}
+                    </Text>
+                    <Text style={styles.memberRole}>
+                      {isOwner
+                        ? "Trưởng nhóm"
+                        : isDeputy
+                          ? "Phó nhóm"
+                          : "Thành viên"}
+                    </Text>
+                  </View>
+                  {!isMe && (
+                    <View style={styles.memberActions}>
+                      {myRole === "owner" && (
+                        <>
+                          {!isOwner && (
+                            <TouchableOpacity
+                              onPress={() =>
+                                handleChangeRole(
+                                  m,
+                                  isDeputy ? "member" : "deputy",
+                                )
+                              }
+                            >
+                              <Text
+                                style={[
+                                  styles.actionIconSm,
+                                  { color: Colors.primary },
+                                ]}
+                              >
+                                {isDeputy ? "shield_outlined" : "shield"}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                          {!isOwner && (
+                            <TouchableOpacity
+                              onPress={() => handleChangeRole(m, "owner")}
+                            >
+                              <Text
+                                style={[
+                                  styles.actionIconSm,
+                                  { color: "#f59e0b" },
+                                ]}
+                              >
+                                star
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </>
+                      )}
+                      {(myRole === "owner" ||
+                        (myRole === "deputy" && !isOwner && !isDeputy)) && (
+                        <TouchableOpacity onPress={() => handleKickMember(m)}>
+                          <Text
+                            style={[styles.actionIconSm, { color: "#ef4444" }]}
+                          >
+                            person_remove
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
-                    {!isMe && (
-                       <View style={styles.memberActions}>
-                          {myRole === 'owner' && (
-                             <>
-                                {!isOwner && (
-                                   <TouchableOpacity onPress={() => handleChangeRole(m, isDeputy ? 'member' : 'deputy')}>
-                                      <Text style={[styles.actionIconSm, { color: Colors.primary }]}>{isDeputy ? "shield_outlined" : "shield"}</Text>
-                                   </TouchableOpacity>
-                                )}
-                                {!isOwner && (
-                                   <TouchableOpacity onPress={() => handleChangeRole(m, 'owner')}>
-                                      <Text style={[styles.actionIconSm, { color: '#f59e0b' }]}>star</Text>
-                                   </TouchableOpacity>
-                                )}
-                             </>
-                          )}
-                          {(myRole === 'owner' || (myRole === 'deputy' && !isOwner && !isDeputy)) && (
-                             <TouchableOpacity onPress={() => handleKickMember(m)}>
-                                <Text style={[styles.actionIconSm, { color: '#ef4444' }]}>person_remove</Text>
-                             </TouchableOpacity>
-                          )}
-                       </View>
-                    )}
-                 </View>
-               );
+                  )}
+                </View>
+              );
             })}
           </>
         )}
       </ScrollView>
+      <Modal visible={showSuccessorPicker} animationType="slide" transparent>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.4)",
+            justifyContent: "center",
+          }}
+        >
+          <View
+            style={{
+              margin: 20,
+              backgroundColor: "#fff",
+              borderRadius: 8,
+              padding: 16,
+              maxHeight: "80%",
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: "700", marginBottom: 12 }}>
+              Chọn người kế nhiệm trưởng nhóm
+            </Text>
+            <ScrollView>
+              {(chat.members || [])
+                .filter((m: string) => m !== user?.email)
+                .map((m: string) => {
+                  const p = userProfiles[m.trim().toLowerCase()];
+                  return (
+                    <TouchableOpacity
+                      key={m}
+                      onPress={() => handleSelectSuccessor(m)}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingVertical: 10,
+                      }}
+                    >
+                      <Image
+                        source={
+                          p?.avatarUrl
+                            ? { uri: p?.avatarUrl }
+                            : ASSETS.DEFAULT_AVATAR
+                        }
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 20,
+                          marginRight: 12,
+                        }}
+                      />
+                      <Text style={{ fontSize: 15 }}>
+                        {p?.nickname || p?.fullName || m}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+            </ScrollView>
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "flex-end",
+                marginTop: 12,
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => {
+                  setShowSuccessorPicker(false);
+                  setSuccessorMode("transfer");
+                }}
+                style={{ padding: 8 }}
+              >
+                <Text style={{ color: "#6b7280" }}>Hủy</Text>
+              </TouchableOpacity>
+              <View style={{ width: 12 }} />
+              <View style={{ padding: 8 }}>
+                {succLoading ? (
+                  <ActivityIndicator />
+                ) : (
+                  <Text style={{ color: Colors.primary }}>
+                    {successorMode === "leave" ? "Bầu rồi rời" : "Bầu trưởng"}
+                  </Text>
+                )}
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -414,12 +718,12 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingBottom: 12,
     backgroundColor: Colors.primary,
@@ -428,17 +732,17 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   headerIcon: {
-    fontFamily: 'Material Symbols Outlined',
+    fontFamily: "Material Symbols Outlined",
     fontSize: 22,
-    color: '#fff',
+    color: "#fff",
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontWeight: "bold",
+    color: "#fff",
   },
   profileBox: {
-    alignItems: 'center',
+    alignItems: "center",
     paddingTop: 30,
     paddingBottom: 20,
   },
@@ -449,121 +753,121 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   avatarEditBadge: {
-    position: 'absolute',
+    position: "absolute",
     right: 0,
     bottom: 16,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: "#f1f5f9",
     width: 32,
     height: 32,
     borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: "#fff",
     elevation: 2,
   },
   avatarEditIcon: {
-    fontFamily: 'Material Symbols Outlined',
+    fontFamily: "Material Symbols Outlined",
     fontSize: 18,
-    color: '#475569',
+    color: "#475569",
   },
   profileName: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1f2631',
+    fontWeight: "bold",
+    color: "#1f2631",
     marginBottom: 24,
   },
   quickActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
     paddingHorizontal: 20,
   },
   actionItem: {
-    alignItems: 'center',
+    alignItems: "center",
     width: width / 4 - 20,
   },
   actionCircle: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#f1f5f9',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#f1f5f9",
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 8,
   },
   actionIcon: {
-    fontFamily: 'Material Symbols Outlined',
+    fontFamily: "Material Symbols Outlined",
     fontSize: 24,
-    color: '#475569',
+    color: "#475569",
   },
   actionLabel: {
     fontSize: 12,
-    color: '#475569',
-    textAlign: 'center',
-    fontWeight: '500',
+    color: "#475569",
+    textAlign: "center",
+    fontWeight: "500",
   },
   divider: {
     height: 8,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: "#f1f5f9",
   },
   sectionHeader: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   sectionTitle: {
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     color: Colors.primary,
   },
   menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
+    borderBottomColor: "#f1f5f9",
   },
   menuLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   menuIcon: {
-    fontFamily: 'Material Symbols Outlined',
+    fontFamily: "Material Symbols Outlined",
     fontSize: 22,
     marginRight: 16,
-    color: '#475569',
+    color: "#475569",
   },
   menuText: {
     fontSize: 16,
-    color: '#1f2631',
-    fontWeight: '500',
+    color: "#1f2631",
+    fontWeight: "500",
   },
   chevron: {
-    fontFamily: 'Material Symbols Outlined',
+    fontFamily: "Material Symbols Outlined",
     fontSize: 20,
-    color: '#cbd5e1',
+    color: "#cbd5e1",
   },
   subText: {
     fontSize: 14,
-    color: '#94a3b8',
+    color: "#94a3b8",
   },
   mediaRow: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     paddingBottom: 16,
   },
   mediaHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
   mediaPreview: {
-    flexDirection: 'row',
+    flexDirection: "row",
     paddingHorizontal: 16,
     gap: 8,
   },
@@ -571,36 +875,36 @@ const styles = StyleSheet.create({
     width: (width - 64) / 4,
     height: (width - 64) / 4,
     borderRadius: 8,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: "#f1f5f9",
   },
   previewMore: {
     width: (width - 64) / 4,
     height: (width - 64) / 4,
     borderRadius: 8,
-    backgroundColor: '#f1f5f9',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#f1f5f9",
+    justifyContent: "center",
+    alignItems: "center",
   },
   emptyMedia: {
     flex: 1,
     height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   emptyText: {
-    color: '#94a3b8',
+    color: "#94a3b8",
     fontSize: 13,
   },
   addMemberBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     padding: 16,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
+    borderBottomColor: "#f1f5f9",
   },
   addMemberIcon: {
-    fontFamily: 'Material Symbols Outlined',
+    fontFamily: "Material Symbols Outlined",
     fontSize: 24,
     color: Colors.primary,
     marginRight: 12,
@@ -608,16 +912,16 @@ const styles = StyleSheet.create({
   addMemberText: {
     fontSize: 16,
     color: Colors.primary,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   memberItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     padding: 12,
     paddingHorizontal: 16,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: '#f8fafc',
+    borderBottomColor: "#f8fafc",
   },
   memberAvatar: {
     width: 40,
@@ -630,22 +934,22 @@ const styles = StyleSheet.create({
   },
   memberName: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#1e293b',
+    fontWeight: "600",
+    color: "#1e293b",
   },
   memberRole: {
     fontSize: 12,
-    color: '#64748b',
+    color: "#64748b",
     marginTop: 2,
   },
   memberActions: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 16,
   },
   actionIconSm: {
-    fontFamily: 'Material Symbols Outlined',
+    fontFamily: "Material Symbols Outlined",
     fontSize: 20,
-  }
+  },
 });
 
 export default ChatDetailsScreen;
