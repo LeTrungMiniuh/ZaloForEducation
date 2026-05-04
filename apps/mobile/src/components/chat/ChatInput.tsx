@@ -94,7 +94,7 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
         { text: "Thư viện", onPress: async () => {
           try {
             const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: 'all',
+              mediaTypes: ImagePicker.MediaTypeOptions.All,
               allowsMultipleSelection: true,
               selectionLimit: 10,
               quality: sendImageAsHD ? 1 : 0.8,
@@ -180,7 +180,7 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
       if (status !== 'granted') return Alert.alert('Quyền bị từ chối', 'Ứng dụng cần quyền camera để chụp ảnh.');
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: 'images',
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: sendImageAsHD ? 1 : 0.8,
       });
 
@@ -207,7 +207,7 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: 'videos',
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
         quality: 1,
       });
 

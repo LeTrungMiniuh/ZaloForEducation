@@ -221,6 +221,7 @@ export default function MessageBubble({
   isMe, 
   userProfile, 
   onLongPress, 
+  onPress,
   onReaction, 
   onReply,
   onSystemMessagePress,
@@ -231,7 +232,9 @@ export default function MessageBubble({
   showAvatar,
   groupPosition,
   isSeen,
-  onNavigate
+  onNavigate,
+  isSelectionMode,
+  isSelected
 }: {
   message: any;
   isMe: boolean;
@@ -248,6 +251,9 @@ export default function MessageBubble({
   groupPosition?: 'first' | 'middle' | 'last' | 'single';
   isSeen?: boolean;
   onNavigate?: (screen: string, params?: any) => void;
+  onPress?: (message: any) => void;
+  isSelectionMode?: boolean;
+  isSelected?: boolean;
 }) {
   const isMediaOnly = (() => {
     if (message.audioUrl || message.contactCard || message.location) return true;
@@ -644,6 +650,11 @@ export default function MessageBubble({
       )}
       
       <View style={[styles.bubbleWrapper, isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperOther]}>
+        {isSelectionMode && (
+          <View style={[styles.selectionBadge, isSelected && styles.selectionBadgeActive]}>
+            <Text style={styles.selectionBadgeText}>{isSelected ? 'check_circle' : 'radio_button_unchecked'}</Text>
+          </View>
+        )}
         {/* Name and Pin Header - Only show if pinned */}
         {isPinned && (
           <View style={styles.headerRow}>
@@ -656,12 +667,16 @@ export default function MessageBubble({
 
         <Pressable 
           onLongPress={() => onLongPress(message)}
+          onPress={() => {
+            if (isSelectionMode && onPress) onPress(message);
+          }}
           delayLongPress={300}
         >
           {shouldHideBubble ? (
             <View style={[
               styles.noBubble,
-              isHighlighted && styles.bubbleHighlighted
+              isHighlighted && styles.bubbleHighlighted,
+              isSelected && styles.bubbleSelected
             ]}>
               <RenderBubbleContent />
             </View>
@@ -676,7 +691,8 @@ export default function MessageBubble({
                 groupPosition === 'first' && (isMe ? styles.firstMe : styles.firstOther),
                 groupPosition === 'middle' && (isMe ? styles.middleMe : styles.middleOther),
                 groupPosition === 'last' && (isMe ? styles.lastMe : styles.lastOther),
-                isHighlighted && styles.bubbleHighlighted
+                isHighlighted && styles.bubbleHighlighted,
+                isSelected && styles.bubbleSelected
               ]}
             >
               <RenderBubbleContent />
@@ -689,7 +705,8 @@ export default function MessageBubble({
                 groupPosition === 'first' && styles.firstOther,
                 groupPosition === 'middle' && styles.middleOther,
                 groupPosition === 'last' && styles.lastOther,
-                isHighlighted && styles.bubbleHighlighted
+                isHighlighted && styles.bubbleHighlighted,
+                isSelected && styles.bubbleSelected
               ]}
             >
               <RenderBubbleContent />
@@ -712,24 +729,38 @@ export default function MessageBubble({
         {(groupPosition === 'last' || groupPosition === 'single' || (isMe && message.status)) && (
           <View style={[styles.footerRow, isMe && styles.footerRowMe]}>
             {(groupPosition === 'last' || groupPosition === 'single') && (
-              <Text style={styles.timeText}>
-                {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-              </Text>
+              <View style={styles.footerMetaPill}>
+                <Text style={styles.timeText}>
+                  {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                </Text>
+              </View>
             )}
             
             {isMe && (
               <View style={styles.statusWrapper}>
-                {isSeen ? (
-                  <Image source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} style={styles.seenAvatar} />
-                ) : message.status === 'sending' ? (
-                  <View style={styles.statusCircle} />
+                {message.status === 'sending' ? (
+                  <View style={[styles.statusPill, { backgroundColor: '#eff6ff' }]}>
+                    <View style={styles.statusCircle} />
+                    <Text style={styles.statusText}>Đang gửi</Text>
+                  </View>
                 ) : message.status === 'error' ? (
-                  <View style={[styles.statusCircle, { borderColor: '#ef4444' }]}>
-                    <Text style={[styles.statusCheck, { color: '#ef4444' }]}>!</Text>
+                  <View style={[styles.statusPill, { backgroundColor: '#fef2f2' }]}>
+                    <View style={[styles.statusCircle, { borderColor: '#ef4444' }]}>
+                      <Text style={[styles.statusCheck, { color: '#ef4444' }]}>!</Text>
+                    </View>
+                    <Text style={[styles.statusText, { color: '#dc2626' }]}>Lỗi</Text>
+                  </View>
+                ) : isSeen ? (
+                  <View style={[styles.statusPill, { backgroundColor: '#e0f2fe' }]}>
+                    <Image source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} style={styles.seenAvatar} />
+                    <Text style={[styles.statusText, { color: '#0369a1', fontWeight: '800' }]}>Đã xem</Text>
                   </View>
                 ) : (
-                  <View style={[styles.statusCircle, styles.statusSent]}>
-                    <Text style={styles.statusCheck}>✓</Text>
+                  <View style={[styles.statusPill, { backgroundColor: '#f8fafc' }]}>
+                    <View style={[styles.statusCircle, styles.statusSent]}>
+                      <Text style={styles.statusCheck}>✓</Text>
+                    </View>
+                    <Text style={styles.statusText}>Đã gửi</Text>
                   </View>
                 )}
               </View>
@@ -777,6 +808,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     maxWidth: '75%',
   },
+  selectionBadge: {
+    position: 'absolute',
+    top: -8,
+    right: -6,
+    zIndex: 20,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+  },
+  selectionBadgeActive: {
+    backgroundColor: '#eff6ff',
+  },
+  selectionBadgeText: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 20,
+    color: Colors.primary,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -798,6 +845,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     elevation: 4,
     shadowOpacity: 0.3,
+  },
+  bubbleSelected: {
+    borderColor: Colors.primary,
+    borderWidth: 2,
   },
   bubbleMe: {
     borderRadius: 18,
@@ -1076,11 +1127,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.1)',
-    borderRadius: 14,
-    paddingHorizontal: 10,
+    borderColor: 'rgba(0,0,0,0.08)',
+    borderRadius: 999,
+    paddingHorizontal: 9,
     height: 24,
-    gap: 4,
+    gap: 5,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -1099,19 +1150,34 @@ const styles = StyleSheet.create({
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: 4,
+    gap: 6,
   },
   footerRowMe: {
     justifyContent: 'flex-end',
     alignSelf: 'flex-end',
   },
   timeText: {
-    fontSize: 9,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
     color: '#9ba3b2',
   },
   statusWrapper: {
-    marginLeft: 4,
+    marginLeft: 0,
+  },
+  footerMetaPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
   },
   statusCircle: {
     width: 14,
@@ -1129,6 +1195,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 8,
     fontWeight: 'bold',
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748b',
   },
   seenAvatar: {
     width: 14,

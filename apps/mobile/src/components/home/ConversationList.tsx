@@ -26,6 +26,18 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   getDisplayAvatar,
   getConversationPreview,
 }) => {
+  const baseConversations = conversations
+    .filter((chat) => !chat.hidden)
+    .sort((left, right) => {
+      const leftPinned = !!left.pinned;
+      const rightPinned = !!right.pinned;
+      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+
+      const leftTime = left.updatedAt ? new Date(left.updatedAt).getTime() : 0;
+      const rightTime = right.updatedAt ? new Date(right.updatedAt).getTime() : 0;
+      return rightTime - leftTime;
+    });
+
   if (loading && conversations.length === 0) {
     return (
       <View style={styles.centeredView}>
@@ -36,7 +48,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   }
 
   const { alerts, unreadCount: systemUnreadCount } = useSecurityAlerts();
-  const filteredConversations = [...conversations];
+  const finalConversations = [...baseConversations];
 
   if (alerts.length > 0) {
     const systemConv = {
@@ -48,13 +60,13 @@ export const ConversationList: React.FC<ConversationListProps> = ({
       updatedAt: alerts[0].at,
       unreadCount: systemUnreadCount,
     };
-    filteredConversations.unshift(systemConv as any);
+    finalConversations.unshift(systemConv as any);
   }
 
   return (
     <ScrollView key="conversations-list-scroll" style={styles.scrollContainer}>
       <View style={styles.chatList}>
-        {filteredConversations.map((chat) => {
+        {finalConversations.map((chat) => {
           const partnerEmail =
             chat.type === "direct"
               ? chat.partner ||
@@ -67,8 +79,8 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             (chat as any).type === "system"
               ? chat.name
               : chat.type === "direct"
-              ? getDisplayName(partnerEmail || '')
-              : chat.name || chat.id.slice(0, 6);
+              ? (chat.alias || getDisplayName(partnerEmail || ''))
+              : (chat.alias || chat.name || chat.id.slice(0, 6));
           
           const chatAvatar =
             (chat as any).type === "system"

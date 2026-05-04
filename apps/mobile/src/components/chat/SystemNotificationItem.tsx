@@ -8,13 +8,13 @@ interface SystemNotificationItemProps {
 }
 
 const SystemNotificationItem = ({ message, onJump }: SystemNotificationItemProps) => {
-  const { userProfiles, user } = useChatStore();
+  const { userProfiles, currentUserEmail } = useChatStore();
   const isReaction = message.metadata?.type === 'reaction_notification';
   const targetId = message.metadata?.targetMessageId;
 
   const getDisplayName = (email: string) => {
     if (!email) return "Người dùng";
-    if (email === user?.email) return "Bạn";
+    if (email === currentUserEmail) return "Bạn";
     const p = userProfiles[email.trim().toLowerCase()];
     return p?.nickname || p?.fullName || p?.fullname || email.split('@')[0];
   };

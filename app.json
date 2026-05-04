@@ -1,5 +1,10 @@
 {
   "android": {
     "package": "com.tisjn.zaloedumonorepo"
+  },
+  "extra": {
+    "eas": {
+      "projectId": "ae7f3d3f-16ee-4b38-a5a1-eba245840081"
+    }
   }
 }

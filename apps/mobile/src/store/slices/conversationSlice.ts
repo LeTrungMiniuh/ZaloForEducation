@@ -20,6 +20,8 @@ export interface ConversationSlice {
   updateMemberRole: (convId: string, memberEmail: string, role: 'owner' | 'deputy' | 'member') => Promise<void>;
   updateGroupInfo: (convId: string, updates: { name?: string; avatar?: string }) => Promise<void>;
   dissolveGroup: (convId: string) => Promise<void>;
+  setPinConversation: (convId: string, isPinned: boolean) => Promise<boolean>;
+  setHiddenConversation: (convId: string, isHidden: boolean) => Promise<boolean>;
 }
 
 export const createConversationSlice: StateCreator<ChatStore, [], [], ConversationSlice> = (set, get) => ({
@@ -202,4 +204,56 @@ export const createConversationSlice: StateCreator<ChatStore, [], [], Conversati
       
       return { conversations: nextConversations } as any;
     }),
+
+  setPinConversation: async (convId: string, isPinned: boolean) => {
+    try {
+      // Try to sync with backend
+      const res = await chatPatch(`/conversations/${convId}`, { pinned: isPinned });
+      if (!res?.ok) throw new Error('SYNC_FAILED');
+      
+      // Update local state
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, pinned: isPinned } : c
+        )
+      } as any));
+      
+      return true;
+    } catch (err) {
+      console.error('Failed to sync pin state', err);
+      // Fallback: just update local state
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, pinned: isPinned } : c
+        )
+      } as any));
+      return false;
+    }
+  },
+
+  setHiddenConversation: async (convId: string, isHidden: boolean) => {
+    try {
+      // Try to sync with backend
+      const res = await chatPatch(`/conversations/${convId}`, { hidden: isHidden });
+      if (!res?.ok) throw new Error('SYNC_FAILED');
+      
+      // Update local state
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, hidden: isHidden } : c
+        )
+      } as any));
+      
+      return true;
+    } catch (err) {
+      console.error('Failed to sync hidden state', err);
+      // Fallback: just update local state
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === convId ? { ...c, hidden: isHidden } : c
+        )
+      } as any));
+      return false;
+    }
+  },
 });
