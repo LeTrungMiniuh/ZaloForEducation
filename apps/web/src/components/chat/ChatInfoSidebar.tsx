@@ -1,35 +1,31 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   BellOff,
   Bell,
   Clock3,
-  FileDigit,
-  FileImage,
-  FileText,
-  Link as LinkIcon,
-  Music,
   Trash2,
-  Video,
   X,
   Check,
   ChevronDown,
+  ChevronLeft,
+  FileText,
   UserMinus,
   ShieldCheck,
   ShieldAlert,
   LogOut,
   Settings,
+  Link,
   Plus,
   Camera,
-  CheckCircle2,
   Loader2,
+  Pin,
 } from "lucide-react";
 import Swal from "sweetalert2";
 import api from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { useChatStore } from "../../store/chatStore";
 import {
-  formatFileSize,
   getDisplayAvatar,
   getDisplayName,
   normalizeAttachment,
@@ -42,6 +38,9 @@ import {
   type ConversationMuteSchedule,
 } from "../../utils/chatUtils";
 import AddMembersModal from "./AddMembersModal";
+import AssetMediaGrid from "./AssetMediaGrid";
+import AssetFileList from "./AssetFileList";
+import AssetLinkList from "./AssetLinkList";
 
 const ChatInfoSidebar: React.FC = () => {
   const navigate = useNavigate();
@@ -52,22 +51,23 @@ const ChatInfoSidebar: React.FC = () => {
     userProfiles,
     messages,
     setConversationAutoDelete,
-    setPreviewImage,
     clearHistory,
     mutedConversations,
     muteConversationFor,
     clearConversationMuted,
     isConversationMuted,
-    addMembers,
     removeMember,
     updateMemberRole,
     updateGroupInfo,
     dissolveGroup,
+    archiveAssets,
+    fetchArchiveAssets,
   } = useChatStore();
 
   const activeChat = conversations.find((c) => c.id === activeConvId);
 
   // HEAD States
+  const [viewMode, setViewMode] = useState<"info" | "archive">("info");
   const [activeStorageTab, setActiveStorageTab] = useState<
     "media" | "file" | "link"
   >("media");
@@ -91,6 +91,18 @@ const ChatInfoSidebar: React.FC = () => {
   const [selectedNewOwnerEmail, setSelectedNewOwnerEmail] = useState<
     string | null
   >(null);
+  const [isEditingGroupName, setIsEditingGroupName] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [isSavingGroupName, setIsSavingGroupName] = useState(false);
+
+  useEffect(() => {
+    if (activeChat?.id) {
+      // Pre-fetch first few assets for the preview
+      fetchArchiveAssets(activeChat.id, "media", true);
+      fetchArchiveAssets(activeChat.id, "file", true);
+      fetchArchiveAssets(activeChat.id, "link", true);
+    }
+  }, [activeChat?.id]);
 
   useEffect(() => {
     if (!activeChat) return;
@@ -104,6 +116,8 @@ const ChatInfoSidebar: React.FC = () => {
     }
     setShowMutePanel(false);
     setShowCustomMuteInputs(false);
+    setIsEditingGroupName(false);
+    setNewGroupName(activeChat.name || "");
   }, [activeChat]);
 
   const normalizedUserEmail = String(user?.email || "")
@@ -123,6 +137,28 @@ const ChatInfoSidebar: React.FC = () => {
         .trim()
         .toLowerCase() !== normalizedUserEmail,
   );
+
+  const isDeputy =
+    activeChat?.type === "group" &&
+    Array.isArray(activeChat.deputies) &&
+    activeChat.deputies.some(
+      (d) => String(d).trim().toLowerCase() === normalizedUserEmail,
+    );
+
+  const canManageGroup = isGroupOwner || isDeputy;
+
+  const pinnedIds = (activeChat as any)?.pinnedMessageIds || [];
+  const pinnedMessages = useMemo(() => {
+    if (!activeConvId || pinnedIds.length === 0) return [];
+    return pinnedIds.map((id: string) => {
+      const msg = messages.find(
+        (m) => m.id === id && m.conversationId === activeConvId,
+      );
+      return msg
+        ? { id: msg.id, content: msg.content, createdAt: msg.createdAt }
+        : { id, content: "Đang tải...", isPlaceholder: true };
+    });
+  }, [pinnedIds, messages, activeConvId]);
 
   if (!activeChat) return null;
 
@@ -227,119 +263,72 @@ const ChatInfoSidebar: React.FC = () => {
     setShowCustomMuteInputs(false);
   };
 
-  const FileIconComponent = ({ fileName }: { fileName: string }) => {
-    if (fileName.match(/\.(jpg|jpeg|png|gif|webp)$/i))
-      return <FileImage size={20} className="text-primary" />;
-    if (fileName.match(/\.(mp4|mov|avi|wmv)$/i))
-      return <Video size={20} className="text-primary" />;
-    if (fileName.match(/\.(mp3|wav|ogg|m4a)$/i))
-      return <Music size={20} className="text-primary" />;
-    if (fileName.match(/\.(zip|rar|7z|tar)$/i))
-      return <FileDigit size={20} className="text-primary" />;
-    return <FileText size={20} className="text-primary" />;
-  };
+  // Instant Previews Logic
+  const mediaPreview = useMemo(() => {
+    const local = messages.flatMap(m => [...(m.media || []), ...(m.files || [])].map(a => ({ ...normalizeAttachment(a), msgId: m.id, createdAt: m.createdAt })));
+    const remote = archiveAssets.media.items.flatMap(m => [...(m.media || []), ...(m.files || [])].map(a => ({ ...normalizeAttachment(a), msgId: m.id, createdAt: m.createdAt })));
+    const combined = [...local, ...remote];
+    const unique = Array.from(new Map(combined.map(a => [`${a.msgId}-${a.dataUrl}`, a])).values());
+    return (unique as any[])
+      .filter(a => a.mimeType?.startsWith("image/") || a.mimeType?.startsWith("video/"))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 4);
+  }, [messages, archiveAssets.media.items]);
 
-  const allAttachments = messages
-    .flatMap((m) => {
-      const arr = [...(m.media || []), ...(m.files || [])];
-      return arr.map((a) => ({
-        ...a,
-        senderId: m.senderId,
-        createdAt: m.createdAt,
-      }));
-    })
-    .map((f) => ({
-      ...normalizeAttachment(f),
-      senderId: f.senderId,
-      createdAt: f.createdAt,
-    }))
-    .reverse();
-
-  const isStickerOrGif = (f: any) => {
-    const mime = String(f?.mimeType || "").toLowerCase();
-    const name = String(f?.name || "").toLowerCase();
-    return (
-      mime.includes("sticker") ||
-      mime === "image/gif" ||
-      /^sticker-/.test(name) ||
-      /\.gif(\?.*)?$/.test(name)
-    );
-  };
-
-  const isMedia = (f: any) => {
-    if (isStickerOrGif(f)) return false;
-    return (
-      f.mimeType?.startsWith("image/") ||
-      f.mimeType?.startsWith("video/") ||
-      f.name?.match(/\.(jpg|jpeg|png|webp|mp4|mov|avi|wmv)$/i)
-    );
-  };
-
-  const isVideoMedia = (f: any) => {
-    const mime = String(f?.mimeType || "").toLowerCase();
-    const name = String(f?.name || "").toLowerCase();
-    return (
-      mime.startsWith("video/") ||
-      /\.(mp4|mov|avi|wmv|webm|mkv)(\?.*)?$/.test(name)
-    );
-  };
-
-  let filteredAttachments = allAttachments;
-  if (senderFilter !== "all") {
-    filteredAttachments = filteredAttachments.filter(
-      (f) => f.senderId === senderFilter,
-    );
-  }
-  if (dateFilter !== "all") {
-    if (dateFilter === "oldest") {
-      filteredAttachments = [...filteredAttachments].reverse();
-    } else if (dateFilter !== "newest") {
-      const d = new Date(dateFilter).setHours(0, 0, 0, 0);
-      filteredAttachments = filteredAttachments.filter(
-        (f) => new Date(f.createdAt || Date.now()).setHours(0, 0, 0, 0) === d,
+  const filePreview = useMemo(() => {
+    const filterFn = (a: any) => {
+      const name = a.name?.toLowerCase() || "";
+      const mime = a.mimeType?.toLowerCase() || "";
+      return (
+        !name.includes("location.json") &&
+        !name.includes("contact.json") &&
+        !mime.startsWith("audio/")
       );
-    }
-  }
+    };
 
-  const storageAttachments = filteredAttachments.filter(
-    (f) => !isStickerOrGif(f),
-  );
-  const sharedMedia = storageAttachments.filter(isMedia);
-  const sharedFiles = storageAttachments.filter((f) => !isMedia(f));
+    const local = messages.flatMap((m) =>
+      (m.files || [])
+        .map((a) => ({
+          ...normalizeAttachment(a),
+          msgId: m.id,
+          createdAt: m.createdAt,
+        }))
+        .filter(filterFn),
+    );
+    const remote = archiveAssets.file.items.flatMap((m) =>
+      (m.files || [])
+        .map((a) => ({
+          ...normalizeAttachment(a),
+          msgId: m.id,
+          createdAt: m.createdAt,
+        }))
+        .filter(filterFn),
+    );
+    const combined = [...local, ...remote];
+    const unique = Array.from(
+      new Map(combined.map((a) => [`${a.msgId}-${a.name}`, a])).values(),
+    );
+    return (unique as any[])
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )
+      .slice(0, 3);
+  }, [messages, archiveAssets.file.items]);
 
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  let allLinks = messages
-    .filter(
-      (m) =>
-        m.content &&
-        typeof m.content === "string" &&
-        (m.content as string).match(urlRegex),
-    )
-    .flatMap((m) => {
-      const urls = (m.content as string).match(urlRegex) || [];
-      return urls.map((url) => ({
-        url,
-        messageId: m.id,
-        senderId: m.senderId,
-        createdAt: m.createdAt,
-      }));
-    })
-    .reverse();
-
-  if (senderFilter !== "all") {
-    allLinks = allLinks.filter((l) => l.senderId === senderFilter);
-  }
-  if (dateFilter !== "all") {
-    if (dateFilter === "oldest") {
-      allLinks = [...allLinks].reverse();
-    } else if (dateFilter !== "newest") {
-      const d = new Date(dateFilter).setHours(0, 0, 0, 0);
-      allLinks = allLinks.filter(
-        (l) => new Date(l.createdAt || Date.now()).setHours(0, 0, 0, 0) === d,
-      );
-    }
-  }
-  const sharedLinks = allLinks;
+  const linkPreview = useMemo(() => {
+    const extractLinks = (m: any) => {
+      const urls = m.content?.match(/https?:\/\/[^\s]+/g) || [];
+      return urls.map((url: string) => ({ url, msgId: m.id, createdAt: m.createdAt }));
+    };
+    const local = messages.flatMap(extractLinks);
+    const remote = archiveAssets.link.items.flatMap(extractLinks);
+    const combined = [...local, ...remote];
+    const unique = Array.from(new Map(combined.map(a => [`${a.msgId}-${a.url}`, a])).values());
+    return (unique as any[])
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 3);
+  }, [messages, archiveAssets.link.items]);
 
   const uniqueSenders = activeChat?.members || [];
 
@@ -555,6 +544,35 @@ const ChatInfoSidebar: React.FC = () => {
     setIsAddMembersModalOpen(true);
   };
 
+  const handleUpdateGroupName = async () => {
+    if (!activeConvId || !newGroupName.trim() || isSavingGroupName) return;
+    if (newGroupName === activeChat.name) {
+      setIsEditingGroupName(false);
+      return;
+    }
+
+    setIsSavingGroupName(true);
+    try {
+      await updateGroupInfo(activeConvId, { name: newGroupName.trim() });
+      setIsEditingGroupName(false);
+      Swal.fire({
+        icon: "success",
+        title: "Thành công",
+        text: "Đã đổi tên nhóm",
+        timer: 1500,
+        showConfirmButton: false,
+      });
+    } catch (err: any) {
+      Swal.fire(
+        "Lỗi",
+        err.response?.data?.message || "Không thể cập nhật tên nhóm",
+        "error",
+      );
+    } finally {
+      setIsSavingGroupName(false);
+    }
+  };
+
   const handleUpdateGroupAvatar = async (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -622,9 +640,45 @@ const ChatInfoSidebar: React.FC = () => {
             </label>
           )}
         </div>
-        <h3 className="font-bold text-[16px] text-on-surface text-center leading-tight">
-          {chatName}
-        </h3>
+        {isEditingGroupName ? (
+          <div className="w-full flex items-center gap-2 px-2 mt-1">
+            <input
+              autoFocus
+              className="flex-1 bg-surface-container-highest px-3 py-2 rounded-xl text-[14px] font-bold text-on-surface outline-none border-2 border-primary"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleUpdateGroupName();
+                if (e.key === "Escape") setIsEditingGroupName(false);
+              }}
+            />
+            <button
+              onClick={handleUpdateGroupName}
+              disabled={isSavingGroupName}
+              className="p-2 bg-primary text-white rounded-xl hover:opacity-90 disabled:opacity-50"
+            >
+              {isSavingGroupName ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Check size={16} />
+              )}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center gap-2 max-w-full">
+            <h3 className="font-bold text-[16px] text-on-surface text-center leading-tight truncate">
+              {chatName}
+            </h3>
+            {activeChat.type === "group" && canManageGroup && (
+              <button
+                onClick={() => setIsEditingGroupName(true)}
+                className="p-1.5 rounded-full hover:bg-surface-container-highest text-on-surface-variant transition-colors"
+              >
+                <Settings size={14} />
+              </button>
+            )}
+          </div>
+        )}
         <p className="text-[12px] text-on-surface-variant font-medium mt-1">
           {activeChat.type === "direct"
             ? "Trò chuyện cá nhân"
@@ -635,170 +689,216 @@ const ChatInfoSidebar: React.FC = () => {
       <div className="flex-1 overflow-y-auto hide-scrollbar">
         <div className="py-2">
           {/* Section: Kho lưu trữ Tabs & Filters */}
-          <div className="border-b border-outline-variant/10 pb-4">
-            <div className="flex px-4 pt-2 mb-3 border-b border-outline-variant/10">
-              <button
-                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "media" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
-                onClick={() => setActiveStorageTab("media")}
-              >
-                Ảnh/Video
-              </button>
-              <button
-                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "file" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
-                onClick={() => setActiveStorageTab("file")}
-              >
-                Files
-              </button>
-              <button
-                className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "link" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
-                onClick={() => setActiveStorageTab("link")}
-              >
-                Links
-              </button>
-            </div>
-
-            <div className="flex gap-2 px-4 mb-4">
-              <select
-                value={senderFilter}
-                onChange={(e) => setSenderFilter(e.target.value)}
-                className="flex-1 bg-surface-container-highest px-3 py-2 rounded-xl text-[12px] text-on-surface outline-none border border-transparent focus:border-primary/30 appearance-none cursor-pointer"
-              >
-                <option value="all">Người gửi</option>
-                {uniqueSenders.map((email) => (
-                  <option key={email} value={email}>
-                    {getDisplayName(email, user, userProfiles)}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                type="date"
-                value={
-                  dateFilter === "all" ||
-                  dateFilter === "newest" ||
-                  dateFilter === "oldest"
-                    ? ""
-                    : dateFilter
-                }
-                onChange={(e) => setDateFilter(e.target.value || "all")}
-                className="flex-1 bg-surface-container-highest px-3 py-2 rounded-xl text-[12px] text-on-surface outline-none border border-transparent focus:border-primary/30 cursor-pointer"
-                title="Chọn ngày"
-              />
-            </div>
-
-            <div className="px-4 space-y-2">
-              {activeStorageTab === "media" &&
-                (sharedMedia.length === 0 ? (
-                  <p className="text-[11px] text-on-surface-variant italic text-center py-4">
-                    Chưa có ảnh/video nào
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-3 gap-1">
-                    {sharedMedia.map((m, i) => (
-                      <div key={i} className="relative group block">
-                        {isVideoMedia(m) ? (
-                          <video
-                            src={m.dataUrl}
-                            className="w-full aspect-square object-cover rounded-lg border border-outline-variant/10 hover:opacity-90 transition-opacity"
-                            controls
-                            preload="metadata"
-                            playsInline
-                          />
-                        ) : (
-                          <img
-                            src={m.dataUrl}
-                            className="w-full aspect-square object-cover rounded-lg border border-outline-variant/10 cursor-pointer hover:opacity-80 transition-opacity"
-                            alt=""
-                            onClick={() =>
-                              setPreviewImage(
-                                m.dataUrl,
-                                m.name || `image-${i + 1}.png`,
-                              )
-                            }
-                          />
-                        )}
-                        <div className="absolute inset-x-0 bottom-0 pointer-events-none bg-linear-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-b-lg p-1 flex justify-end">
-                          <span className="text-[9px] font-medium text-white/90">
-                            {m.createdAt
-                              ? new Date(m.createdAt).toLocaleDateString(
-                                  "vi-VN",
-                                )
-                              : ""}
-                          </span>
-                        </div>
+            {viewMode === "info" ? (
+              <div className="px-4 space-y-6 py-4">
+                {/* Media Preview */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[13px] font-bold text-on-surface">Ảnh/Video</h4>
+                    <button 
+                      onClick={() => { setViewMode("archive"); setActiveStorageTab("media"); }}
+                      className="text-[12px] font-medium text-primary hover:underline"
+                    >
+                      Xem tất cả
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {mediaPreview.map((att, i) => (
+                      <div key={i} className="aspect-square rounded-lg overflow-hidden bg-surface-container-highest border border-outline-variant/10">
+                         <img src={att.dataUrl} className="w-full h-full object-cover" alt="" />
                       </div>
                     ))}
+                    {mediaPreview.length === 0 && !archiveAssets.media.loading && (
+                      <p className="text-[12px] italic opacity-50 col-span-4 py-2">Chưa có ảnh/video</p>
+                    )}
+                    {archiveAssets.media.loading && mediaPreview.length === 0 && (
+                      <div className="col-span-4 py-2 flex justify-center"><Loader2 size={16} className="animate-spin text-primary/40" /></div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Files Preview */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[13px] font-bold text-on-surface">File</h4>
+                    <button 
+                      onClick={() => { setViewMode("archive"); setActiveStorageTab("file"); }}
+                      className="text-[12px] font-medium text-primary hover:underline"
+                    >
+                      Xem tất cả
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {filePreview.map((file, i) => (
+                      <div key={i} className="flex items-center gap-3 p-2 bg-surface-container-highest/30 rounded-xl">
+                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                          <FileText size={16} className="text-primary" />
+                        </div>
+                        <span className="text-[12px] truncate flex-1 font-medium">{file.name}</span>
+                      </div>
+                    ))}
+                    {filePreview.length === 0 && !archiveAssets.file.loading && (
+                      <p className="text-[12px] italic opacity-50 py-2">Chưa có file</p>
+                    )}
+                    {archiveAssets.file.loading && filePreview.length === 0 && (
+                      <div className="py-2 flex justify-center"><Loader2 size={16} className="animate-spin text-primary/40" /></div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Links Preview */}
+                <div className="space-y-3 pb-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[13px] font-bold text-on-surface">Link</h4>
+                    <button 
+                      onClick={() => { setViewMode("archive"); setActiveStorageTab("link"); }}
+                      className="text-[12px] font-medium text-primary hover:underline"
+                    >
+                      Xem tất cả
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {linkPreview.map((x: any, i) => (
+                      <a key={i} href={x.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-2 bg-surface-container-highest/30 rounded-xl hover:bg-surface-container-highest transition-colors">
+                        <div className="w-8 h-8 rounded-lg bg-secondary/10 flex items-center justify-center shrink-0">
+                          <Link size={14} className="text-secondary" />
+                        </div>
+                        <span className="text-[11px] truncate flex-1 text-primary hover:underline">{x.url}</span>
+                      </a>
+                    ))}
+                    {linkPreview.length === 0 && !archiveAssets.link.loading && (
+                      <p className="text-[12px] italic opacity-50 py-2">Chưa có link</p>
+                    )}
+                    {archiveAssets.link.loading && linkPreview.length === 0 && (
+                      <div className="py-2 flex justify-center"><Loader2 size={16} className="animate-spin text-primary/40" /></div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col">
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-outline-variant/10 bg-surface-container-lowest sticky top-0 z-10">
+                  <button 
+                    onClick={() => setViewMode("info")}
+                    className="p-2 hover:bg-surface-container rounded-full"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <span className="text-[14px] font-bold">Kho lưu trữ</span>
+                </div>
+
+                <div className="flex px-4 pt-2 mb-3 border-b border-outline-variant/10">
+                  <button
+                    className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "media" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
+                    onClick={() => setActiveStorageTab("media")}
+                  >
+                    Ảnh/Video
+                  </button>
+                  <button
+                    className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "file" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
+                    onClick={() => setActiveStorageTab("file")}
+                  >
+                    Files
+                  </button>
+                  <button
+                    className={`flex-1 pb-2 text-[13px] font-semibold border-b-2 transition-colors ${activeStorageTab === "link" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
+                    onClick={() => setActiveStorageTab("link")}
+                  >
+                    Links
+                  </button>
+                </div>
+
+                <div className="flex gap-2 px-4 mb-4">
+                  <select
+                    value={senderFilter}
+                    onChange={(e) => setSenderFilter(e.target.value)}
+                    className="flex-1 bg-surface-container-highest px-3 py-2 rounded-xl text-[12px] text-on-surface outline-none border border-transparent focus:border-primary/30 appearance-none cursor-pointer"
+                  >
+                    <option value="all">Người gửi</option>
+                    {uniqueSenders.map((email) => (
+                      <option key={email} value={email}>
+                        {getDisplayName(email, user, userProfiles)}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    type="date"
+                    value={
+                      dateFilter === "all" ||
+                      dateFilter === "newest" ||
+                      dateFilter === "oldest"
+                        ? ""
+                        : dateFilter
+                    }
+                    onChange={(e) => setDateFilter(e.target.value || "all")}
+                    className="flex-1 bg-surface-container-highest px-3 py-2 rounded-xl text-[12px] text-on-surface outline-none border border-transparent focus:border-primary/30 cursor-pointer"
+                    title="Chọn ngày"
+                  />
+                </div>
+
+                <div className="py-2">
+                  {activeChat && (
+                    <>
+                      {activeStorageTab === "media" && <AssetMediaGrid convId={activeChat.id} />}
+                      {activeStorageTab === "file" && <AssetFileList convId={activeChat.id} />}
+                      {activeStorageTab === "link" && <AssetLinkList convId={activeChat.id} />}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+          {/* Section: Pinned Messages */}
+          {activeChat.type === "group" && pinnedIds.length > 0 && (
+            <div className="mt-4 px-4">
+              <div className="flex items-center justify-between mb-2 px-1">
+                <h4 className="text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
+                  <Pin size={12} className="text-primary fill-primary/10" />
+                  Tin nhắn đã ghim ({pinnedIds.length})
+                </h4>
+              </div>
+              <div className="space-y-2">
+                {pinnedMessages.map((msg: any) => (
+                  <div
+                    key={msg.id}
+                    onClick={() => {
+                      const { jumpToMessage } = useChatStore.getState();
+                      jumpToMessage(msg.id);
+                    }}
+                    className="group/pin flex items-start gap-3 p-2.5 bg-amber-50/50 dark:bg-primary/5 rounded-xl border border-amber-200/30 dark:border-primary/10 hover:border-primary/30 transition-all cursor-pointer"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] text-on-surface font-medium line-clamp-2 leading-snug">
+                        {msg.content}
+                      </p>
+                      <p className="text-[9px] text-on-surface-variant/70 font-bold uppercase mt-1">
+                        {msg.createdAt
+                          ? new Date(msg.createdAt).toLocaleDateString("vi-VN")
+                          : "Ghim gần đây"}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const { patchMessageOptimistic } =
+                          useChatStore.getState();
+                        if (activeConvId) {
+                          patchMessageOptimistic(activeConvId, msg.id, {
+                            action: "unpin",
+                          });
+                        }
+                      }}
+                      className="opacity-0 group-hover/pin:opacity-100 p-1.5 hover:bg-error/10 text-error rounded-lg transition-all"
+                      title="Bỏ ghim"
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
                 ))}
-
-              {activeStorageTab === "file" &&
-                (sharedFiles.length === 0 ? (
-                  <p className="text-[11px] text-on-surface-variant italic text-center py-4">
-                    Chưa có tệp nào
-                  </p>
-                ) : (
-                  sharedFiles.map((f, i) => (
-                    <a
-                      key={i}
-                      href={f.dataUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-3 p-2 bg-surface-container/50 rounded-xl hover:bg-surface-container transition-all cursor-pointer"
-                    >
-                      <FileIconComponent fileName={f.name} />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[12px] font-bold truncate text-on-surface">
-                          {f.name}
-                        </p>
-                        <div className="flex items-center justify-between mt-0.5">
-                          <p className="text-[10px] text-on-surface-variant">
-                            {formatFileSize(f.size)}
-                          </p>
-                          <p className="text-[10px] text-on-surface-variant opacity-70">
-                            {f.createdAt
-                              ? new Date(f.createdAt).toLocaleDateString(
-                                  "vi-VN",
-                                )
-                              : ""}
-                          </p>
-                        </div>
-                      </div>
-                    </a>
-                  ))
-                ))}
-
-              {activeStorageTab === "link" &&
-                (sharedLinks.length === 0 ? (
-                  <p className="text-[11px] text-on-surface-variant italic text-center py-4">
-                    Chưa có link nào
-                  </p>
-                ) : (
-                  sharedLinks.map((l, i) => (
-                    <a
-                      key={i}
-                      href={l.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-3 p-2 bg-surface-container/50 rounded-xl hover:bg-surface-container transition-all cursor-pointer"
-                    >
-                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                        <LinkIcon size={16} className="text-primary" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[12px] text-primary hover:underline truncate">
-                          {l.url}
-                        </p>
-                        <p className="text-[10px] text-on-surface-variant opacity-70 mt-0.5">
-                          {l.createdAt
-                            ? new Date(l.createdAt).toLocaleDateString("vi-VN")
-                            : ""}
-                        </p>
-                      </div>
-                    </a>
-                  ))
-                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Section: Settings */}
           <div className="mt-4 px-4 space-y-1">
@@ -1031,7 +1131,12 @@ const ChatInfoSidebar: React.FC = () => {
                     return (
                       <div
                         key={memberEmail}
-                        className="group/member flex items-center gap-3 p-2 rounded-xl hover:bg-surface-container transition-all"
+                        onClick={() => {
+                          if (memberEmail) {
+                            navigate(`/profile?email=${encodeURIComponent(memberEmail)}`);
+                          }
+                        }}
+                        className="group/member flex items-center gap-3 p-2 rounded-xl hover:bg-surface-container transition-all cursor-pointer"
                       >
                         <img
                           src={getDisplayAvatar(

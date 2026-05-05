@@ -12,7 +12,7 @@ const SearchOverlay: React.FC = () => {
     setIsSearching,
     searchQuery,
     setSearchQuery,
-    searchResults,
+    searchResultsList,
     performGlobalSearch,
     startDirectChat,
     searchHistory,
@@ -31,18 +31,18 @@ const SearchOverlay: React.FC = () => {
   // Auto-load profiles for message senders and contacts in search results
   useEffect(() => {
     // Scan messages
-    if (searchResults.messages.length > 0) {
-      searchResults.messages.forEach((msg: { senderId?: string }) => {
+    if (searchResultsList.messages.length > 0) {
+      searchResultsList.messages.forEach((msg: { senderId?: string }) => {
         if (msg.senderId) loadUserProfile(msg.senderId);
       });
     }
     // Scan contacts
-    if (searchResults.contacts.length > 0) {
-      searchResults.contacts.forEach((contact: { email?: string }) => {
+    if (searchResultsList.contacts.length > 0) {
+      searchResultsList.contacts.forEach((contact: { email?: string }) => {
         if (contact.email) loadUserProfile(contact.email);
       });
     }
-  }, [searchResults.messages, searchResults.contacts, loadUserProfile]);
+  }, [searchResultsList.messages, searchResultsList.contacts, loadUserProfile]);
 
   // Close on ESC
   useEffect(() => {
@@ -167,11 +167,11 @@ const SearchOverlay: React.FC = () => {
            ) : (
              <div className="space-y-8">
                 {/* 1. CONTACTS CATEGORY */}
-                {(searchTab === 'all' || searchTab === 'contacts') && searchResults.contacts.length > 0 && (
+                {(searchTab === 'all' || searchTab === 'contacts') && searchResultsList.contacts.length > 0 && (
                   <section className="space-y-4">
                     <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Người dùng & Liên hệ</p>
                     <div className="bg-white rounded-[24px] p-2 shadow-sm border border-outline-variant/10">
-                       {(showAllContacts ? searchResults.contacts : searchResults.contacts.slice(0, 5)).map((contact: { email: string; fullName?: string }) => (
+                       {(showAllContacts ? searchResultsList.contacts : searchResultsList.contacts.slice(0, 5)).map((contact: { email: string; fullName?: string }) => (
                          <div 
                            key={contact.email} 
                            onClick={() => startDirectChat(contact.email)}
@@ -187,9 +187,9 @@ const SearchOverlay: React.FC = () => {
                             </div>
                          </div>
                        ))}
-                       {!showAllContacts && searchResults.contacts.length > 5 && (
+                       {!showAllContacts && searchResultsList.contacts.length > 5 && (
                           <button onClick={() => setShowAllContacts(true)} className="w-full py-3.5 text-[13px] font-extrabold text-primary hover:bg-primary/5 rounded-[18px] transition-all border-t border-outline-variant/5 mt-1">
-                             Xem tất cả {searchResults.contacts.length} kết quả
+                             Xem tất cả {searchResultsList.contacts.length} kết quả
                           </button>
                         )}
                     </div>
@@ -197,15 +197,15 @@ const SearchOverlay: React.FC = () => {
                 )}
 
                 {/* 2. MESSAGES CATEGORY */}
-                {(searchTab === 'all' || searchTab === 'messages') && searchResults.messages.length > 0 && (
+                {(searchTab === 'all' || searchTab === 'messages') && searchResultsList.messages.length > 0 && (
                    <section className="space-y-4">
                       <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Nội dung tin nhắn</p>
                       <div className="space-y-2">
-                         {(showAllMessages ? searchResults.messages : searchResults.messages.slice(0, 5)).map((msg: { id: string; senderId?: string; content?: string; createdAt?: string; conversationId?: string; convId?: string }) => (
+                         {(showAllMessages ? searchResultsList.messages : searchResultsList.messages.slice(0, 5)).map((msg: { id: string; senderId?: string; content?: string; createdAt?: string; conversationId?: string; convId?: string }) => (
                            <div 
                              key={msg.id} 
-                             onClick={() => { 
-                               setActiveConversation(msg.conversationId || msg.convId); 
+                             onClick={async () => { 
+                               await setActiveConversation(msg.conversationId || msg.convId); 
                                setIsSearching(false); 
                                setSearchQuery(''); 
                                // Jump to message after a short delay for room switch
@@ -229,9 +229,9 @@ const SearchOverlay: React.FC = () => {
                               </div>
                            </div>
                          ))}
-                         {!showAllMessages && searchResults.messages.length > 5 && (
+                         {!showAllMessages && searchResultsList.messages.length > 5 && (
                             <button onClick={() => setShowAllMessages(true)} className="w-full py-4 text-[13px] font-extrabold text-primary bg-white hover:bg-primary/5 rounded-[24px] transition-all shadow-sm border border-outline-variant/10">
-                               Khám phá thêm {searchResults.messages.length - 5} cuộc trò chuyện
+                               Khám phá thêm {searchResultsList.messages.length - 5} cuộc trò chuyện
                             </button>
                          )}
                       </div>
@@ -239,15 +239,15 @@ const SearchOverlay: React.FC = () => {
                 )}
 
                 {/* 3. FILES CATEGORY */}
-                {(searchTab === 'all' || searchTab === 'files') && searchResults.files.length > 0 && (
+                {(searchTab === 'all' || searchTab === 'files') && searchResultsList.files.length > 0 && (
                   <section className="space-y-4">
                      <p className="text-[11px] font-extrabold text-on-surface-variant/50 uppercase tracking-[0.1em] px-2 leading-none">Tệp tin & Đa phương tiện</p>
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {(showAllFiles ? searchResults.files : searchResults.files.slice(0, 6)).map((f: { messageId: string; name: string; size: number; senderId?: string; convId?: string; conversationId?: string; createdAt?: string }) => (
+                        {(showAllFiles ? searchResultsList.files : searchResultsList.files.slice(0, 6)).map((f: { messageId: string; name: string; size: number; senderId?: string; convId?: string; conversationId?: string; createdAt?: string }) => (
                           <div 
                             key={f.messageId} 
-                            onClick={() => { 
-                               setActiveConversation(f.convId || f.conversationId); 
+                            onClick={async () => { 
+                               await setActiveConversation(f.convId || f.conversationId); 
                                setIsSearching(false); 
                                setSearchQuery(''); 
                                setTimeout(() => jumpToMessage(f.messageId), 300);
@@ -272,7 +272,7 @@ const SearchOverlay: React.FC = () => {
                 )}
 
                 {/* EMPTY RESULTS STATE */}
-                {searchResults.contacts.length === 0 && searchResults.messages.length === 0 && searchResults.files.length === 0 && (
+                {searchResultsList.contacts.length === 0 && searchResultsList.messages.length === 0 && searchResultsList.files.length === 0 && (
                    <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in slide-in-from-bottom-4">
                       <div className="w-24 h-24 bg-surface-container rounded-[32px] flex items-center justify-center mb-6 shadow-inner">
                          <span className="material-symbols-outlined text-[48px] text-outline/40">sentiment_neutral</span>

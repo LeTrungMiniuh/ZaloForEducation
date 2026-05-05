@@ -31,3 +31,7 @@ Thumbs.db
 
 # AWS / Cloud credentials (if any local file exists)
 aws-credentials.json
+
+# Internal Tooling
+brain/
+scratch/

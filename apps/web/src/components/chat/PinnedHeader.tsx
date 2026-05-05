@@ -1,11 +1,4 @@
 import React, { useState, useMemo } from 'react';
-
-interface PinnedMessage {
-  id: string;
-  content: string;
-  createdAt?: string;
-  isPlaceholder?: boolean;
-}
 import { useChatStore } from '../../store/chatStore';
 import { 
   Pin, 
@@ -15,6 +8,13 @@ import {
   ExternalLink 
 } from 'lucide-react';
 
+interface PinnedMessage {
+  id: string;
+  content: string;
+  createdAt?: string;
+  isPlaceholder?: boolean;
+}
+
 const PinnedHeader: React.FC = () => {
   const { 
     activeConvId, 
@@ -22,30 +22,50 @@ const PinnedHeader: React.FC = () => {
     messages, 
     jumpToMessage,
     patchMessageOptimistic,
-    fetchMessage 
+    fetchMessage,
+    pinnedMessagesCache
   } = useChatStore();
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const activeChat = conversations.find(c => c.id === activeConvId) as { pinnedMessageIds?: string[] } | undefined;
-  const pinnedIds = useMemo(() => activeChat?.pinnedMessageIds || [], [activeChat?.pinnedMessageIds]);
+  const activeChat = conversations.find(c => c.id === activeConvId);
 
-  // Find message objects for the pinned IDs
+  // [SENIOR] Isolated pinning: ensured messages belong to activeConvId
+  const pinnedIds = useMemo(() => {
+    return (activeChat as any)?.pinnedMessageIds || [];
+  }, [activeChat]);
+
+  // Find message objects for the pinned IDs - Strictly scoped to activeConvId
   const pinnedMessages = useMemo((): PinnedMessage[] => {
+    if (!activeConvId) return [];
     return pinnedIds.map(id => {
+      // 1. Try to find in main message list
       const msg = messages.find(m => m.id === id);
-      return msg ? { id: msg.id, content: msg.content, createdAt: msg.createdAt } : { id, content: 'Đang tải tin nhắn...', isPlaceholder: true };
+      if (msg) return { id: msg.id, content: msg.content, createdAt: msg.createdAt };
+      
+      // 2. Try to find in pinned cache
+      const cached = pinnedMessagesCache[id];
+      if (cached) return { id: cached.id, content: cached.content, createdAt: cached.createdAt };
+
+      // 3. Fallback placeholder
+      return { id, content: 'Đang tải tin nhắn...', isPlaceholder: true };
     });
-  }, [pinnedIds, messages]);
+  }, [pinnedIds, messages, pinnedMessagesCache, activeConvId]);
 
   // [NEW] Fetch missing pinned messages
+  // [SENIOR] Parallel hydration of pinned messages without polluting the main list
   React.useEffect(() => {
-    if (!activeConvId) return;
-    pinnedMessages.forEach(pm => {
-      if (pm.isPlaceholder) {
-        fetchMessage(activeConvId, pm.id);
-      }
-    });
-  }, [activeConvId, pinnedMessages, fetchMessage]);
+    if (!activeConvId || pinnedIds.length === 0) return;
+    
+    const missingIds = pinnedIds.filter(id => 
+        !messages.some(m => m.id === id) && 
+        !pinnedMessagesCache[id]
+    );
+    
+    if (missingIds.length > 0) {
+      // Trigger all missing fetches in parallel
+      missingIds.forEach(id => fetchMessage(activeConvId, id));
+    }
+  }, [activeConvId, pinnedIds, fetchMessage, messages, pinnedMessagesCache]);
 
   if (pinnedIds.length === 0) return null;
 

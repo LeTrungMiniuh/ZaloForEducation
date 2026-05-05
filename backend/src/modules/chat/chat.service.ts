@@ -11,6 +11,7 @@ import {
   Inject,
   Injectable,
   forwardRef,
+  NotFoundException,
 } from "@nestjs/common";
 import { Conversation } from "@zalo-edu/shared";
 import { v4 as uuidv4 } from "uuid";
@@ -28,6 +29,30 @@ export class ChatService {
     private readonly friendshipService: FriendshipService,
   ) {}
 
+  private normalizeConvId(id: string): { raw: string; prefixed: string; original: string; veryRaw: string } {
+    const input = id.startsWith("CONV#") ? id.substring(5) : id;
+    let normalized = input;
+    
+    if (input.toUpperCase().startsWith("DIRECT#")) {
+      const parts = input.split("#");
+      if (parts.length >= 3) {
+        const emails = parts.slice(1).map(e => e.toLowerCase()).sort();
+        normalized = `DIRECT#${emails[0]}#${emails[1]}`;
+      }
+    } else if (input.toUpperCase().startsWith("GROUP#")) {
+      normalized = `GROUP#${input.substring(6)}`;
+    } else {
+      normalized = input.toLowerCase();
+    }
+
+    return {
+      raw: normalized,
+      prefixed: `CONV#${normalized}`,
+      original: id.startsWith("CONV#") ? id : `CONV#${id}`,
+      veryRaw: id,
+    };
+  }
+
   /**
    * CREATE DIRECT CONVERSATION (1-1)
    */
@@ -36,8 +61,12 @@ export class ChatService {
       throw new BadRequestException("Cannot create chat with yourself");
 
     // Create a predictable conversation ID for 1-1 chats (e.g. sorted emails)
-    const sorted = [email1, email2].sort();
-    const convId = `CONV#DIRECT#${sorted[0]}#${sorted[1]}`;
+    // [SENIOR] Ensure lowercase for case-insensitive matching in DynamoDB PK
+    const email1Lower = String(email1 || "").trim().toLowerCase();
+    const email2Lower = String(email2 || "").trim().toLowerCase();
+    const sorted = [email1Lower, email2Lower].sort();
+    const rawConvId = `DIRECT#${sorted[0]}#${sorted[1]}`;
+    const convId = `CONV#${rawConvId}`;
 
     const exists = await this.db.docClient.send(
       new GetCommand({
@@ -50,7 +79,7 @@ export class ChatService {
       const userMapping = await this.db.docClient.send(
         new GetCommand({
           TableName: this.db.tableName,
-          Key: { PK: `USER#${email1}`, SK: convId },
+          Key: { PK: `USER#${email1.toLowerCase()}`, SK: convId },
         }),
       );
 
@@ -77,7 +106,7 @@ export class ChatService {
     const newConv: Conversation = {
       id: convId,
       type: "direct",
-      members: [email1, email2],
+      members: [email1Lower, email2Lower],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -102,10 +131,10 @@ export class ChatService {
             Put: {
               TableName: this.db.tableName,
               Item: {
-                PK: `USER#${email1}`,
-                SK: convId,
+                PK: `USER#${email1Lower}`,
+                SK: convId, // Keep CONV# prefix for mapping SK as per existing query patterns
                 type: "direct",
-                partner: email2,
+                partner: email2Lower,
                 createdAt: newConv.createdAt,
               },
             },
@@ -115,10 +144,10 @@ export class ChatService {
             Put: {
               TableName: this.db.tableName,
               Item: {
-                PK: `USER#${email2}`,
-                SK: convId,
+                PK: `USER#${email2Lower}`,
+                SK: convId, // Keep CONV# prefix for mapping SK
                 type: "direct",
-                partner: email1,
+                partner: email1Lower,
                 createdAt: newConv.createdAt,
               },
             },
@@ -178,7 +207,7 @@ export class ChatService {
         Put: {
           TableName: this.db.tableName,
           Item: {
-            PK: `USER#${member}`,
+            PK: `USER#${String(member).toLowerCase()}`,
             SK: convId,
             type: "group",
             name: groupName,
@@ -218,12 +247,19 @@ export class ChatService {
       throw new BadRequestException("Group not found");
 
     // Permission check: Actor must be a member of the group (any member can add members)
-    if (!metadata.members.includes(actorEmail))
+    // Compare membership case-insensitively to avoid issues with email casing
+    const membersLower = (metadata.members || []).map((m) =>
+      String(m).trim().toLowerCase(),
+    );
+    const actorLower = String(actorEmail).trim().toLowerCase();
+
+    if (!membersLower.includes(actorLower))
       throw new BadRequestException("You are not a member of this group");
 
-    const uniqueNewMembers = newMembers.filter(
-      (m) => !metadata.members.includes(m),
-    );
+    const uniqueNewMembers = newMembers.filter((m) => {
+      const lower = String(m).trim().toLowerCase();
+      return !membersLower.includes(lower);
+    });
     if (uniqueNewMembers.length === 0) return metadata;
 
     const updatedMembers = [...metadata.members, ...uniqueNewMembers];
@@ -249,7 +285,7 @@ export class ChatService {
         Put: {
           TableName: this.db.tableName,
           Item: {
-            PK: `USER#${member}`,
+            PK: `USER#${String(member).toLowerCase()}`,
             SK: convId,
             type: "group",
             name: metadata.name,
@@ -283,14 +319,29 @@ export class ChatService {
     if (!metadata || metadata.type !== "group")
       throw new BadRequestException("Group not found");
 
-    const isSelf = actorEmail === targetEmail;
-    const isOwner =
-      metadata.owner === actorEmail || metadata.admin === actorEmail;
-    const isDeputy = (metadata.deputies || []).includes(actorEmail);
+    // Normalize emails for case-insensitive comparison
+    const actorLower = String(actorEmail).trim().toLowerCase();
+    const targetLower = String(targetEmail).trim().toLowerCase();
+    const ownerLower = String(metadata.owner || "")
+      .trim()
+      .toLowerCase();
+    const adminLower = String(metadata.admin || "")
+      .trim()
+      .toLowerCase();
+    const deputiesLower = (metadata.deputies || []).map((m) =>
+      String(m).trim().toLowerCase(),
+    );
+    const membersLower = (metadata.members || []).map((m) =>
+      String(m).trim().toLowerCase(),
+    );
+
+    const isSelf = actorLower === targetLower;
+    const isOwner = ownerLower === actorLower || adminLower === actorLower;
+    const isDeputy = deputiesLower.includes(actorLower);
 
     const targetIsOwner =
-      metadata.owner === targetEmail || metadata.admin === targetEmail;
-    const targetIsDeputy = (metadata.deputies || []).includes(targetEmail);
+      ownerLower === targetLower || adminLower === targetLower;
+    const targetIsDeputy = deputiesLower.includes(targetLower);
 
     if (!isSelf) {
       // Kicking logic
@@ -313,9 +364,15 @@ export class ChatService {
       }
     }
 
-    const updatedMembers = metadata.members.filter((m) => m !== targetEmail);
+    // Preserve original casing for stored members, but filter by normalized email
+    const updatedMembers = (metadata.members || []).filter(
+      (m) => String(m).trim().toLowerCase() !== targetLower,
+    );
+    const storedTargetEmail = (metadata.members || []).find(
+      (m) => String(m).trim().toLowerCase() === targetLower,
+    );
     const updatedDeputies = (metadata.deputies || []).filter(
-      (m) => m !== targetEmail,
+      (m) => String(m).trim().toLowerCase() !== targetLower,
     );
     const now = new Date().toISOString();
 
@@ -337,7 +394,10 @@ export class ChatService {
       {
         Delete: {
           TableName: this.db.tableName,
-          Key: { PK: `USER#${targetEmail}`, SK: convId },
+          Key: { 
+            PK: `USER#${(storedTargetEmail || targetEmail).toLowerCase()}`, 
+            SK: convId 
+          },
         },
       },
     ];
@@ -365,14 +425,28 @@ export class ChatService {
     if (!metadata || metadata.type !== "group")
       throw new BadRequestException("Group not found");
 
-    const isOwner =
-      metadata.owner === actorEmail || metadata.admin === actorEmail;
+    // Normalize actor/target and membership for case-insensitive checks
+    const actorLower = String(actorEmail).trim().toLowerCase();
+    const ownerLower = String(metadata.owner || "")
+      .trim()
+      .toLowerCase();
+    const adminLower = String(metadata.admin || "")
+      .trim()
+      .toLowerCase();
+    const deputiesLower = (metadata.deputies || []).map((m) =>
+      String(m).trim().toLowerCase(),
+    );
+    const membersLower = (metadata.members || []).map((m) =>
+      String(m).trim().toLowerCase(),
+    );
+
+    const isOwner = ownerLower === actorLower || adminLower === actorLower;
     if (!isOwner)
       throw new BadRequestException(
         "Chỉ trưởng nhóm mới có quyền thay đổi vai trò",
       );
 
-    if (!metadata.members.includes(targetEmail))
+    if (!membersLower.includes(String(targetEmail).trim().toLowerCase()))
       throw new BadRequestException("Target is not a member");
 
     let updateExp = "SET updatedAt = :now";
@@ -445,7 +519,7 @@ export class ChatService {
     await this.db.docClient.send(
       new UpdateCommand({
         TableName: this.db.tableName,
-        Key: { PK: `USER#${userEmail}`, SK: convId },
+        Key: { PK: `USER#${userEmail.toLowerCase()}`, SK: convId },
         UpdateExpression: updateExp,
         ExpressionAttributeValues: expVals,
       }),
@@ -463,9 +537,20 @@ export class ChatService {
     if (!metadata || metadata.type !== "group")
       throw new BadRequestException("Group not found");
 
-    const isOwner =
-      metadata.owner === actorEmail || metadata.admin === actorEmail;
-    const isDeputy = (metadata.deputies || []).includes(actorEmail);
+    // Normalize for case-insensitive permission checks
+    const actorLower = String(actorEmail).trim().toLowerCase();
+    const ownerLower = String(metadata.owner || "")
+      .trim()
+      .toLowerCase();
+    const adminLower = String(metadata.admin || "")
+      .trim()
+      .toLowerCase();
+    const deputiesLower = (metadata.deputies || []).map((m) =>
+      String(m).trim().toLowerCase(),
+    );
+
+    const isOwner = ownerLower === actorLower || adminLower === actorLower;
+    const isDeputy = deputiesLower.includes(actorLower);
 
     if (data.avatar && !isOwner) {
       throw new BadRequestException(
@@ -521,8 +606,14 @@ export class ChatService {
     if (!metadata || metadata.type !== "group")
       throw new BadRequestException("Group not found");
 
-    const isOwner =
-      metadata.owner === actorEmail || metadata.admin === actorEmail;
+    const actorLower = String(actorEmail).trim().toLowerCase();
+    const ownerLower = String(metadata.owner || "")
+      .trim()
+      .toLowerCase();
+    const adminLower = String(metadata.admin || "")
+      .trim()
+      .toLowerCase();
+    const isOwner = ownerLower === actorLower || adminLower === actorLower;
     if (!isOwner)
       throw new BadRequestException("Only owner can dissolve group");
 
@@ -541,7 +632,7 @@ export class ChatService {
       transactItems.push({
         Delete: {
           TableName: this.db.tableName,
-          Key: { PK: `USER#${member}`, SK: convId },
+          Key: { PK: `USER#${String(member).toLowerCase()}`, SK: convId },
         },
       });
     }
@@ -555,16 +646,72 @@ export class ChatService {
     return { success: true };
   }
 
-  /**
-   * GET USER CONVERSATIONS (INBOX)
-   */
+  async getConversationById(convId: string, userEmail: string) {
+    const { prefixed: prefixedId, original: origId, raw: rawId, veryRaw } = this.normalizeConvId(convId);
+    console.debug(`[ChatService] getConversationById search: prefixed=${prefixedId}, original=${origId}, raw=${rawId}, veryRaw=${veryRaw}`);
+    
+    // 1. Try prefixed
+    let metadata = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: prefixedId, SK: "METADATA" },
+      }),
+    );
+
+    // 2. Try original
+    if (!metadata.Item && origId !== prefixedId) {
+      metadata = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: origId, SK: "METADATA" },
+        }),
+      );
+    }
+
+    // 3. Try raw
+    if (!metadata.Item && rawId !== prefixedId && rawId !== origId) {
+      metadata = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: rawId, SK: "METADATA" },
+        }),
+      );
+    }
+
+    // 4. Try veryRaw
+    if (!metadata.Item && veryRaw !== prefixedId && veryRaw !== origId && veryRaw !== rawId) {
+      metadata = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: veryRaw, SK: "METADATA" },
+        }),
+      );
+    }
+
+    if (!metadata.Item) {
+      console.error(`[ChatService] Conversation NOT FOUND in any format. Input: ${convId}`);
+      throw new NotFoundException(`Conversation not found: ${prefixedId}`);
+    }
+
+    // Check membership
+    const isMember = (metadata.Item.members || []).some(
+      (m: string) => m.toLowerCase() === userEmail.toLowerCase()
+    );
+
+    if (!isMember) {
+      throw new BadRequestException("You are not a member of this conversation");
+    }
+
+    return metadata.Item;
+  }
+
   async getConversationsByUser(email: string) {
     // Step 1: Find all conversation mappings for this user
     const mappingParams = new QueryCommand({
       TableName: this.db.tableName,
       KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
       ExpressionAttributeValues: {
-        ":pk": `USER#${email}`,
+        ":pk": `USER#${email.toLowerCase()}`,
         ":skPrefix": "CONV#",
       },
     });
@@ -656,11 +803,14 @@ export class ChatService {
     convId: string,
     messageId?: string,
   ) {
-    const metadata = await this.getConversationMetadata(convId);
+    const { raw: rawId, prefixed: prefId } = this.normalizeConvId(convId);
+    const metadata = await this.getConversationMetadata(prefId);
     if (
       !metadata ||
       !Array.isArray(metadata.members) ||
-      !metadata.members.includes(email)
+      !(metadata.members || [])
+        .map((m) => String(m).trim().toLowerCase())
+        .includes(String(email).trim().toLowerCase())
     ) {
       throw new BadRequestException(
         "You are not a member of this conversation",
@@ -677,7 +827,7 @@ export class ChatService {
           {
             Update: {
               TableName: this.db.tableName,
-              Key: { PK: `USER#${email}`, SK: convId },
+              Key: { PK: `USER#${email.toLowerCase()}`, SK: prefId },
               UpdateExpression: "SET lastReadAt = :ts, unreadCount = :zero",
               ExpressionAttributeValues: {
                 ":ts": timestamp,
@@ -690,8 +840,8 @@ export class ChatService {
             Put: {
               TableName: this.db.tableName,
               Item: {
-                PK: convId,
-                SK: `READ#${email}`,
+                PK: prefId,
+                SK: `READ#${email.toLowerCase()}`,
                 lastReadAt: timestamp,
                 lastReadMessageId: messageId || null,
                 updatedAt: timestamp,
@@ -709,13 +859,14 @@ export class ChatService {
   }
 
   async markAsDelivered(email: string, convId: string, messageId: string) {
+    const { prefixed: prefId } = this.normalizeConvId(convId);
     const timestamp = new Date().toISOString();
     await this.db.docClient.send(
       new PutCommand({
         TableName: this.db.tableName,
         Item: {
-          PK: convId,
-          SK: `DELIVERED#${email}`,
+          PK: prefId,
+          SK: `DELIVERED#${email.toLowerCase()}`,
           lastDeliveredMessageId: messageId,
           deliveredAt: timestamp,
           updatedAt: timestamp,
@@ -734,20 +885,25 @@ export class ChatService {
     const normalizedDays =
       days == null || Number(days) === 0 ? null : Number(days);
 
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+
     if (normalizedDays !== null && !allowedDays.includes(normalizedDays)) {
       throw new BadRequestException(
         "Auto delete days must be 1, 7, 30 or null",
       );
     }
 
-    const metadata = await this.getConversationMetadata(convId);
+    const metadata = await this.getConversationMetadata(prefixedConvId);
     if (!metadata) {
       throw new BadRequestException("Conversation not found");
     }
 
+    const normalizedEmail = userEmail.toLowerCase();
     if (
       !Array.isArray(metadata.members) ||
-      !metadata.members.includes(userEmail)
+      !(metadata.members || [])
+        .map((m) => String(m).trim().toLowerCase())
+        .includes(String(userEmail).trim().toLowerCase())
     ) {
       throw new BadRequestException(
         "You are not a member of this conversation",
@@ -759,7 +915,7 @@ export class ChatService {
     await this.db.docClient.send(
       new UpdateCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: "METADATA" },
+        Key: { PK: prefixedConvId, SK: "METADATA" },
         UpdateExpression:
           "SET autoDeleteDays = :days, autoDeleteUpdatedAt = :updatedAt, updatedAt = :updatedAt",
         ExpressionAttributeValues: {
@@ -770,7 +926,7 @@ export class ChatService {
     );
 
     return {
-      convId,
+      convId: rawConvId,
       autoDeleteDays: normalizedDays,
       autoDeleteUpdatedAt: now,
     };
@@ -780,10 +936,11 @@ export class ChatService {
    * GET CONVERSATION METADATA (WITH MEMBERS)
    */
   async getConversationMetadata(convId: string): Promise<Conversation | null> {
+    const { prefixed: prefixedConvId } = this.normalizeConvId(convId);
     const res = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: "METADATA" },
+        Key: { PK: prefixedConvId, SK: "METADATA" },
       }),
     );
     return (res.Item as Conversation) || null;
@@ -865,7 +1022,7 @@ export class ChatService {
             ":pk": convId,
             ":skPrefix": "MSG#",
           },
-          Limit: 100,
+          Limit: 1000,
           ScanIndexForward: false, // Get latest messages first
         }),
       ),
@@ -905,7 +1062,7 @@ export class ChatService {
       )
       .map((m) => ({
         id: m.SK,
-        convId: m.PK,
+        conversationId: m.PK.startsWith('CONV#') ? m.PK.substring(5) : m.PK,
         senderId: m.senderId,
         content: m.content,
         createdAt: m.createdAt,
@@ -923,7 +1080,7 @@ export class ChatService {
           ...f,
           name: f.name || f.fileName || "Tệp",
           messageId: m.SK,
-          convId: m.PK,
+          conversationId: m.PK.startsWith('CONV#') ? m.PK.substring(5) : m.PK,
           senderId: m.senderId,
           createdAt: m.createdAt,
         }));
@@ -968,6 +1125,24 @@ export class ChatService {
       });
     }
 
+    // 4. Search Conversations (Groups by name or Direct by partner name)
+    const searchConversations = myConvs.filter(c => {
+      if (c.type === 'group') {
+        return (c.name || '').toLowerCase().includes(q);
+      }
+      // For direct, partner name is harder to get here without extra metadata, 
+      // but we already have contactResults for friends. 
+      // Let's focus on Groups for now as they are primary "conversations"
+      return false;
+    }).map(c => ({
+      type: 'CONVERSATION',
+      id: c.id,
+      conversationId: c.id,
+      name: c.name || 'Nhóm không tên',
+      avatar: c.avatar || '',
+      memberCount: c.members?.length || 0,
+    }));
+
     // Standardize for Search V2: type/id/conversationId/sender
     const standardized = {
       contacts: contactResults.slice(0, 50).map((c) => ({
@@ -983,10 +1158,11 @@ export class ChatService {
           avatar: c.avatar,
         },
       })),
+      conversations: searchConversations.slice(0, 50),
       messages: searchMessages.slice(0, 50).map((m) => ({
         type: "MESSAGE",
         id: m.id,
-        conversationId: m.convId,
+        conversationId: m.conversationId,
         senderId: m.senderId,
         content: m.content,
         createdAt: m.createdAt,
@@ -996,7 +1172,7 @@ export class ChatService {
         type: "FILE",
         id: f.messageId,
         messageId: f.messageId,
-        conversationId: f.convId,
+        conversationId: f.conversationId,
         senderId: f.senderId,
         name: f.name,
         size: f.size,

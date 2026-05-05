@@ -24,6 +24,7 @@ import MediaDetailScreen from '../screens/main/MediaDetailScreen';
 import ChatGalleryScreen from '../screens/main/ChatGalleryScreen';
 import CreateGroupComponent from '../screens/main/CreateGroup';
 import SecurityAlertsScreen from '../screens/main/SecurityAlertsScreen';
+import InChatSearchScreen from '../screens/main/InChatSearchScreen';
 
 // Profile Screens
 import ProfileScreen from '../screens/profile/ProfileScreen';
@@ -160,6 +161,7 @@ export function RootNavigator({ user, onLogout }: { user: any; onLogout: any }) 
           <Stack.Screen name="ChatDetails" component={wrapModularScreen(ChatDetailsScreen)} />
           <Stack.Screen name="ChatGallery" component={wrapModularScreen(ChatGalleryScreen)} />
           <Stack.Screen name="CreateGroup" component={wrapModularScreen(CreateGroupComponent)} />
+          <Stack.Screen name="InChatSearch" component={wrapModularScreen(InChatSearchScreen)} />
           <Stack.Screen name="MediaDetail" component={wrapModularScreen(MediaDetailScreen)} options={{ animation: 'fade' }} />
         </Stack.Group>
       )}

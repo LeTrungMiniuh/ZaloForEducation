@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
-import api from "../services/api";
 import { useChatStore, type Message } from "../store/chatStore";
 import { useCallStore } from "../store/callStore";
 import {
@@ -12,6 +11,11 @@ import {
   isConversationMutedNow,
   getDisplayName,
 } from "../utils/chatUtils";
+import {
+  bootstrapReminderNotifications,
+  registerReminderNotificationFromMessage,
+  dismissWebNotificationsByConversation,
+} from "../utils/reminderNotifications";
 import { pushSecurityAlert } from "../utils/securityAlerts";
 import Swal from "sweetalert2";
 
@@ -57,6 +61,10 @@ export const useSocketListeners = () => {
   const { socket, user } = useAuth();
   const notifiedMessageIdsRef = useRef<Set<string>>(new Set());
   const activeCallNotificationRef = useRef<Notification | null>(null);
+
+  useEffect(() => {
+    bootstrapReminderNotifications();
+  }, []);
 
   // Chat Store Selectors
   const addMessage = useChatStore((state) => state.addMessage);
@@ -144,15 +152,29 @@ export const useSocketListeners = () => {
       // 1. Add to store (Updates message list if active AND updates inbox preview ALWAYS)
       addMessage(msg);
 
-      // 2. Auto mark as read if it's the active conversation
-      if (incomingConvId.toLowerCase() === (activeConvId || "").toLowerCase()) {
+      const normIncoming = incomingConvId.toLowerCase().startsWith("conv#") 
+        ? incomingConvId.toLowerCase() 
+        : `conv#${incomingConvId.toLowerCase()}`;
+        
+      const normActive = (activeConvId || "").toLowerCase().startsWith("conv#")
+        ? (activeConvId || "").toLowerCase()
+        : `conv#${(activeConvId || "").toLowerCase()}`;
+
+      if (normIncoming === normActive) {
+        dismissWebNotificationsByConversation(incomingConvId);
         markAsRead(incomingConvId).catch((error) => {
           console.error("Failed to mark conversation as read", error);
         });
       }
 
+      if (msg.payload?.reminder && msg.status !== "sending") {
+        registerReminderNotificationFromMessage(msg, incomingConvId);
+      }
+
       // 3. Browser notification
-      void showIncomingMessageNotification(msg, incomingConvId);
+      if (!msg.payload?.reminder) {
+        void showIncomingMessageNotification(msg, incomingConvId);
+      }
     };
 
     const handleConversationRead = (data: ConversationReadPayload) => {
@@ -247,14 +269,16 @@ export const useSocketListeners = () => {
     }) => {
       const convId = data.conversationId || data.convId;
       if (!convId) return;
+
       console.log("[SOCKET] PIN_UPDATE received:", data);
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === convId
-            ? { ...c, pinnedMessageIds: data.pinnedMessageIds }
-            : c,
-        ),
-      );
+
+      // [SENIOR] Scoped state update
+      useChatStore.getState().updateConversationById(convId, {
+        pinnedMessageIds: data.pinnedMessageIds,
+      });
+
+      // If active, we might want to force a messages refresh or just rely on the memo
+      // The PinnedHeader memo will pick up the change because conversations array reference changes.
     };
 
     const handleGroupUpdate = (data: {

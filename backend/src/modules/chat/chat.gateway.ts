@@ -238,6 +238,26 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
+   * [SENIOR] Utility to broadcast a message to all participants in a conversation
+   */
+  async emitReceiveMessage(convId: string, message: any) {
+    const room = convId.toLowerCase();
+    const metadata = await this.chatService.getConversationMetadata(convId);
+    
+    // 1. Broadcast to the active room
+    this.server.to(room).emit("receiveMessage", message);
+    
+    // 2. Broadcast to each member's personal room (for Inbox updates)
+    if (metadata && Array.isArray(metadata.members)) {
+      for (const member of metadata.members) {
+        const userRoom = `user#${String(member).toLowerCase()}`;
+        this.server.to(userRoom).emit("receiveMessage", message);
+      }
+    }
+    this.logger.log(`[SOCKET] Broadcasted receiveMessage for ${message.id} in ${convId}`);
+  }
+
+  /**
    * [SENIOR] Notify members when a message is updated (Recall/React/Pin)
    */
   emitMessagePatched(convId: string, message: any) {

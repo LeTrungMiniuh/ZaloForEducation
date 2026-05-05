@@ -152,6 +152,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   isConsecutive,
   onVotePoll,
 }) => {
+  // --- HOOKS (Must be at the top level) ---
   const navigate = useNavigate();
   const { user } = useAuth();
   const isCallOverlayActive = useCallStore(
@@ -167,6 +168,58 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   } = useChatStore();
   const [isReactionDockOpen, setIsReactionDockOpen] = useState(false);
   const reactionDockRef = useRef<HTMLDivElement | null>(null);
+
+  // Use state to track conversation/message changes and reset reaction dock
+  // This is a safe way to handle state resets based on prop changes
+  const [prevConvMsgKey, setPrevConvMsgKey] = useState(`${activeConvId}-${message.id}`);
+  const [prevCallOverlay, setPrevCallOverlay] = useState(isCallOverlayActive);
+
+  // Sync state with props in a safe way
+  const currentConvMsgKey = `${activeConvId}-${message.id}`;
+  if (prevConvMsgKey !== currentConvMsgKey) {
+    setPrevConvMsgKey(currentConvMsgKey);
+    setIsReactionDockOpen(false);
+  }
+  if (isCallOverlayActive !== prevCallOverlay) {
+    setPrevCallOverlay(isCallOverlayActive);
+    if (isCallOverlayActive) {
+      setIsReactionDockOpen(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isReactionDockOpen) return;
+
+    const closePicker = () => setIsReactionDockOpen(false);
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        closePicker();
+      }
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const node = reactionDockRef.current;
+      if (!node) return;
+      if (event.target instanceof Node && !node.contains(event.target)) {
+        closePicker();
+      }
+    };
+
+    window.addEventListener("blur", closePicker);
+    window.addEventListener("scroll", closePicker, true);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+
+    return () => {
+      window.removeEventListener("blur", closePicker);
+      window.removeEventListener("scroll", closePicker, true);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [isReactionDockOpen]);
+
+  // --- UTILS & DATA (No hooks here) ---
   const isVideoMedia = (mediaItem: any) => {
     const mime = String(
       mediaItem?.mimeType || mediaItem?.fileType || "",
@@ -220,7 +273,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     if (placeholders.includes(message.content)) {
       return (
         (message.media && message.media.length > 0) ||
-        (message.files && message.files.some(isAudioFile))
+        (message.files && message.files.some(isAudioFile)) ||
+        !!message.audioUrl
       );
     }
     return false;
@@ -239,57 +293,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     Object.keys(message.reactions).length > 0 &&
     !isRecalled
   );
-
-  // Reset reaction dock when conversation/message changes
-  const [prevConvMsgKey, setPrevConvMsgKey] = useState(
-    `${activeConvId}-${message.id}`,
-  );
-  const currentConvMsgKey = `${activeConvId}-${message.id}`;
-  if (prevConvMsgKey !== currentConvMsgKey) {
-    setPrevConvMsgKey(currentConvMsgKey);
-    setIsReactionDockOpen(false);
-  }
-
-  // Close reaction dock when call overlay becomes active
-  const [prevCallOverlay, setPrevCallOverlay] = useState(isCallOverlayActive);
-  if (isCallOverlayActive !== prevCallOverlay) {
-    setPrevCallOverlay(isCallOverlayActive);
-    if (isCallOverlayActive) {
-      setIsReactionDockOpen(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!isReactionDockOpen) return;
-
-    const closePicker = () => setIsReactionDockOpen(false);
-
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        closePicker();
-      }
-    };
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const node = reactionDockRef.current;
-      if (!node) return;
-      if (event.target instanceof Node && !node.contains(event.target)) {
-        closePicker();
-      }
-    };
-
-    window.addEventListener("blur", closePicker);
-    window.addEventListener("scroll", closePicker, true);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    document.addEventListener("pointerdown", handlePointerDown, true);
-
-    return () => {
-      window.removeEventListener("blur", closePicker);
-      window.removeEventListener("scroll", closePicker, true);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-    };
-  }, [isReactionDockOpen]);
 
   const bubbleClass = isMe
     ? "bg-primary/10 text-on-surface rounded-2xl rounded-tr-none"
@@ -367,7 +370,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         const targetName = parsed.target
           ? getDisplayName(parsed.target, user, userProfiles)
           : "";
-        const isActorMe = parsed.actor === user?.email;
+        const isActorMe =
+          String(parsed.actor || "").trim().toLowerCase() ===
+          String(user?.email || "")
+            .trim()
+            .toLowerCase();
         const actorLabel = isActorMe ? "Bạn" : actorName;
         const targetLabel =
           rawTarget &&
@@ -381,28 +388,48 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             displayContent = `${actorLabel} đã thêm ${targetLabel} vào nhóm`;
             break;
           case "member_removed":
+          case "member_kicked":
             displayContent = `${actorLabel} đã xóa ${targetLabel} khỏi nhóm`;
             break;
           case "member_left":
-            displayContent = `${actorLabel} left the group`;
+            displayContent = `${actorLabel} đã rời nhóm`;
             break;
           case "role_updated":
-            const roleName =
-              parsed.role === "owner"
-                ? `transferred ownership to ${targetLabel}`
-                : parsed.role === "deputy"
-                  ? "set CO_ADMIN"
-                  : "updated member role";
-            displayContent =
-              parsed.role === "owner"
-                ? `${actorLabel} ${roleName}`
-                : `${actorLabel} ${roleName} for ${targetLabel}`;
+          case "promoted_to_deputy":
+          case "demoted_to_member":
+          case "transferred_owner":
+          case "demoted_from_deputy":
+          case "ownership_transferred": {
+            const role = parsed.role || (parsed.action === "promoted_to_deputy" ? "deputy" : (parsed.action === "transferred_owner" || parsed.action === "ownership_transferred") ? "owner" : "member");
+            if (role === "owner") {
+              displayContent = `${actorLabel} đã chuyển quyền trưởng nhóm cho ${targetLabel}`;
+            } else if (role === "deputy") {
+              displayContent = `${actorLabel} đã đặt ${targetLabel} làm phó nhóm`;
+            } else {
+              displayContent = `${actorLabel} đã hạ ${targetLabel} xuống làm thành viên`;
+            }
+            break;
+          }
+          case "pin_message":
+            displayContent = `${actorLabel} đã ghim một tin nhắn`;
+            break;
+          case "unpin_message":
+            displayContent = `${actorLabel} đã bỏ ghim tin nhắn`;
             break;
           case "info_updated":
             displayContent = `${actorLabel} đã cập nhật thông tin nhóm`;
             break;
+          case "group_name_updated":
+            displayContent = `${actorLabel} đã đổi tên nhóm`;
+            break;
+          case "group_avatar_updated":
+            displayContent = `${actorLabel} đã thay đổi ảnh đại diện nhóm`;
+            break;
           case "group_created":
             displayContent = `${actorLabel} đã tạo nhóm`;
+            break;
+          default:
+            displayContent = `${actorLabel} đã thực hiện một thay đổi hệ thống`;
             break;
         }
       }
@@ -438,19 +465,34 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   }
 
   return (
-    <div
-      id={`msg-${message.id}`}
-      className={`flex items-end gap-3 group relative mb-4 transition-all duration-500 ${isMe ? "flex-row-reverse" : "flex-row"} ${isHighlighted ? "scale-105 z-10" : ""}`}
-    >
-      <div className="shrink-0 mb-1">
-        {!isMe && !isConsecutive ? (
-          <img
-            src={getDisplayAvatar(message.senderId, user, userProfiles)}
-            className="w-10 h-10 rounded-full object-cover shadow-sm ring-1 ring-black/5 cursor-pointer hover:opacity-90 transition-opacity"
-            onClick={handleOpenSenderProfile}
-            title="Xem trang cá nhân"
-            alt=""
-          />
+    <div className="contents">
+      <style>
+        {`
+          @keyframes message-flash {
+            0% { background-color: transparent; }
+            30% { background-color: rgba(255, 245, 157, 0.6); }
+            60% { background-color: transparent; }
+            80% { background-color: rgba(255, 245, 157, 0.6); }
+            100% { background-color: transparent; }
+          }
+          .message-flash-active {
+            animation: message-flash 2s ease-out;
+          }
+        `}
+      </style>
+      <div
+        id={`msg-${message.id}`}
+        className={`flex items-end gap-3 group relative mb-4 transition-all duration-500 ${isMe ? "flex-row-reverse" : "flex-row"} ${isHighlighted ? "scale-[1.02] z-10" : ""}`}
+      >
+        <div className="shrink-0 mb-1">
+          {!isMe && !isConsecutive ? (
+            <img
+              src={getDisplayAvatar(message.senderId, user, userProfiles)}
+              className="w-10 h-10 rounded-full object-cover shadow-sm ring-1 ring-black/5 cursor-pointer hover:opacity-90 transition-opacity"
+              onClick={handleOpenSenderProfile}
+              title="Xem trang cá nhân"
+              alt=""
+            />
         ) : !isMe && isConsecutive ? (
           <div className="w-10" />
         ) : null}
@@ -538,7 +580,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
               shouldHideBubble
                 ? "bg-transparent p-0 border-none shadow-none"
                 : `p-3 shadow-sm border ${bubbleClass} ${isMe ? "border-primary/20" : "border-outline-variant/20"}`
-            } ${isHighlighted ? "message-highlighted" : ""}`}
+            } ${isHighlighted ? "message-flash-active" : ""}`}
           >
             {message.replyTo && (
               <div className="mb-2 rounded-xl bg-black/5 p-2.5 text-[12px] border-l-4 border-primary/50 flex items-center gap-2">
@@ -660,6 +702,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                   votes={(message.payload?.poll || message.poll).votes || {}}
                   senderEmail={message.senderId}
                   isClosed={(message.payload?.poll || message.poll).isClosed}
+                  userProfiles={userProfiles}
                   onVote={async (optionIndex: number) => {
                     if (onVotePoll) {
                       await onVotePoll(message.id, optionIndex);
@@ -690,6 +733,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
             {!isRecalled && (
               <div className="mt-2 space-y-2">
+                {message.audioUrl && (
+                  <WebAudioPlayer src={message.audioUrl} />
+                )}
+
                 {message.media && message.media.length > 0 && (
                   <div
                     className={
@@ -1002,7 +1049,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 };
 
 export default MessageBubble;

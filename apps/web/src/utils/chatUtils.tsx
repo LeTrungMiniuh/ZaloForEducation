@@ -291,10 +291,14 @@ export const getMessagePreview = (message: any): string => {
           case "member_added":
             return "[Thêm thành viên]";
           case "member_removed":
+          case "member_kicked":
             return "[Xóa thành viên]";
           case "member_left":
             return "[Rời nhóm]";
           case "role_updated":
+          case "promoted_to_deputy":
+          case "demoted_to_member":
+          case "transferred_owner":
             return "[Cập nhật vai trò]";
           case "info_updated":
             return "[Cập nhật thông tin]";
@@ -365,22 +369,37 @@ const formatSystemPreview = (
         case "member_added":
           return `${actorLabel} đã thêm ${buildTargetLabel(parsed.target)} vào nhóm`;
         case "member_removed":
+        case "member_kicked":
           return `${actorLabel} đã xóa ${buildTargetLabel(parsed.target)} khỏi nhóm`;
         case "member_left":
-          return `${actorLabel} left the group`;
-        case "role_updated": {
-          if (parsed.role === "owner") {
-            return `${actorLabel} transferred ownership to ${buildTargetLabel(parsed.target)}`;
+          return `${actorLabel} đã rời nhóm`;
+        case "role_updated":
+        case "promoted_to_deputy":
+        case "demoted_to_member":
+        case "transferred_owner":
+        case "demoted_from_deputy":
+        case "ownership_transferred": {
+          const role = parsed.role || (parsed.action === "promoted_to_deputy" ? "deputy" : parsed.action === "transferred_owner" ? "owner" : "member");
+          if (role === "owner" || parsed.action === "transferred_owner" || parsed.action === "ownership_transferred") {
+            return `${actorLabel} đã chuyển quyền trưởng nhóm cho ${buildTargetLabel(parsed.target)}`;
           }
-          if (parsed.role === "deputy") {
-            return `${actorLabel} set CO_ADMIN for ${buildTargetLabel(parsed.target)}`;
+          if (role === "deputy" || parsed.action === "promoted_to_deputy") {
+            return `${actorLabel} đã đặt ${buildTargetLabel(parsed.target)} làm phó nhóm`;
           }
-          return `${actorLabel} updated member role for ${buildTargetLabel(parsed.target)}`;
+          return `${actorLabel} đã hạ ${buildTargetLabel(parsed.target)} xuống thành viên`;
         }
+        case "pin_message":
+          return `${actorLabel} đã ghim một tin nhắn`;
+        case "unpin_message":
+          return `${actorLabel} đã bỏ ghim tin nhắn`;
         case "info_updated":
           return `${actorLabel} đã cập nhật thông tin nhóm`;
+        case "group_name_updated":
+          return `${actorLabel} đã đổi tên nhóm`;
+        case "group_avatar_updated":
+          return `${actorLabel} đã thay đổi ảnh đại diện nhóm`;
         default:
-          break;
+          return `${actorLabel} đã thực hiện hành động hệ thống`;
       }
     }
   } catch {
@@ -406,6 +425,8 @@ const formatSystemPreview = (
       return `${actorLabel} đã cập nhật vai trò thành viên`;
     case "[Cập nhật thông tin]":
       return `${actorLabel} đã cập nhật thông tin nhóm`;
+    case "[Chuyển quyền trưởng nhóm]":
+      return `${actorLabel} đã chuyển quyền trưởng nhóm`;
     default:
       return legacy || "[Hệ thống]";
   }
@@ -436,12 +457,18 @@ export const getConversationPreviewText = (
 
   if (!senderId) return preview;
 
-  const senderLabel = formatConversationActorLabel(
-    senderId,
-    currentUser,
-    userProfiles,
-  );
-  return `${senderLabel}: ${preview}`;
+  const normalizedSender = String(senderId).trim().toLowerCase();
+  const myEmail = String(currentUser?.email || "")
+    .trim()
+    .toLowerCase();
+
+  // If I sent the message, show "Bạn: ..."
+  if (normalizedSender === myEmail) {
+    return `Bạn: ${preview}`;
+  }
+
+  // If someone else sent it, show only the preview content
+  return preview;
 };
 
 export const normalizeAttachment = (item: any) => {

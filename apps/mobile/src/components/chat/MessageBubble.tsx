@@ -10,6 +10,8 @@ import { downloadAndOpenFile } from '../../utils/fileHelper';
 import FluentEmoji from '../common/FluentEmoji';
 import { FLUENT_EMOJI_MAP } from '../../constants/Emojis';
 import { useNavigation } from '@react-navigation/native';
+import PollMessage from './PollMessage';
+import ReminderMessage from './ReminderMessage';
 
 const DEFAULT_AVATAR = { uri: "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png" };
 
@@ -221,6 +223,7 @@ export default function MessageBubble({
   isMe, 
   userProfile, 
   onLongPress, 
+  onPress,
   onReaction, 
   onReply,
   onSystemMessagePress,
@@ -231,7 +234,11 @@ export default function MessageBubble({
   showAvatar,
   groupPosition,
   isSeen,
-  onNavigate
+  onNavigate,
+  isSelectionMode,
+  isSelected,
+  onVotePoll,
+  onClosePoll
 }: {
   message: any;
   isMe: boolean;
@@ -248,6 +255,11 @@ export default function MessageBubble({
   groupPosition?: 'first' | 'middle' | 'last' | 'single';
   isSeen?: boolean;
   onNavigate?: (screen: string, params?: any) => void;
+  onPress?: (message: any) => void;
+  onVotePoll?: (messageId: string, optionIndex: number) => Promise<void>;
+  onClosePoll?: (messageId: string) => Promise<void>;
+  isSelectionMode?: boolean;
+  isSelected?: boolean;
 }) {
   const isMediaOnly = (() => {
     if (message.audioUrl || message.contactCard || message.location) return true;
@@ -266,11 +278,31 @@ export default function MessageBubble({
     return false;
   })();
 
-  const shouldHideBubble = isMediaOnly || isSticker || !!message.contactCard || !!message.location || !!message.audioUrl;
+  const shouldHideBubble = isMediaOnly || isSticker || !!message.contactCard || !!message.location || !!message.audioUrl || message.type === 'poll' || message.type === 'reminder';
 
   const navigate = useNavigation();
-
   const { user }: any = useAuth();
+
+  // HIGHLIGHT ANIMATION
+  const highlightAnim = useRef(new Animated.Value(0)).current;
+  React.useEffect(() => {
+    if (isHighlighted) {
+      Animated.sequence([
+        Animated.timing(highlightAnim, { toValue: 1, duration: 400, useNativeDriver: false }),
+        Animated.timing(highlightAnim, { toValue: 0, duration: 400, useNativeDriver: false }),
+        Animated.timing(highlightAnim, { toValue: 1, duration: 400, useNativeDriver: false }),
+        Animated.timing(highlightAnim, { toValue: 0, duration: 400, useNativeDriver: false }),
+        Animated.timing(highlightAnim, { toValue: 1, duration: 400, useNativeDriver: false }),
+      ]).start();
+    } else {
+      highlightAnim.setValue(0);
+    }
+  }, [isHighlighted]);
+
+  const highlightBg = highlightAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['transparent', 'rgba(255, 213, 79, 0.8)'] // Stronger Amber/Yellow
+  });
 
   // SWIPE TO REPLY LOGIC
   const translateX = useRef(new Animated.Value(0)).current;
@@ -374,10 +406,28 @@ export default function MessageBubble({
             displayContent = `${actorLabel} đã thêm ${targetLabel} vào nhóm`;
             break;
           case 'member_removed':
+          case 'member_kicked':
             displayContent = `${actorLabel} đã xóa ${targetLabel} khỏi nhóm`;
             break;
           case 'member_left':
             displayContent = `${actorLabel} đã rời nhóm`;
+            break;
+          case 'promoted_to_deputy':
+            displayContent = `${actorLabel} đã bổ nhiệm ${targetLabel} làm phó nhóm`;
+            break;
+          case 'demoted_from_deputy':
+          case 'demoted_to_member':
+            displayContent = `${actorLabel} đã gỡ chức vụ của ${targetLabel} xuống làm thành viên`;
+            break;
+          case 'ownership_transferred':
+          case 'transferred_owner':
+            displayContent = `${actorLabel} đã chuyển quyền trưởng nhóm cho ${targetLabel}`;
+            break;
+          case 'pin_message':
+            displayContent = `${actorLabel} đã ghim một tin nhắn`;
+            break;
+          case 'unpin_message':
+            displayContent = `${actorLabel} đã bỏ ghim tin nhắn`;
             break;
           case 'role_updated':
             const roleName = parsed.role === 'owner' ? 'Trưởng nhóm' : parsed.role === 'deputy' ? 'Phó nhóm' : 'Thành viên';
@@ -386,8 +436,17 @@ export default function MessageBubble({
           case 'info_updated':
             displayContent = `${actorLabel} đã cập nhật thông tin nhóm`;
             break;
+          case 'group_name_updated':
+            displayContent = `${actorLabel} đã đổi tên nhóm`;
+            break;
+          case 'group_avatar_updated':
+            displayContent = `${actorLabel} đã thay đổi ảnh đại diện nhóm`;
+            break;
           case 'group_created':
             displayContent = `${actorLabel} đã tạo nhóm`;
+            break;
+          default:
+            displayContent = `${actorLabel} đã thực hiện một thay đổi hệ thống`;
             break;
         }
       }
@@ -574,11 +633,17 @@ export default function MessageBubble({
           )}
 
           {/* 2. Audio Player */}
-          {message.audioUrl && (
-            <View style={styles.fileList}>
-              <AudioPlayer url={message.audioUrl} isMe={isMe} />
-            </View>
-          )}
+          {(() => {
+            const audioUrl = message.audioUrl || message.files?.find((f: any) => String(f.mimeType || "").toLowerCase().startsWith("audio/"))?.url || message.files?.find((f: any) => String(f.mimeType || "").toLowerCase().startsWith("audio/"))?.dataUrl;
+            if (audioUrl) {
+              return (
+                <View style={styles.fileList}>
+                  <AudioPlayer url={audioUrl} isMe={isMe} />
+                </View>
+              );
+            }
+            return null;
+          })()}
 
           {/* 3. Standard Files */}
           {message.files && message.files.length > 0 && (
@@ -603,6 +668,32 @@ export default function MessageBubble({
               })}
             </View>
           )}
+
+          {/* 4. Polls */}
+          {!message.recalled && (message.poll || message.payload?.poll) && (
+            <PollMessage 
+              messageId={message.id}
+              topic={(message.poll || message.payload?.poll).topic || ''}
+              options={(message.poll || message.payload?.poll).options || []}
+              votes={(message.poll || message.payload?.poll).votes || {}}
+              senderEmail={message.senderId}
+              onVote={onVotePoll}
+              onClosePoll={() => onClosePoll ? onClosePoll(message.id) : Promise.resolve()}
+              isClosed={(message.poll || message.payload?.poll).isClosed}
+              userProfiles={userProfiles}
+            />
+          )}
+
+          {/* 5. Reminders */}
+          {!message.recalled && (message.reminder || message.payload?.reminder) && (
+            <ReminderMessage 
+              messageId={message.id}
+              content={(message.reminder || message.payload?.reminder).content || (message.reminder || message.payload?.reminder).title}
+              time={(message.reminder || message.payload?.reminder).time}
+              date={(message.reminder || message.payload?.reminder).date}
+              repeatType={(message.reminder || message.payload?.reminder).repeatType}
+            />
+          )}
         </>
       )}
     </>
@@ -612,6 +703,7 @@ export default function MessageBubble({
     <View style={[
       styles.container, 
       isMe ? styles.containerMe : styles.containerOther,
+      (message.poll || message.payload?.poll) && { alignSelf: 'center', width: '100%', paddingHorizontal: 10 },
       groupPosition === 'middle' || groupPosition === 'last' ? { marginBottom: 2 } : { marginBottom: 8 }
     ]}>
       {/* Swipe Reply Icon Indicator */}
@@ -628,11 +720,11 @@ export default function MessageBubble({
       <Animated.View 
         {...panResponder.panHandlers}
         style={[
-          { flexDirection: 'row', flex: 1, alignItems: 'flex-end', justifyContent: isMe ? 'flex-end' : 'flex-start' },
+          { flexDirection: 'row', flex: 1, alignItems: 'flex-end', justifyContent: (message.poll || message.payload?.poll) ? 'center' : (isMe ? 'flex-end' : 'flex-start') },
           { transform: [{ translateX }] }
         ]}
       >
-        {!isMe && (
+        {!isMe && !(message.poll || message.payload?.poll) && (
         <View style={styles.avatarSpace}>
           {showAvatar ? (
             <Image 
@@ -643,7 +735,24 @@ export default function MessageBubble({
         </View>
       )}
       
-      <View style={[styles.bubbleWrapper, isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperOther]}>
+      <View style={[
+        styles.bubbleWrapper, 
+        isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperOther,
+        (message.poll || message.payload?.poll) && { maxWidth: '85%', alignSelf: 'center' }
+      ]}>
+        {isHighlighted && (
+          <Animated.View 
+            style={[
+              StyleSheet.absoluteFill, 
+              { backgroundColor: highlightBg, borderRadius: 20, zIndex: -1, borderWidth: 2, borderColor: '#ffb300' }
+            ]} 
+          />
+        )}
+        {isSelectionMode && (
+          <View style={[styles.selectionBadge, isSelected && styles.selectionBadgeActive]}>
+            <Text style={styles.selectionBadgeText}>{isSelected ? 'check_circle' : 'radio_button_unchecked'}</Text>
+          </View>
+        )}
         {/* Name and Pin Header - Only show if pinned */}
         {isPinned && (
           <View style={styles.headerRow}>
@@ -656,18 +765,22 @@ export default function MessageBubble({
 
         <Pressable 
           onLongPress={() => onLongPress(message)}
+          onPress={() => {
+            if (isSelectionMode && onPress) onPress(message);
+          }}
           delayLongPress={300}
         >
           {shouldHideBubble ? (
             <View style={[
               styles.noBubble,
-              isHighlighted && styles.bubbleHighlighted
+              isHighlighted && styles.bubbleHighlighted,
+              isSelected && styles.bubbleSelected
             ]}>
               <RenderBubbleContent />
             </View>
           ) : isMe ? (
             <LinearGradient
-              colors={isMe ? ['#e3f2fd', '#bbdefb'] : ['#ffffff', '#ffffff']}
+              colors={isHighlighted ? ['#fff176', '#ffd54f'] : (isMe ? ['#e3f2fd', '#bbdefb'] : ['#ffffff', '#ffffff'])}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={[
@@ -676,7 +789,8 @@ export default function MessageBubble({
                 groupPosition === 'first' && (isMe ? styles.firstMe : styles.firstOther),
                 groupPosition === 'middle' && (isMe ? styles.middleMe : styles.middleOther),
                 groupPosition === 'last' && (isMe ? styles.lastMe : styles.lastOther),
-                isHighlighted && styles.bubbleHighlighted
+                isHighlighted && styles.bubbleHighlighted,
+                isSelected && styles.bubbleSelected
               ]}
             >
               <RenderBubbleContent />
@@ -689,7 +803,8 @@ export default function MessageBubble({
                 groupPosition === 'first' && styles.firstOther,
                 groupPosition === 'middle' && styles.middleOther,
                 groupPosition === 'last' && styles.lastOther,
-                isHighlighted && styles.bubbleHighlighted
+                isHighlighted && styles.bubbleHighlighted,
+                isSelected && styles.bubbleSelected
               ]}
             >
               <RenderBubbleContent />
@@ -712,24 +827,38 @@ export default function MessageBubble({
         {(groupPosition === 'last' || groupPosition === 'single' || (isMe && message.status)) && (
           <View style={[styles.footerRow, isMe && styles.footerRowMe]}>
             {(groupPosition === 'last' || groupPosition === 'single') && (
-              <Text style={styles.timeText}>
-                {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-              </Text>
+              <View style={styles.footerMetaPill}>
+                <Text style={styles.timeText}>
+                  {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                </Text>
+              </View>
             )}
             
             {isMe && (
               <View style={styles.statusWrapper}>
-                {isSeen ? (
-                  <Image source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} style={styles.seenAvatar} />
-                ) : message.status === 'sending' ? (
-                  <View style={styles.statusCircle} />
+                {message.status === 'sending' ? (
+                  <View style={[styles.statusPill, { backgroundColor: '#eff6ff' }]}>
+                    <View style={styles.statusCircle} />
+                    <Text style={styles.statusText}>Đang gửi</Text>
+                  </View>
                 ) : message.status === 'error' ? (
-                  <View style={[styles.statusCircle, { borderColor: '#ef4444' }]}>
-                    <Text style={[styles.statusCheck, { color: '#ef4444' }]}>!</Text>
+                  <View style={[styles.statusPill, { backgroundColor: '#fef2f2' }]}>
+                    <View style={[styles.statusCircle, { borderColor: '#ef4444' }]}>
+                      <Text style={[styles.statusCheck, { color: '#ef4444' }]}>!</Text>
+                    </View>
+                    <Text style={[styles.statusText, { color: '#dc2626' }]}>Lỗi</Text>
+                  </View>
+                ) : isSeen ? (
+                  <View style={[styles.statusPill, { backgroundColor: '#e0f2fe' }]}>
+                    <Image source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} style={styles.seenAvatar} />
+                    <Text style={[styles.statusText, { color: '#0369a1', fontWeight: '800' }]}>Đã xem</Text>
                   </View>
                 ) : (
-                  <View style={[styles.statusCircle, styles.statusSent]}>
-                    <Text style={styles.statusCheck}>✓</Text>
+                  <View style={[styles.statusPill, { backgroundColor: '#f8fafc' }]}>
+                    <View style={[styles.statusCircle, styles.statusSent]}>
+                      <Text style={styles.statusCheck}>✓</Text>
+                    </View>
+                    <Text style={styles.statusText}>Đã gửi</Text>
                   </View>
                 )}
               </View>
@@ -777,6 +906,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     maxWidth: '75%',
   },
+  selectionBadge: {
+    position: 'absolute',
+    top: -8,
+    right: -6,
+    zIndex: 20,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+  },
+  selectionBadgeActive: {
+    backgroundColor: '#eff6ff',
+  },
+  selectionBadgeText: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 20,
+    color: Colors.primary,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -794,10 +939,14 @@ const styles = StyleSheet.create({
   },
   bubbleHighlighted: {
     backgroundColor: '#fff9c4',
-    borderColor: '#ffd600',
+    borderColor: '#ffb300',
     borderWidth: 2,
     elevation: 4,
     shadowOpacity: 0.3,
+  },
+  bubbleSelected: {
+    borderColor: Colors.primary,
+    borderWidth: 2,
   },
   bubbleMe: {
     borderRadius: 18,
@@ -1076,11 +1225,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.1)',
-    borderRadius: 14,
-    paddingHorizontal: 10,
+    borderColor: 'rgba(0,0,0,0.08)',
+    borderRadius: 999,
+    paddingHorizontal: 9,
     height: 24,
-    gap: 4,
+    gap: 5,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -1099,19 +1248,34 @@ const styles = StyleSheet.create({
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: 4,
+    gap: 6,
   },
   footerRowMe: {
     justifyContent: 'flex-end',
     alignSelf: 'flex-end',
   },
   timeText: {
-    fontSize: 9,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
     color: '#9ba3b2',
   },
   statusWrapper: {
-    marginLeft: 4,
+    marginLeft: 0,
+  },
+  footerMetaPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
   },
   statusCircle: {
     width: 14,
@@ -1129,6 +1293,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 8,
     fontWeight: 'bold',
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748b',
   },
   seenAvatar: {
     width: 14,

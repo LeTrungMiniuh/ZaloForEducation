@@ -8,7 +8,9 @@ import {
   Image,
   Dimensions,
   Linking,
-  Platform
+  Platform,
+  Modal,
+  ScrollView
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/Theme';
@@ -24,9 +26,13 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
   const { conversationId } = route.params;
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { messages, userProfiles } = useChatStore();
+  const { archiveAssets, fetchArchiveAssets, userProfiles } = useChatStore();
   
-  const [activeTab, setActiveTab] = useState<'media' | 'files' | 'links'>('media');
+  const [activeTab, setActiveTab] = useState<'media' | 'file' | 'link'>('media');
+  const [filterSender, setFilterSender] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState<Date | null>(null);
+  const [dateTo, setDateTo] = useState<Date | null>(null);
+  const [showFilterMenu, setShowFilterMenu] = useState(false);
 
   const galleryData = useMemo(() => {
     const media: any[] = [];
@@ -35,38 +41,38 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
     
     const urlRegex = /(https?:\/\/[^\s]+)/g;
 
-    // Filter messages for this conversation
-    const convMessages = messages.filter(m => m.conversationId === conversationId || m.convId === conversationId);
+    // Use store items
+    const storeMediaMessages = archiveAssets.media.items;
+    const storeFileMessages = archiveAssets.file.items;
+    const storeLinkMessages = archiveAssets.link.items;
 
-    convMessages.forEach(m => {
-      // 1. Media (Images/Videos)
-      if (Array.isArray(m.media)) {
-        m.media.forEach((item: any) => {
-          const normalized = normalizeAttachment(item);
-          if (normalized.mimeType?.startsWith('image/') || normalized.mimeType?.startsWith('video/')) {
-            media.push({ ...normalized, messageId: m.id, createdAt: m.createdAt, senderId: m.senderId });
-          }
-        });
-      }
+    // Process Media
+    storeMediaMessages.forEach(m => {
+      const all = [...(m.media || []), ...(m.files || [])];
+      all.forEach((item: any) => {
+        const normalized = normalizeAttachment(item);
+        if (normalized.mimeType?.startsWith('image/') || normalized.mimeType?.startsWith('video/')) {
+          media.push({ ...normalized, messageId: m.id, createdAt: m.createdAt, senderId: m.senderId });
+        }
+      });
+    });
 
-      // 2. Files
-      if (Array.isArray(m.files)) {
-        m.files.forEach((item: any) => {
-          const normalized = normalizeAttachment(item);
-          const fileName = (normalized.name || '').toLowerCase();
-          const mimeType = (normalized.mimeType || '').toLowerCase();
-          
-          // Exclude contact.json, location.json and audio recordings
-          const isSystemFile = fileName === 'contact.json' || fileName === 'location.json';
-          const isAudioRecording = mimeType.startsWith('audio/');
-          
-          if (!isSystemFile && !isAudioRecording) {
-            files.push({ ...normalized, messageId: m.id, createdAt: m.createdAt, senderId: m.senderId });
-          }
-        });
-      }
+    // Process Files
+    storeFileMessages.forEach(m => {
+      (m.files || []).forEach((item: any) => {
+        const normalized = normalizeAttachment(item);
+        const fileName = (normalized.name || '').toLowerCase();
+        const mimeType = (normalized.mimeType || '').toLowerCase();
+        const isSystemFile = fileName === 'contact.json' || fileName === 'location.json';
+        const isAudioRecording = mimeType.startsWith('audio/');
+        if (!isSystemFile && !isAudioRecording) {
+          files.push({ ...normalized, messageId: m.id, createdAt: m.createdAt, senderId: m.senderId });
+        }
+      });
+    });
 
-      // 3. Links
+    // Process Links
+    storeLinkMessages.forEach(m => {
       const content = typeof m.content === 'string' ? m.content : '';
       const matches = content.match(urlRegex);
       if (matches) {
@@ -76,12 +82,65 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
       }
     });
 
-    return {
-      media: media.reverse(),
-      files: files.reverse(),
-      links: links.reverse()
+    // Get unique senders for filter menu
+    const allItems = [...media, ...files, ...links];
+    const senders = new Set<string>();
+    allItems.forEach(item => { if (item.senderId) senders.add(item.senderId); });
+
+    // Apply filter logic
+    const applyFilters = (items: any[]) => {
+      return items.filter((item: any) => {
+        if (filterSender && item.senderId !== filterSender) return false;
+        const itemDate = new Date(item.createdAt);
+        if (dateFrom && itemDate < dateFrom) return false;
+        if (dateTo) {
+          const nextDay = new Date(dateTo);
+          nextDay.setDate(nextDay.getDate() + 1);
+          if (itemDate >= nextDay) return false;
+        }
+        return true;
+      });
     };
-  }, [messages, conversationId]);
+
+    return {
+      media: applyFilters(media),
+      files: applyFilters(files),
+      links: applyFilters(links),
+      senders: Array.from(senders)
+    };
+  }, [archiveAssets, filterSender, dateFrom, dateTo]);
+
+  const currentTabState = archiveAssets[activeTab];
+
+  React.useEffect(() => {
+    fetchArchiveAssets(conversationId, activeTab, true);
+  }, [conversationId, activeTab]);
+
+  const loadMore = () => {
+    if (currentTabState.cursor && !currentTabState.loading) {
+      fetchArchiveAssets(conversationId, activeTab);
+    }
+  };
+
+  const renderFooter = () => {
+    if (currentTabState.loading) {
+      return (
+        <View style={styles.footerLoader}>
+          <Text style={styles.footerLoaderText}>Đang tải thêm...</Text>
+        </View>
+      );
+    }
+
+    if (currentTabState.cursor) {
+      return (
+        <TouchableOpacity style={styles.loadMoreBtn} onPress={loadMore}>
+          <Text style={styles.loadMoreText}>Tải thêm</Text>
+        </TouchableOpacity>
+      );
+    }
+
+    return <View style={{ height: 40 }} />;
+  };
 
   const renderMediaItem = ({ item }: { item: any }) => (
     <TouchableOpacity 
@@ -92,13 +151,36 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
       })}
     >
       <Image source={{ uri: item.dataUrl || item.url }} style={styles.mediaThumb} />
-      {item.mimeType?.startsWith('video/') && (
-        <View style={styles.playIconOverlay}>
-          <Text style={styles.playIcon}>play_circle</Text>
+      <View style={styles.mediaOverlay}>
+        {item.mimeType?.startsWith('video/') && (
+          <View style={styles.playIconOverlay}>
+            <Text style={styles.playIcon}>play_circle</Text>
+          </View>
+        )}
+        <View style={styles.mediaMetadata}>
+          <Text style={styles.mediaDate}>{new Date(item.createdAt).toLocaleDateString('vi-VN')}</Text>
+          {item.senderId && galleryData.senders.length > 1 && (
+            <Text style={styles.mediaSender}>{getSenderName(item.senderId)}</Text>
+          )}
         </View>
-      )}
+      </View>
     </TouchableOpacity>
   );
+
+  const getFileIcon = (filename: string, mimeType: string) => {
+    const ext = filename?.split('.')?.pop()?.toLowerCase() || '';
+    const mime = mimeType?.toLowerCase() || '';
+    
+    if (mime.includes('pdf')) return 'picture_as_pdf';
+    if (mime.includes('word') || ext === 'doc' || ext === 'docx') return 'description';
+    if (mime.includes('sheet') || ext === 'xls' || ext === 'xlsx') return 'table_chart';
+    if (mime.includes('powerpoint') || ext === 'ppt' || ext === 'pptx') return 'slideshow';
+    if (mime.includes('zip') || mime.includes('rar') || ext === 'zip' || ext === 'rar') return 'folder_zip';
+    if (mime.includes('image')) return 'image';
+    if (mime.includes('video')) return 'videocam';
+    if (mime.includes('audio')) return 'audio_file';
+    return 'description';
+  };
 
   const renderFileItem = ({ item }: { item: any }) => (
     <TouchableOpacity 
@@ -106,13 +188,16 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
       onPress={() => Linking.openURL(item.dataUrl || item.url)}
     >
       <View style={styles.fileIconBox}>
-        <Text style={styles.fileIcon}>description</Text>
+        <Text style={styles.fileIcon}>{getFileIcon(item.name, item.mimeType)}</Text>
       </View>
       <View style={styles.fileInfo}>
         <Text style={styles.fileName} numberOfLines={1}>{item.name || 'Tệp tin'}</Text>
         <Text style={styles.fileSize}>
           {((item.size || 0) / 1024 / 1024).toFixed(2)} MB • {new Date(item.createdAt).toLocaleDateString('vi-VN')}
         </Text>
+        {item.senderId && galleryData.senders.length > 1 && (
+          <Text style={styles.fileSender}>{getSenderName(item.senderId)}</Text>
+        )}
       </View>
       <Text style={styles.downloadIcon}>download</Text>
     </TouchableOpacity>
@@ -128,10 +213,31 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
       </View>
       <View style={styles.linkInfo}>
         <Text style={styles.linkUrl} numberOfLines={1}>{item.url}</Text>
-        <Text style={styles.linkDate}>{new Date(item.createdAt).toLocaleDateString('vi-VN')}</Text>
+        <Text style={styles.linkDate}>
+          {new Date(item.createdAt).toLocaleDateString('vi-VN')}
+          {item.senderId && galleryData.senders.length > 1 ? ` • ${userProfiles[item.senderId]?.nickname || userProfiles[item.senderId]?.fullName || item.senderId}` : ''}
+        </Text>
       </View>
     </TouchableOpacity>
   );
+
+  const getSenderName = (senderId: string) => {
+    return userProfiles[senderId]?.nickname || userProfiles[senderId]?.fullName || userProfiles[senderId]?.fullname || senderId;
+  };
+
+  const getFilterLabel = () => {
+    let label = '';
+    if (filterSender) label += `Từ: ${getSenderName(filterSender)}`;
+    if (dateFrom) {
+      if (label) label += ' • ';
+      label += `Từ: ${dateFrom.toLocaleDateString('vi-VN')}`;
+    }
+    if (dateTo) {
+      if (label) label += ' • ';
+      label += `Đến: ${dateTo.toLocaleDateString('vi-VN')}`;
+    }
+    return label;
+  };
 
   return (
     <View style={styles.container}>
@@ -141,8 +247,24 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
           <Text style={styles.headerIcon}>arrow_back_ios</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Kho lưu trữ</Text>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity onPress={() => setShowFilterMenu(!showFilterMenu)} style={styles.filterBtn}>
+          <Text style={styles.headerIcon}>tune</Text>
+        </TouchableOpacity>
       </View>
+
+      {/* Filter Display */}
+      {getFilterLabel() && (
+        <View style={styles.filterDisplay}>
+          <Text style={styles.filterText}>{getFilterLabel()}</Text>
+          <TouchableOpacity onPress={() => {
+            setFilterSender(null);
+            setDateFrom(null);
+            setDateTo(null);
+          }}>
+            <Text style={styles.clearFilterText}>Xóa bộ lọc</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Tabs */}
       <View style={styles.tabBar}>
@@ -153,18 +275,88 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
           <Text style={[styles.tabText, activeTab === 'media' && styles.activeTabText]}>ẢNH/VIDEO</Text>
         </TouchableOpacity>
         <TouchableOpacity 
-          style={[styles.tab, activeTab === 'files' && styles.activeTab]} 
-          onPress={() => setActiveTab('files')}
+          style={[styles.tab, activeTab === 'file' && styles.activeTab]} 
+          onPress={() => setActiveTab('file')}
         >
-          <Text style={[styles.tabText, activeTab === 'files' && styles.activeTabText]}>FILE</Text>
+          <Text style={[styles.tabText, activeTab === 'file' && styles.activeTabText]}>FILE</Text>
         </TouchableOpacity>
         <TouchableOpacity 
-          style={[styles.tab, activeTab === 'links' && styles.activeTab]} 
-          onPress={() => setActiveTab('links')}
+          style={[styles.tab, activeTab === 'link' && styles.activeTab]} 
+          onPress={() => setActiveTab('link')}
         >
-          <Text style={[styles.tabText, activeTab === 'links' && styles.activeTabText]}>LINK</Text>
+          <Text style={[styles.tabText, activeTab === 'link' && styles.activeTabText]}>LINK</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Filter Menu Modal */}
+      <Modal
+        visible={showFilterMenu}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowFilterMenu(false)}
+      >
+        <View style={styles.filterMenuOverlay}>
+          <View style={styles.filterMenuContent}>
+            <View style={styles.filterMenuHeader}>
+              <Text style={styles.filterMenuTitle}>Bộ lọc</Text>
+              <TouchableOpacity onPress={() => setShowFilterMenu(false)}>
+                <Text style={styles.filterMenuClose}>close</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.filterMenuScroll}>
+              {/* Sender Filter */}
+              {galleryData.senders.length > 0 && (
+                <View style={styles.filterSection}>
+                  <Text style={styles.filterSectionTitle}>Lọc theo người gửi</Text>
+                  <TouchableOpacity 
+                    style={[styles.filterOption, !filterSender && styles.filterOptionActive]}
+                    onPress={() => setFilterSender(null)}
+                  >
+                    <Text style={[styles.filterOptionText, !filterSender && styles.filterOptionTextActive]}>Tất cả</Text>
+                  </TouchableOpacity>
+                  {galleryData.senders.map((senderId: string) => (
+                    <TouchableOpacity 
+                      key={senderId}
+                      style={[styles.filterOption, filterSender === senderId && styles.filterOptionActive]}
+                      onPress={() => setFilterSender(senderId)}
+                    >
+                      <Text style={[styles.filterOptionText, filterSender === senderId && styles.filterOptionTextActive]}>
+                        {getSenderName(senderId)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              
+              {/* Date Filter */}
+              <View style={styles.filterSection}>
+                <Text style={styles.filterSectionTitle}>Lọc theo ngày</Text>
+                <TouchableOpacity 
+                  style={styles.datePickerBtn}
+                  onPress={() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - 7);
+                    setDateFrom(d);
+                  }}
+                >
+                  <Text style={styles.datePickerText}>
+                    {dateFrom ? `Từ: ${dateFrom.toLocaleDateString('vi-VN')}` : 'Chọn ngày từ'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.datePickerBtn}
+                  onPress={() => setDateTo(new Date())}
+                >
+                  <Text style={styles.datePickerText}>
+                    {dateTo ? `Đến: ${dateTo.toLocaleDateString('vi-VN')}` : 'Chọn ngày đến'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Content */}
       <View style={styles.content}>
@@ -175,25 +367,40 @@ const ChatGalleryScreen = ({ route, navigation }: any) => {
             keyExtractor={(item, index) => `media-${index}`}
             numColumns={COLUMN_COUNT}
             contentContainerStyle={styles.mediaGrid}
-            ListEmptyComponent={<Text style={styles.emptyText}>Chưa có ảnh hoặc video</Text>}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.1}
+            refreshing={archiveAssets.media.loading && galleryData.media.length === 0}
+            onRefresh={() => fetchArchiveAssets(conversationId, 'media', true)}
+            ListFooterComponent={renderFooter}
+            ListEmptyComponent={<Text style={styles.emptyText}>{archiveAssets.media.loading ? 'Đang tải...' : 'Chưa có ảnh hoặc video'}</Text>}
           />
         )}
-        {activeTab === 'files' && (
+        {activeTab === 'file' && (
           <FlatList
             data={galleryData.files}
             renderItem={renderFileItem}
             keyExtractor={(item, index) => `file-${index}`}
             contentContainerStyle={styles.listPadding}
-            ListEmptyComponent={<Text style={styles.emptyText}>Chưa có tệp tin nào</Text>}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.1}
+            refreshing={archiveAssets.file.loading && galleryData.files.length === 0}
+            onRefresh={() => fetchArchiveAssets(conversationId, 'file', true)}
+            ListFooterComponent={renderFooter}
+            ListEmptyComponent={<Text style={styles.emptyText}>{archiveAssets.file.loading ? 'Đang tải...' : 'Chưa có tệp tin nào'}</Text>}
           />
         )}
-        {activeTab === 'links' && (
+        {activeTab === 'link' && (
           <FlatList
             data={galleryData.links}
             renderItem={renderLinkItem}
             keyExtractor={(item, index) => `link-${index}`}
             contentContainerStyle={styles.listPadding}
-            ListEmptyComponent={<Text style={styles.emptyText}>Chưa có đường dẫn nào</Text>}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.1}
+            refreshing={archiveAssets.link.loading && galleryData.links.length === 0}
+            onRefresh={() => fetchArchiveAssets(conversationId, 'link', true)}
+            ListFooterComponent={renderFooter}
+            ListEmptyComponent={<Text style={styles.emptyText}>{archiveAssets.link.loading ? 'Đang tải...' : 'Chưa có đường dẫn nào'}</Text>}
           />
         )}
       </View>
@@ -217,6 +424,9 @@ const styles = StyleSheet.create({
   backBtn: {
     padding: 8,
   },
+  filterBtn: {
+    padding: 8,
+  },
   headerIcon: {
     fontFamily: 'Material Symbols Outlined',
     fontSize: 22,
@@ -226,6 +436,101 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#fff',
+    flex: 1,
+    textAlign: 'center',
+  },
+  filterDisplay: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#f0f9ff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0f2fe',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  filterText: {
+    fontSize: 12,
+    color: '#0369a1',
+    flex: 1,
+  },
+  clearFilterText: {
+    fontSize: 12,
+    color: '#ef4444',
+    fontWeight: '600',
+  },
+  filterMenuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  filterMenuContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '80%',
+    marginTop: 'auto',
+  },
+  filterMenuHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  filterMenuTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1f2631',
+  },
+  filterMenuClose: {
+    fontFamily: 'Material Symbols Outlined',
+    fontSize: 20,
+    color: '#1f2631',
+  },
+  filterMenuScroll: {
+    padding: 16,
+  },
+  filterSection: {
+    marginBottom: 20,
+  },
+  filterSectionTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#1f2631',
+    marginBottom: 10,
+  },
+  filterOption: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    backgroundColor: '#f1f5f9',
+  },
+  filterOptionActive: {
+    backgroundColor: Colors.primary,
+  },
+  filterOptionText: {
+    fontSize: 13,
+    color: '#1f2631',
+  },
+  filterOptionTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  datePickerBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 10,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  datePickerText: {
+    fontSize: 13,
+    color: '#1f2631',
   },
   tabBar: {
     flexDirection: 'row',
@@ -269,8 +574,12 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  playIconOverlay: {
+  mediaOverlay: {
     ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+  },
+  playIconOverlay: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.2)',
@@ -279,6 +588,20 @@ const styles = StyleSheet.create({
     fontFamily: 'Material Symbols Outlined',
     fontSize: 32,
     color: '#fff',
+  },
+  mediaMetadata: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  mediaDate: {
+    fontSize: 10,
+    color: '#fff',
+    fontWeight: '500',
+  },
+  mediaSender: {
+    fontSize: 9,
+    color: '#cbd5e1',
   },
   listPadding: {
     padding: 16,
@@ -316,6 +639,11 @@ const styles = StyleSheet.create({
   fileSize: {
     fontSize: 12,
     color: '#64748b',
+  },
+  fileSender: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 2,
   },
   downloadIcon: {
     fontFamily: 'Material Symbols Outlined',
@@ -361,6 +689,30 @@ const styles = StyleSheet.create({
     marginTop: 40,
     color: '#94a3b8',
     fontSize: 14,
+  },
+  footerLoader: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  footerLoaderText: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  loadMoreBtn: {
+    paddingVertical: 15,
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    marginHorizontal: 16,
+    borderRadius: 8,
+    marginTop: 10,
+    marginBottom: 30,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  loadMoreText: {
+    fontSize: 13,
+    color: Colors.primary,
+    fontWeight: '600',
   }
 });
 

@@ -8,13 +8,13 @@ interface SystemNotificationItemProps {
 }
 
 const SystemNotificationItem = ({ message, onJump }: SystemNotificationItemProps) => {
-  const { userProfiles, user } = useChatStore();
+  const { userProfiles, currentUserEmail } = useChatStore();
   const isReaction = message.metadata?.type === 'reaction_notification';
   const targetId = message.metadata?.targetMessageId;
 
   const getDisplayName = (email: string) => {
     if (!email) return "Người dùng";
-    if (email === user?.email) return "Bạn";
+    if (email === currentUserEmail) return "Bạn";
     const p = userProfiles[email.trim().toLowerCase()];
     return p?.nickname || p?.fullName || p?.fullname || email.split('@')[0];
   };
@@ -27,25 +27,52 @@ const SystemNotificationItem = ({ message, onJump }: SystemNotificationItemProps
        const targetLabel = parsed.target ? getDisplayName(parsed.target) : '';
 
        switch (parsed.action) {
-          case 'member_added':
-             displayContent = `${actorLabel} đã thêm ${targetLabel} vào nhóm`;
-             break;
-          case 'member_removed':
-             displayContent = `${actorLabel} đã xóa ${targetLabel} khỏi nhóm`;
-             break;
-          case 'member_left':
-             displayContent = `${actorLabel} đã rời nhóm`;
-             break;
-          case 'role_updated':
-             const roleName = parsed.role === 'owner' ? 'Trưởng nhóm' : parsed.role === 'deputy' ? 'Phó nhóm' : 'Thành viên';
-             displayContent = `${actorLabel} đã đặt ${targetLabel} làm ${roleName}`;
-             break;
-          case 'info_updated':
-             displayContent = `${actorLabel} đã cập nhật thông tin nhóm`;
-             break;
-          case 'group_created':
-             displayContent = `${actorLabel} đã tạo nhóm`;
-             break;
+           case 'member_added':
+              displayContent = `${actorLabel} đã thêm ${targetLabel} vào nhóm`;
+              break;
+           case 'member_removed':
+           case 'member_kicked':
+              displayContent = `${actorLabel} đã xóa ${targetLabel} khỏi nhóm`;
+              break;
+           case 'member_left':
+              displayContent = `${actorLabel} đã rời nhóm`;
+              break;
+           case 'promoted_to_deputy':
+              displayContent = `${actorLabel} đã bổ nhiệm ${targetLabel} làm phó nhóm`;
+              break;
+           case 'demoted_from_deputy':
+           case 'demoted_to_member':
+              displayContent = `${actorLabel} đã gỡ chức vụ của ${targetLabel} xuống làm thành viên`;
+              break;
+           case 'ownership_transferred':
+           case 'transferred_owner':
+              displayContent = `${actorLabel} đã chuyển quyền trưởng nhóm cho ${targetLabel}`;
+              break;
+           case 'pin_message':
+              displayContent = `${actorLabel} đã ghim một tin nhắn`;
+              break;
+           case 'unpin_message':
+              displayContent = `${actorLabel} đã bỏ ghim tin nhắn`;
+              break;
+           case 'role_updated':
+              const roleName = parsed.role === 'owner' ? 'Trưởng nhóm' : parsed.role === 'deputy' ? 'Phó nhóm' : 'Thành viên';
+              displayContent = `${actorLabel} đã đặt ${targetLabel} làm ${roleName}`;
+              break;
+           case 'info_updated':
+              displayContent = `${actorLabel} đã cập nhật thông tin nhóm`;
+              break;
+           case 'group_name_updated':
+              displayContent = `${actorLabel} đã đổi tên nhóm`;
+              break;
+           case 'group_avatar_updated':
+              displayContent = `${actorLabel} đã thay đổi ảnh đại diện nhóm`;
+              break;
+           case 'group_created':
+              displayContent = `${actorLabel} đã tạo nhóm`;
+              break;
+           default:
+              displayContent = `${actorLabel} đã thực hiện một thay đổi hệ thống`;
+              break;
        }
     }
   } catch (e) {

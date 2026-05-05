@@ -56,6 +56,12 @@ export class ChatController {
     return await this.chatService.getConversationsByUser(email);
   }
 
+  @Get("conversations/:id")
+  async getConversation(@Param("id") id: string, @Req() req: any) {
+    const email = req.user.email;
+    return await this.chatService.getConversationById(id, email);
+  }
+
   @Get("search")
   async globalSearch(@Query("q") query: string, @Req() req: any) {
     return await this.chatService.globalSearch(query, req.user.email);
@@ -136,7 +142,7 @@ export class ChatController {
     const res = await this.chatService.updateGroupInfo(id, email, body);
 
     if (body.name) {
-      await this.messageService.sendMessage(
+      const systemMsg = await this.messageService.sendMessage(
         id,
         "system",
         JSON.stringify({
@@ -146,6 +152,7 @@ export class ChatController {
         }),
         "system",
       );
+      this.chatGateway.emitReceiveMessage(id, systemMsg);
     }
 
     this.chatGateway.emitConversationUpdated(id, body);
@@ -167,7 +174,7 @@ export class ChatController {
     );
 
     for (const target of body.members) {
-      await this.messageService.sendMessage(
+      const systemMsg = await this.messageService.sendMessage(
         id,
         "system",
         JSON.stringify({
@@ -177,6 +184,7 @@ export class ChatController {
         }),
         "system",
       );
+      this.chatGateway.emitReceiveMessage(id, systemMsg);
     }
 
     return res;
@@ -195,8 +203,12 @@ export class ChatController {
       targetEmail,
     );
 
-    const action = email === targetEmail ? "member_left" : "member_kicked";
-    await this.messageService.sendMessage(
+    const action =
+      String(email).trim().toLowerCase() ===
+      String(targetEmail).trim().toLowerCase()
+        ? "member_left"
+        : "member_kicked";
+    const systemMsg = await this.messageService.sendMessage(
       id,
       "system",
       JSON.stringify({
@@ -206,6 +218,7 @@ export class ChatController {
       }),
       "system",
     );
+    this.chatGateway.emitReceiveMessage(id, systemMsg);
 
     return res;
   }
@@ -229,7 +242,7 @@ export class ChatController {
     if (body.role === "owner") action = "transferred_owner";
     if (body.role === "member") action = "demoted_to_member";
 
-    await this.messageService.sendMessage(
+    const systemMsg = await this.messageService.sendMessage(
       id,
       "system",
       JSON.stringify({
@@ -239,6 +252,7 @@ export class ChatController {
       }),
       "system",
     );
+    this.chatGateway.emitReceiveMessage(id, systemMsg);
 
     return res;
   }
@@ -267,18 +281,37 @@ export class ChatController {
   }
 
   // --- MESSAGES ---
-  @Get("conversations/:convId/messages")
-  async getMessages(
-    @Param("convId") convId: string,
+  @Get("conversations/:id/assets")
+  async getAssets(
+    @Param("id") id: string,
+    @Query("type") type: "media" | "file" | "link",
+    @Query("limit") limit: number = 20,
+    @Query("cursor") cursor: string,
     @Req() req: any,
-    @Query("limit", new ParseIntPipe({ optional: true })) limit?: number,
-    @Query("cursor") cursor?: string,
-    @Query("targetId") targetId?: string,
   ) {
     const email = req.user.email;
+    return await this.messageService.getConversationAssets(
+      id,
+      email,
+      type,
+      Number(limit),
+      cursor,
+    );
+  }
+
+  @Get("conversations/:id/messages")
+  async getMessages(
+    @Param("id") convId: string,
+    @Req() req: any,
+    @Query("limit") limit?: string,
+    @Query("cursor") cursor?: string,
+    @Query("targetId") targetId?: string,
+    @Query("scanForward") scanForward?: string,
+  ) {
+    const email = req.user.email;
+    const isScanForward = scanForward === "true";
 
     if (targetId) {
-      // Use a larger limit for context fetch (100 older)
       return await this.messageService.getMessagesContext(
         convId,
         targetId,
@@ -300,9 +333,21 @@ export class ChatController {
     return await this.messageService.getMessages(
       convId,
       email,
-      limit || 50,
+      limit ? parseInt(limit) : 50,
       lastEvaluatedKey,
+      isScanForward,
     );
+  }
+
+  @Get("conversations/:id/search")
+  async searchMessages(
+    @Param("id") id: string,
+    @Query("q") query: string,
+    @Req() req: any,
+  ) {
+    const email = req.user.email;
+    if (!query || query.trim().length < 2) return [];
+    return await this.messageService.searchMessages(id, email, query);
   }
 
   @Get("conversations/:convId/messages/:messageId")

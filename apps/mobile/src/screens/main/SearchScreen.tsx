@@ -31,6 +31,7 @@ const RESULTS_PER_PAGE = 5;
 
 const TAG_CONFIG = {
   CONTACT: { label: 'LIÊN HỆ', color: '#0068FF' },
+  CONVERSATION: { label: 'HỘI THOẠI', color: '#9c27b0' },
   MESSAGE: { label: 'TIN NHẮN', color: '#00AA44' },
   FILE: { label: 'TỆP TIN', color: '#FF6600' },
 };
@@ -41,7 +42,7 @@ const TAG_CONFIG = {
  * Splits `text` around case-insensitive matches of `keyword` and wraps
  * each match in a bold blue <Text>. Returns an array safe for React Native.
  */
-const highlightKeyword = (text, keyword) => {
+const highlightKeyword = (text: string, keyword: string) => {
   if (!text || !keyword?.trim()) return text;
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const parts = String(text).split(new RegExp(`(${escaped})`, 'gi'));
@@ -78,7 +79,7 @@ const getFileIcon = (mimeType = "", fileName = "") => {
   return "draft";
 };
 
-const formatFileSize = (size) => {
+const formatFileSize = (size: number | string) => {
   const n = Number(size || 0);
   if (!n) return "--";
   if (n < 1024) return `${n} B`;
@@ -86,7 +87,7 @@ const formatFileSize = (size) => {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const formatTime = (date) => {
+const formatTime = (date: string | number | Date) => {
   if (!date) return "";
   const d = new Date(date);
   return d.toLocaleTimeString("vi-VN", {
@@ -100,12 +101,23 @@ const formatTime = (date) => {
  * Fully memoized result row.
  * Each item owns its own Animated.Value so animations never conflict.
  */
+interface SearchItemProps {
+  item: any;
+  isActive: boolean;
+  isHighlighting: boolean;
+  highlightAnim: Animated.Value;
+  query: string;
+  onPress: () => void;
+  userProfiles: Record<string, any>;
+}
+
 const SearchItem = memo(
-  ({ item, isActive, isHighlighting, highlightAnim, query, onPress, userProfiles }) => {
-    const tag = TAG_CONFIG[item.type];
+  ({ item, isActive, isHighlighting, highlightAnim, query, onPress, userProfiles }: SearchItemProps) => {
+    const tag = TAG_CONFIG[item.type as keyof typeof TAG_CONFIG];
     const isFile = item.type === 'FILE';
     const isMessage = item.type === 'MESSAGE';
     const isContact = item.type === 'CONTACT';
+    const isConversation = item.type === 'CONVERSATION';
 
     // Identity Resolution
     const senderEmail = item.senderId || item.email;
@@ -113,9 +125,13 @@ const SearchItem = memo(
     
     const title = isContact 
       ? (profile?.nickname || profile?.fullName || profile?.fullname || item.fullName || item.displayName || item.sender?.name || '')
+      : isConversation
+      ? (item.name || 'Nhóm không tên')
       : (profile?.nickname || profile?.fullName || profile?.fullname || item.sender?.name || item.displayName || 'Người dùng');
     
-    const subtitle = (isMessage || isFile) ? item.content : '';
+    const subtitle = isConversation 
+      ? `${item.memberCount} thành viên`
+      : (isMessage || isFile) ? item.content : '';
     const fileMeta = isFile ? formatFileSize(item.size) : null;
 
     const itemAvatarUri = profile?.avatarUrl || item.sender?.avatar || item.sender?.avatarUrl || item.avatar;
@@ -188,7 +204,12 @@ const SearchItem = memo(
 
 // ─── RecentItem ───────────────────────────────────────────────────────────────
 
-const RecentItem = memo(({ item, onPress }) => (
+interface RecentItemProps {
+  item: string;
+  onPress: (text: string) => void;
+}
+
+const RecentItem = memo(({ item, onPress }: RecentItemProps) => (
   <TouchableOpacity
     style={styles.recentItem}
     onPress={() => onPress(item)}
@@ -201,13 +222,18 @@ const RecentItem = memo(({ item, onPress }) => (
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
-export default function SearchScreen({ onNavigate, goBack }) {
+interface SearchScreenProps {
+  onNavigate: (screen: string, params?: any) => void;
+  goBack: () => void;
+}
+
+export default function SearchScreen({ onNavigate, goBack }: SearchScreenProps) {
   const insets = useSafeAreaInsets();
-  const inputRef = useRef(null);
+  const inputRef = useRef<TextInput>(null);
 
   // Per-item highlight tracking: Map<itemId, Animated.Value>
-  const animMap = useRef(new Map());
-  const [highlightingId, setHighlightingId] = useState(null);
+  const animMap = useRef(new Map<string, Animated.Value>());
+  const [highlightingId, setHighlightingId] = useState<string | null>(null);
 
   // Pagination: which sections are fully expanded (Set of section titles)
   const [expandedSections, setExpandedSections] = useState(new Set());
@@ -241,19 +267,19 @@ export default function SearchScreen({ onNavigate, goBack }) {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   const getItemId = useCallback(
-    (item) => item.userId || item.messageId || item.id || '',
+    (item: any) => item.userId || item.messageId || item.id || '',
     [],
   );
 
-  const getOrCreateAnim = useCallback((id) => {
+  const getOrCreateAnim = useCallback((id: string) => {
     if (!animMap.current.has(id)) {
       animMap.current.set(id, new Animated.Value(0));
     }
-    return animMap.current.get(id);
+    return animMap.current.get(id) as Animated.Value;
   }, []);
 
   const animateHighlight = useCallback(
-    (id) => {
+    (id: string) => {
       const anim = getOrCreateAnim(id);
       anim.setValue(0);
       setHighlightingId(id);
@@ -276,7 +302,7 @@ export default function SearchScreen({ onNavigate, goBack }) {
   // ── Event handlers ────────────────────────────────────────────────────────
 
   const handleChangeText = useCallback(
-    (text) => {
+    (text: string) => {
       setQuery(text);
       setExpandedSections(new Set());
       // `search` handles the isValidQuery guard internally
@@ -297,7 +323,7 @@ export default function SearchScreen({ onNavigate, goBack }) {
   }, [query, searchNow]);
 
   const handleSelectResult = useCallback(
-    (item) => {
+    (item: any) => {
       const id = getItemId(item);
       animateHighlight(id);
       // Small delay so the highlight animation starts before navigation
@@ -307,7 +333,7 @@ export default function SearchScreen({ onNavigate, goBack }) {
   );
 
   const handleSelectRecent = useCallback(
-    (text) => {
+    (text: string) => {
       setQuery(text);
       setExpandedSections(new Set());
       searchNow(text);
@@ -315,7 +341,7 @@ export default function SearchScreen({ onNavigate, goBack }) {
     [setQuery, searchNow],
   );
 
-  const toggleSectionExpansion = useCallback((title) => {
+  const toggleSectionExpansion = useCallback((title: string) => {
     setExpandedSections((prev) => {
       const next = new Set(prev);
       if (next.has(title)) next.delete(title);
@@ -350,7 +376,7 @@ export default function SearchScreen({ onNavigate, goBack }) {
   // ── Renderers ─────────────────────────────────────────────────────────────
 
   const renderItem = useCallback(
-    ({ item }) => {
+    ({ item }: { item: any }) => {
       const id = getItemId(item);
       return (
         <SearchItem
@@ -364,16 +390,16 @@ export default function SearchScreen({ onNavigate, goBack }) {
         />
       );
     },
-    [activeId, highlightingId, query, getItemId, getOrCreateAnim, handleSelectResult],
+    [activeId, highlightingId, query, getItemId, getOrCreateAnim, handleSelectResult, userProfiles],
   );
 
   const renderRecent = useCallback(
-    ({ item }) => <RecentItem item={item} onPress={handleSelectRecent} />,
+    ({ item }: { item: string }) => <RecentItem item={item} onPress={handleSelectRecent} />,
     [handleSelectRecent],
   );
 
   const renderSectionHeader = useCallback(
-    ({ section }) => (
+    ({ section }: { section: any }) => (
       <View style={styles.sectionHeaderContainer}>
         <Text style={styles.sectionTitle}>{section.title}</Text>
       </View>
@@ -382,7 +408,7 @@ export default function SearchScreen({ onNavigate, goBack }) {
   );
 
   const renderSectionFooter = useCallback(
-    ({ section }) => {
+    ({ section }: { section: any }) => {
       const showExpand = !section.isExpanded && section.actualDataCount > RESULTS_PER_PAGE;
       if (!showExpand) return <View style={styles.sectionFooterSpacer} />;
 
@@ -402,13 +428,13 @@ export default function SearchScreen({ onNavigate, goBack }) {
   );
 
   const keyExtractorResult = useCallback(
-    (item, index) =>
+    (item: any, index: number) =>
       `result-${item.type}-${item.id || item.messageId || item.userId || index}`,
     [],
   );
 
   const keyExtractorRecent = useCallback(
-    (item, index) => `recent-${index}-${item}`,
+    (item: string, index: number) => `recent-${index}-${item}`,
     [],
   );
 
@@ -456,7 +482,7 @@ export default function SearchScreen({ onNavigate, goBack }) {
         </View>
       ) : showRecents ? (
         <View style={{ flex: 1 }}>
-          <View style={styles.sectionHeader}>
+          <View style={styles.sectionHeaderContainer}>
             <Text style={styles.sectionTitle}>Tìm kiếm gần đây</Text>
             <TouchableOpacity
               style={styles.clearHistoryBtn}

@@ -47,8 +47,10 @@ const ChatPage: React.FC = () => {
     jumpToMessage,
     fetchMessages,
     loadMoreMessages,
+    loadNewerMessages,
     isLoadingMessages,
     nextCursor,
+    prevCursor,
   } = useChatStore();
   const location = useLocation();
   const navigate = useNavigate();
@@ -128,6 +130,23 @@ const ChatPage: React.FC = () => {
       void (async () => {
         try {
           await loadMoreMessages(activeConvId);
+        } finally {
+          isLoadingMoreRef.current = false;
+        }
+      })();
+    }
+
+    // [SENIOR] Load NEWER messages when scrolling to the bottom
+    if (
+      isNearBottom &&
+      prevCursor &&
+      !isLoadingMessages &&
+      !isLoadingMoreRef.current
+    ) {
+      isLoadingMoreRef.current = true;
+      void (async () => {
+        try {
+          await loadNewerMessages(activeConvId);
         } finally {
           isLoadingMoreRef.current = false;
         }
@@ -224,15 +243,22 @@ const ChatPage: React.FC = () => {
 
         socket.emit("join_room", { convId: activeConvId });
         prevRoomRef.current = activeConvId;
+
+        // [SENIOR] Handle Reconnection: re-join room if socket drops and connects again
+        const handleReconnect = () => {
+          console.log("[Socket] Reconnected, re-joining room:", activeConvId);
+          socket.emit("join_room", { convId: activeConvId });
+        };
+        socket.on("connect", handleReconnect);
+        
+        return () => {
+          socket.off("connect", handleReconnect);
+          if (activeConvId) {
+            socket.emit("leave_room", { convId: activeConvId });
+          }
+        };
       }
     }
-
-    return () => {
-      // Cleanup: leave room on unmount
-      if (activeConvId && socket) {
-        socket.emit("leave_room", { convId: activeConvId });
-      }
-    };
   }, [activeConvId, fetchMessages, socket]);
 
   // Reset typing users when room changes (store prev value as state)
@@ -564,10 +590,20 @@ const ChatPage: React.FC = () => {
               {/* Nút cuộn xuống dưới cùng (Floating Action Button) */}
               {showScrollBottom && (
                 <button
-                  onClick={() => scrollToBottom(true)}
-                  className="fixed bottom-32 right-12 md:right-80 z-[40] w-10 h-10 bg-white dark:bg-surface-container-high rounded-full shadow-lg border border-outline-variant/10 flex items-center justify-center text-primary hover:bg-surface-container transition-all animate-in fade-in zoom-in duration-200"
-                  title="Cuộn xuống dưới cùng"
+                  onClick={() => {
+                    if (prevCursor || highlightedMessageId) {
+                      // Return to latest messages from history mode
+                      setActiveConversation(activeConvId);
+                    } else {
+                      scrollToBottom(true);
+                    }
+                  }}
+                  className="fixed bottom-32 right-12 md:right-80 z-[40] min-w-[40px] px-3 h-10 bg-white dark:bg-surface-container-high rounded-full shadow-lg border border-outline-variant/10 flex items-center justify-center gap-2 text-primary hover:bg-surface-container transition-all animate-in fade-in zoom-in duration-200"
+                  title={prevCursor ? "Quay lại tin nhắn mới nhất" : "Cuộn xuống dưới cùng"}
                 >
+                  {prevCursor && (
+                    <span className="text-xs font-semibold mr-1 whitespace-nowrap">Về tin mới nhất</span>
+                  )}
                   <ArrowDown
                     size={20}
                     strokeWidth={2.5}
@@ -583,17 +619,9 @@ const ChatPage: React.FC = () => {
                 </div>
               ) : (
                 <div className="flex flex-col">
-                  {[...messages]
-                    .sort((a, b) => {
-                      const t1 = new Date(a.createdAt).getTime();
-                      const t2 = new Date(b.createdAt).getTime();
-                      if (isNaN(t1)) return 1;
-                      if (isNaN(t2)) return -1;
-                      return t1 - t2;
-                    })
-                    .map((m, index, sortedMsgs) => {
-                      const prevMsg =
-                        index > 0 ? sortedMsgs[index - 1] : undefined;
+                  {messages.map((m, index) => {
+                    const prevMsg =
+                      index > 0 ? messages[index - 1] : undefined;
 
                       // Consecutive grouping logic: Same sender and within 5 minutes
                       const isSameSenderAsPrev =

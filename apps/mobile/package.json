@@ -23,7 +23,7 @@
     "@types/react-native": "0.72.8",
     "amazon-chime-sdk-js": "^3.21.0",
     "crypto-js": "^4.2.0",
-    "expo": "55.0.17",
+    "expo": "~55.0.19",
     "expo-av": "~16.0.8",
     "expo-blur": "~55.0.14",
     "expo-camera": "~55.0.16",

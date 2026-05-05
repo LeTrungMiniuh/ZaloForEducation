@@ -17,6 +17,7 @@ interface PollMessageProps {
   onVote?: (optionIndex: number) => Promise<void>;
   onClosePoll?: () => Promise<void>;
   isClosed?: boolean;
+  userProfiles?: Record<string, any>;
 }
 
 const PollMessage: React.FC<PollMessageProps> = ({
@@ -28,14 +29,24 @@ const PollMessage: React.FC<PollMessageProps> = ({
   onVote,
   onClosePoll,
   isClosed = false,
+  userProfiles = {},
 }) => {
   const { user } = useAuth();
   const [draftOption, setDraftOption] = useState<number | null>(null);
   const [isVoting, setIsVoting] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [showVotersModal, setShowVotersModal] = useState(false);
+
   const normalizedUserEmail = String(user?.email || "")
     .trim()
     .toLowerCase();
+
+  const getDisplayName = (email: string) => {
+    const norm = String(email).trim().toLowerCase();
+    if (norm === normalizedUserEmail) return "Bạn";
+    const profile = userProfiles[norm];
+    return profile?.nickname || profile?.fullName || profile?.fullname || norm.split("@")[0];
+  };
 
   const votedOptionByCurrentUser = useMemo(() => {
     const entries = Object.entries(votes || {});
@@ -175,7 +186,13 @@ const PollMessage: React.FC<PollMessageProps> = ({
 
       <div className="space-y-2 border-t border-[#e4e8f0] pt-3">
         <div className="flex items-center justify-between text-[12px] text-[#5f6d84]">
-          <p>{totalVotes} phiếu</p>
+          <button 
+            type="button" 
+            onClick={() => setShowVotersModal(true)}
+            className="hover:text-primary hover:underline cursor-pointer transition-colors"
+          >
+            {totalVotes} phiếu • Xem chi tiết
+          </button>
           {hasVoted && !isClosed ? (
             <p className="font-semibold text-primary">Đã bình chọn</p>
           ) : null}
@@ -236,8 +253,57 @@ const PollMessage: React.FC<PollMessageProps> = ({
           </div>
         )}
       </div>
+
+      {/* Voters Modal */}
+      {showVotersModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-[#f1f3f7] px-5 py-4">
+              <h3 className="text-[17px] font-bold text-[#1f2f4a]">Chi tiết bình chọn</h3>
+              <button
+                onClick={() => setShowVotersModal(false)}
+                className="rounded-full p-1.5 hover:bg-[#f1f3f7] text-[#53627f] transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="max-h-[70vh] overflow-y-auto p-5 space-y-5">
+              {pollOptions.map((option, idx) => (
+                <div key={idx} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[14px] font-bold text-[#1f2f4a]">{option.text}</p>
+                    <span className="text-[13px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                      {option.votes}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {option.voters.length > 0 ? (
+                      option.voters.map((email, vIdx) => (
+                        <span 
+                          key={vIdx} 
+                          className="bg-[#f4f6fa] text-[#53627f] text-[12px] px-2.5 py-1 rounded-lg border border-[#dde1ea]"
+                        >
+                          {getDisplayName(email)}
+                        </span>
+                      ))
+                    ) : (
+                      <p className="text-[12px] italic text-[#9ba6bb]">Chưa có ai chọn</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="bg-[#f8f9fb] p-4 text-center">
+              <p className="text-[12px] font-medium text-[#53627f]">Tổng cộng: {totalVotes} phiếu</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default PollMessage;
+
