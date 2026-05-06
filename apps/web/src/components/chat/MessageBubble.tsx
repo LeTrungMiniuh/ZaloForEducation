@@ -31,6 +31,7 @@ import { useCallActions } from "../../hooks/useCallActions";
 import SystemCallMessageItem from "./SystemCallMessageItem";
 import PollMessage from "./PollMessage";
 import ReminderMessage from "./ReminderMessage";
+import CodeSnippet from "./CodeSnippet";
 
 interface MessageBubbleProps {
   message: any;
@@ -586,11 +587,101 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             )}
 
             {message.content && !isMediaOnly && (
-              <p
-                className={`text-[15px] leading-[1.6] whitespace-pre-wrap font-medium ${isRecalled ? "italic opacity-50" : "text-on-surface"}`}
-              >
-                {isRecalled ? "Tin nhắn đã được thu hồi" : message.content}
-              </p>
+              <div className="flex flex-col gap-2">
+                {(() => {
+                  if (isRecalled) {
+                    return (
+                      <p className="text-[15px] leading-[1.6] whitespace-pre-wrap font-medium italic opacity-50 text-on-surface">
+                        Tin nhắn đã được thu hồi
+                      </p>
+                    );
+                  }
+
+                  // 1. Detect explicit code blocks: ```[language][:filename][\n]code```
+                  const codeBlockRegex = /```(\w+)?(?::([^ \n]+))?[\n\r]?([\s\S]*?)```/g;
+                  const parts = [];
+                  let lastIndex = 0;
+                  let match;
+
+                  while ((match = codeBlockRegex.exec(message.content)) !== null) {
+                    // Text before the code block
+                    if (match.index > lastIndex) {
+                      const textBefore = message.content.substring(lastIndex, match.index);
+                      if (textBefore) {
+                        parts.push(
+                          <p key={`text-${lastIndex}`} className="text-[15px] leading-[1.6] whitespace-pre-wrap font-medium text-on-surface">
+                            {textBefore}
+                          </p>
+                        );
+                      }
+                    }
+
+                    const language = match[1] || "text";
+                    const filename = match[2] || "";
+                    const code = match[3].trim();
+
+                    if (code) {
+                      parts.push(
+                        <CodeSnippet 
+                          key={`code-${match.index}`} 
+                          code={code} 
+                          language={language} 
+                          filename={filename} 
+                        />
+                      );
+                    }
+
+                    lastIndex = codeBlockRegex.lastIndex;
+                  }
+
+                  // 2. Heuristic Detection for "Plain Text Code"
+                  // If no explicit blocks were found, check if the WHOLE content looks like code
+                  if (parts.length === 0) {
+                    const content = message.content.trim();
+                    const lines = content.split('\n');
+                    
+                    const codeKeywords = ['import ', 'export ', 'const ', 'function ', 'class ', 'interface ', 'public ', 'private ', 'namespace ', 'using ', 'package '];
+                    const hasKeyword = codeKeywords.some(kw => content.includes(kw));
+                    const hasStructure = (content.match(/{/g)?.length || 0) > 0 && (content.match(/}/g)?.length || 0) > 0;
+                    const isLongEnough = lines.length >= 3;
+
+                    if ((hasKeyword && hasStructure) || (isLongEnough && hasStructure)) {
+                      // Basic language guessing
+                      let guessedLang = "javascript"; // default for JS/TS
+                      if (content.includes("<?php")) guessedLang = "php";
+                      else if (content.includes("def ") && content.includes(":")) guessedLang = "python";
+                      else if (content.includes("namespace ") && content.includes(";")) guessedLang = "csharp";
+                      else if (content.includes("package ") && content.includes("class ")) guessedLang = "java";
+                      else if (content.includes("<html>") || content.includes("</div>")) guessedLang = "html";
+                      else if (content.includes("body {") || content.includes(".class {")) guessedLang = "css";
+
+                      return [
+                        <CodeSnippet 
+                          key="auto-code" 
+                          code={content} 
+                          language={guessedLang} 
+                          filename="Auto-Detected Code" 
+                        />
+                      ];
+                    }
+                  }
+
+                  // Remaining text after last code block
+                  if (lastIndex < message.content.length) {
+                    parts.push(
+                      <p key={`text-${lastIndex}`} className="text-[15px] leading-[1.6] whitespace-pre-wrap font-medium text-on-surface">
+                        {message.content.substring(lastIndex)}
+                      </p>
+                    );
+                  }
+
+                  return parts.length > 0 ? parts : (
+                    <p className="text-[15px] leading-[1.6] whitespace-pre-wrap font-medium text-on-surface">
+                      {message.content}
+                    </p>
+                  );
+                })()}
+              </div>
             )}
 
             {!isRecalled && message.contactCard && (

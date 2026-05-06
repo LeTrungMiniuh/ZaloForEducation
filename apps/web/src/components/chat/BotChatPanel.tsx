@@ -11,7 +11,11 @@ import {
   X,
   FileText,
   Sparkles,
+  Info,
 } from 'lucide-react';
+import CodeSnippet from './CodeSnippet';
+import ChatInfoSidebar from './ChatInfoSidebar';
+import { useChatStore } from '../../store/chatStore';
 
 const BOT_EMAIL_CONST = BOT_EMAIL; // alias to avoid name clash with Bot icon import
 
@@ -67,6 +71,7 @@ const BotChatPanel: React.FC = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [botConvId, setBotConvId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -75,7 +80,7 @@ const BotChatPanel: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  // Init bot conversation
+  // Init bot conversation data
   useEffect(() => {
     if (!user?.email) return;
 
@@ -86,6 +91,8 @@ const BotChatPanel: React.FC = () => {
         if (!convId) return;
 
         setBotConvId(convId);
+        // Sync with global chat store so Sidebar and other components work
+        useChatStore.getState().setActiveConversation(convId);
 
         // Load existing messages
         const msgRes = await chatGet(`/conversations/${encodeURIComponent(convId)}/messages`);
@@ -98,6 +105,23 @@ const BotChatPanel: React.FC = () => {
 
     init();
   }, [user?.email]);
+
+  // Sync bot conversation ID via socket
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleBotConvId = (data: { convId: string }) => {
+      setBotConvId(data.convId);
+      useChatStore.getState().setActiveConversation(data.convId);
+    };
+
+    socket.emit('get_bot_conversation');
+    socket.on('bot_conversation_id', handleBotConvId);
+
+    return () => {
+      socket.off('bot_conversation_id', handleBotConvId);
+    };
+  }, [socket]);
 
   // Join socket room
   useEffect(() => {
@@ -134,7 +158,9 @@ const BotChatPanel: React.FC = () => {
     };
 
     socket.on('receiveMessage', handleMessage);
-    return () => socket.off('receiveMessage', handleMessage);
+    return () => {
+      socket.off('receiveMessage', handleMessage);
+    };
   }, [socket, botConvId]);
 
   // Auto-scroll
@@ -144,7 +170,7 @@ const BotChatPanel: React.FC = () => {
   }, [messages, isSending]);
 
   // Upload files
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'image' | 'file') => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
@@ -242,200 +268,284 @@ const BotChatPanel: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#f7f9fb]">
-      {/* Header */}
-      <header className="h-16 flex items-center gap-4 px-6 bg-white/90 backdrop-blur-xl border-b border-outline-variant/15 z-20 shrink-0">
-        <div className="relative">
-          <img src={BOT_AVATAR} className="w-11 h-11 rounded-full object-cover ring-2 ring-primary/20 shadow-sm" alt="Bot" />
-          <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-primary border-2 border-white rounded-full flex items-center justify-center">
-            <Sparkles size={8} className="text-white" />
-          </div>
-        </div>
-        <div className="flex flex-col">
-          <h2 className="font-extrabold text-on-surface leading-tight text-[16px] tracking-tight">ZaloEdu AI</h2>
-          <p className="text-[12px] text-primary font-bold flex items-center gap-1">
-            <Bot size={12} />
-            {isSending ? 'Đang soạn tin...' : 'Trợ lý giáo dục AI'}
-          </p>
-        </div>
-      </header>
-
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 hide-scrollbar">
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 gap-4 animate-in fade-in zoom-in-95 duration-500">
-            <div className="w-20 h-20 rounded-3xl bg-primary/10 flex items-center justify-center">
-              <Bot size={40} className="text-primary" />
+    <div className="flex h-full w-full overflow-hidden bg-[#f7f9fb]">
+      {/* Main Chat Content */}
+      <div className="flex-1 flex flex-col h-full min-w-0 border-r border-outline-variant/10">
+        {/* Header */}
+        <header className="h-16 flex items-center gap-4 px-6 bg-white/90 backdrop-blur-xl border-b border-outline-variant/15 z-20 shrink-0">
+          <div className="relative">
+            <img src={BOT_AVATAR} className="w-11 h-11 rounded-full object-cover ring-2 ring-primary/20 shadow-sm" alt="Bot" />
+            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-primary border-2 border-white rounded-full flex items-center justify-center">
+              <Sparkles size={8} className="text-white" />
             </div>
-            <h3 className="font-extrabold text-on-surface text-lg">Chào bạn! Tôi là ZaloEdu AI</h3>
-            <p className="text-on-surface-variant text-sm text-center max-w-xs leading-relaxed">
-              Hỏi tôi về thông tin tài khoản, bạn bè, hoặc gửi ảnh/PDF bài học để tôi phân tích!
+          </div>
+          <div className="flex flex-col">
+            <h2 className="font-extrabold text-on-surface leading-tight text-[16px] tracking-tight">ZaloEdu AI</h2>
+            <p className="text-[12px] text-primary font-bold flex items-center gap-1">
+              <Bot size={12} />
+              {isSending ? 'Đang soạn tin...' : 'Trợ lý giáo dục AI'}
             </p>
           </div>
-        )}
 
-        {messages.map((msg) => {
-          const isMe = msg.senderId === user?.email;
-          const isRecalled = !!msg.recalled;
-
-          return (
-            <div
-              key={msg.id}
-              className={`flex items-end gap-3 group ${isMe ? 'flex-row-reverse' : 'flex-row'}`}
-            >
-              {/* Avatar */}
-              {!isMe && (
-                <img
-                  src={BOT_AVATAR}
-                  className="w-9 h-9 rounded-full object-cover shrink-0 ring-1 ring-primary/20"
-                  alt=""
-                />
-              )}
-
-              {/* Bubble */}
-              <div className={`max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                <div
-                  className={`px-4 py-3 rounded-2xl shadow-sm border ${isMe
-                    ? 'bg-primary/10 text-on-surface rounded-tr-none border-primary/15'
-                    : 'bg-white text-on-surface rounded-tl-none border-outline-variant/20'
-                    }`}
-                >
-                  <p className={`text-[14px] leading-relaxed whitespace-pre-wrap ${isRecalled ? 'italic opacity-50' : ''}`}>
-                    {isRecalled ? 'Tin nhắn đã được thu hồi' : msg.content}
-                  </p>
-
-                  {/* Media */}
-                  {msg.media && msg.media.length > 0 && !isRecalled && (
-                    <div className="mt-2 space-y-2">
-                      {msg.media.map((m: any, i: number) => (
-                        <img
-                          key={i}
-                          src={m.dataUrl || m.url}
-                          className="max-w-full rounded-xl border border-outline-variant/10"
-                          alt=""
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Files */}
-                  {msg.files && msg.files.length > 0 && !isRecalled && (
-                    <div className="mt-2 space-y-2">
-                      {msg.files.map((f: any, i: number) => (
-                        <a
-                          key={i}
-                          href={f.dataUrl || f.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center gap-2 p-2 rounded-xl bg-white/70 border border-outline-variant/10 hover:bg-white transition-all"
-                        >
-                          {getFileIcon(f.mimeType || f.fileType, f.name || f.fileName)}
-                          <span className="text-[12px] font-medium truncate max-w-[200px]">{f.name || f.fileName}</span>
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Timestamp */}
-                <span className="text-[10px] font-medium text-on-surface-variant/50 mt-1 px-1">
-                  {formatTime(msg.createdAt)}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-
-        {/* Typing indicator */}
-        {isSending && (
-          <div className="flex items-end gap-3">
-            <img src={BOT_AVATAR} className="w-9 h-9 rounded-full object-cover shrink-0 ring-1 ring-primary/20" alt="" />
-            <div className="bg-white px-5 py-3.5 rounded-2xl rounded-tl-none shadow-sm border border-outline-variant/20">
-              <div className="flex items-center gap-1.5">
-                <span className="typing-dot" />
-                <span className="typing-dot" style={{ animationDelay: '0.15s' }} />
-                <span className="typing-dot" style={{ animationDelay: '0.3s' }} />
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Attachments Preview */}
-      {attachments.length > 0 && (
-        <div className="px-4 py-2 border-t border-outline-variant/10 bg-white">
-          <div className="flex flex-wrap gap-2">
-            {attachments.map((a, i) => (
-              <div key={i} className="relative group/att">
-                <div className="w-16 h-16 rounded-xl bg-surface-container-low border border-outline-variant/10 flex items-center justify-center overflow-hidden">
-                  {a.mimeType.startsWith('image/') ? (
-                    <img src={a.dataUrl} className="w-full h-full object-cover" alt="" />
-                  ) : (
-                    <FileText size={24} className="text-primary" />
-                  )}
-                </div>
-                <button
-                  onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}
-                  className="absolute -top-1.5 -right-1.5 bg-error text-white rounded-full w-5 h-5 flex items-center justify-center shadow-lg opacity-0 group-hover/att:opacity-100 transition-all"
-                >
-                  <X size={12} strokeWidth={3} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Input */}
-      <div className="p-4 bg-white/80 backdrop-blur-xl border-t border-outline-variant/10">
-        <div className="flex items-center gap-3 bg-surface-container-low/50 p-2 rounded-[28px] border border-primary/20 focus-within:ring-4 focus-within:ring-primary/10 focus-within:border-primary transition-all">
-          <div className="flex items-center gap-1 px-1">
+          <div className="ml-auto flex items-center gap-2">
             <button
-              onClick={() => imageInputRef.current?.click()}
-              className="w-9 h-9 flex items-center justify-center hover:bg-primary/10 rounded-full text-on-surface-variant hover:text-primary transition-all"
-              title="Gửi hình ảnh"
-            >
-              <Image size={20} />
-            </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-9 h-9 flex items-center justify-center hover:bg-primary/10 rounded-full text-on-surface-variant hover:text-primary transition-all"
-              title="Đính kèm tệp (PDF)"
-            >
-              <Paperclip size={20} />
-            </button>
-          </div>
-
-          <textarea
-            rows={1}
-            value={inputText}
-            onChange={(e) => {
-              setInputText(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder="Hỏi tôi bất cứ điều gì..."
-            className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-[14px] font-medium py-2.5 px-1 resize-none max-h-32 hide-scrollbar text-on-surface placeholder:text-on-surface-variant/60 leading-relaxed"
-          />
-
-          <button
-            onClick={handleSend}
-            disabled={isSending || isUploading || (!inputText.trim() && attachments.length === 0)}
-            className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isSending || isUploading || (!inputText.trim() && attachments.length === 0)
-              ? 'bg-surface-container text-outline/30 scale-95 opacity-50'
-              : 'bg-gradient-to-tr from-primary to-primary-container text-white shadow-lg shadow-primary/30 hover:shadow-primary/40 active:scale-95'
+              onClick={() => setIsInfoOpen(!isInfoOpen)}
+              className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all ${
+                isInfoOpen 
+                  ? 'bg-primary text-white shadow-lg shadow-primary/20' 
+                  : 'bg-surface-container-low text-on-surface-variant hover:bg-primary/10 hover:text-primary'
               }`}
-          >
-            {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className="ml-0.5" />}
-          </button>
+              title="Thông tin chi tiết"
+            >
+              <Info size={20} />
+            </button>
+          </div>
+        </header>
+
+        {/* Messages */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 hide-scrollbar">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 gap-4 animate-in fade-in zoom-in-95 duration-500">
+              <div className="w-20 h-20 rounded-3xl bg-primary/10 flex items-center justify-center">
+                <Bot size={40} className="text-primary" />
+              </div>
+              <h3 className="font-extrabold text-on-surface text-lg">Chào bạn! Tôi là ZaloEdu AI</h3>
+              <p className="text-on-surface-variant text-sm text-center max-w-xs leading-relaxed">
+                Hỏi tôi về thông tin tài khoản, bạn bè, hoặc gửi ảnh/PDF bài học để tôi phân tích!
+              </p>
+            </div>
+          )}
+
+          {messages.map((msg) => {
+            const isMe = msg.senderId === user?.email;
+            const isRecalled = !!msg.recalled;
+
+            return (
+              <div
+                key={msg.id}
+                className={`flex items-end gap-3 group ${isMe ? 'flex-row-reverse' : 'flex-row'}`}
+              >
+                {/* Avatar */}
+                {!isMe && (
+                  <img
+                    src={BOT_AVATAR}
+                    className="w-9 h-9 rounded-full object-cover shrink-0 ring-1 ring-primary/20"
+                    alt=""
+                  />
+                )}
+
+                {/* Bubble */}
+                <div className={`max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                  <div
+                    className={`px-4 py-3 rounded-2xl shadow-sm border ${isMe
+                      ? 'bg-primary/10 text-on-surface rounded-tr-none border-primary/15'
+                      : 'bg-white text-on-surface rounded-tl-none border-outline-variant/20'
+                      }`}
+                  >
+                    <div className={`text-[14px] leading-relaxed whitespace-pre-wrap ${isRecalled ? 'italic opacity-50' : ''}`}>
+                      {(() => {
+                        if (isRecalled) return 'Tin nhắn đã được thu hồi';
+                        if (!msg.content) return null;
+                        
+                        const codeBlockRegex = /```(\w+)?(?::([^ \n]+))?[\n\r]?([\s\S]*?)```/g;
+                        const parts = [];
+                        let lastIndex = 0;
+                        let match;
+
+                        while ((match = codeBlockRegex.exec(msg.content)) !== null) {
+                          if (match.index > lastIndex) {
+                            const textBefore = msg.content.substring(lastIndex, match.index);
+                            if (textBefore) parts.push(<p key={lastIndex}>{textBefore}</p>);
+                          }
+
+                          const code = match[3].trim();
+                          if (code) {
+                            parts.push(
+                              <CodeSnippet 
+                                key={match.index} 
+                                code={code} 
+                                language={match[1] || 'text'} 
+                                filename={match[2] || ''} 
+                              />
+                            );
+                          }
+                          lastIndex = codeBlockRegex.lastIndex;
+                        }
+
+                        // 2. Heuristic Detection
+                        if (parts.length === 0) {
+                          const content = msg.content.trim();
+                          const lines = content.split('\n');
+                          const codeKeywords = ['import ', 'export ', 'const ', 'function ', 'class ', 'interface ', 'public ', 'private ', 'namespace ', 'using ', 'package '];
+                          const hasKeyword = codeKeywords.some(kw => content.includes(kw));
+                          const hasStructure = (content.match(/{/g)?.length || 0) > 0 && (content.match(/}/g)?.length || 0) > 0;
+                          if ((hasKeyword && hasStructure) || (lines.length >= 3 && hasStructure)) {
+                            // Basic language guessing
+                            let guessedLang = "javascript";
+                            if (content.includes("<?php")) guessedLang = "php";
+                            else if (content.includes("def ") && content.includes(":")) guessedLang = "python";
+                            else if (content.includes("namespace ") && content.includes(";")) guessedLang = "csharp";
+                            else if (content.includes("package ") && content.includes("class ")) guessedLang = "java";
+                            else if (content.includes("<html>") || content.includes("</div>")) guessedLang = "html";
+                            else if (content.includes("body {") || content.includes(".class {")) guessedLang = "css";
+
+                            return [
+                              <CodeSnippet 
+                                key="auto-code" 
+                                code={content} 
+                                language={guessedLang} 
+                                filename="Auto-Detected Code" 
+                              />
+                            ];
+                          }
+                        }
+
+                        if (lastIndex < msg.content.length) {
+                          parts.push(<p key={lastIndex}>{msg.content.substring(lastIndex)}</p>);
+                        }
+
+                        return parts.length > 0 ? parts : msg.content;
+                      })()}
+                    </div>
+
+                    {/* Media */}
+                    {msg.media && msg.media.length > 0 && !isRecalled && (
+                      <div className="mt-2 space-y-2">
+                        {msg.media.map((m: any, i: number) => (
+                          <img
+                            key={i}
+                            src={m.dataUrl || m.url}
+                            className="max-w-full rounded-xl border border-outline-variant/10"
+                            alt=""
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Files */}
+                    {msg.files && msg.files.length > 0 && !isRecalled && (
+                      <div className="mt-2 space-y-2">
+                        {msg.files.map((f: any, i: number) => (
+                          <a
+                            key={i}
+                            href={f.dataUrl || f.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-2 p-2 rounded-xl bg-white/70 border border-outline-variant/10 hover:bg-white transition-all"
+                          >
+                            {getFileIcon(f.mimeType || f.fileType, f.name || f.fileName)}
+                            <span className="text-[12px] font-medium truncate max-w-[200px]">{f.name || f.fileName}</span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Timestamp */}
+                  <span className="text-[10px] font-medium text-on-surface-variant/50 mt-1 px-1">
+                    {formatTime(msg.createdAt)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Typing indicator */}
+          {isSending && (
+            <div className="flex items-end gap-3">
+              <img src={BOT_AVATAR} className="w-9 h-9 rounded-full object-cover shrink-0 ring-1 ring-primary/20" alt="" />
+              <div className="bg-white px-5 py-3.5 rounded-2xl rounded-tl-none shadow-sm border border-outline-variant/20">
+                <div className="flex items-center gap-1.5">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" style={{ animationDelay: '0.15s' }} />
+                  <span className="typing-dot" style={{ animationDelay: '0.3s' }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
         </div>
 
-        <input type="file" ref={imageInputRef} className="hidden" accept="image/*" multiple onChange={(e) => handleFileChange(e, 'image')} />
-        <input type="file" ref={fileInputRef} className="hidden" multiple onChange={(e) => handleFileChange(e, 'file')} />
+        {/* Attachments Preview */}
+        {attachments.length > 0 && (
+          <div className="px-4 py-2 border-t border-outline-variant/10 bg-white">
+            <div className="flex flex-wrap gap-2">
+              {attachments.map((a, i) => (
+                <div key={i} className="relative group/att">
+                  <div className="w-16 h-16 rounded-xl bg-surface-container-low border border-outline-variant/10 flex items-center justify-center overflow-hidden">
+                    {a.mimeType.startsWith('image/') ? (
+                      <img src={a.dataUrl} className="w-full h-full object-cover" alt="" />
+                    ) : (
+                      <FileText size={24} className="text-primary" />
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="absolute -top-1.5 -right-1.5 bg-error text-white rounded-full w-5 h-5 flex items-center justify-center shadow-lg opacity-0 group-hover/att:opacity-100 transition-all"
+                  >
+                    <X size={12} strokeWidth={3} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="p-4 bg-white/80 backdrop-blur-xl border-t border-outline-variant/10">
+          <div className="flex items-center gap-3 bg-surface-container-low/50 p-2 rounded-[28px] border border-primary/20 focus-within:ring-4 focus-within:ring-primary/10 focus-within:border-primary transition-all">
+            <div className="flex items-center gap-1 px-1">
+              <button
+                onClick={() => imageInputRef.current?.click()}
+                className="w-9 h-9 flex items-center justify-center hover:bg-primary/10 rounded-full text-on-surface-variant hover:text-primary transition-all"
+                title="Gửi hình ảnh"
+              >
+                <Image size={20} />
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-9 h-9 flex items-center justify-center hover:bg-primary/10 rounded-full text-on-surface-variant hover:text-primary transition-all"
+                title="Đính kèm tệp (PDF)"
+              >
+                <Paperclip size={20} />
+              </button>
+            </div>
+
+            <textarea
+              rows={1}
+              value={inputText}
+              onChange={(e) => {
+                setInputText(e.target.value);
+                e.target.style.height = 'auto';
+                e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder="Hỏi tôi bất cứ điều gì..."
+              className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-[14px] font-medium py-2.5 px-1 resize-none max-h-32 hide-scrollbar text-on-surface placeholder:text-on-surface-variant/60 leading-relaxed"
+            />
+
+            <button
+              onClick={handleSend}
+              disabled={isSending || isUploading || (!inputText.trim() && attachments.length === 0)}
+              className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isSending || isUploading || (!inputText.trim() && attachments.length === 0)
+                ? 'bg-surface-container text-outline/30 scale-95 opacity-50'
+                : 'bg-gradient-to-tr from-primary to-primary-container text-white shadow-lg shadow-primary/30 hover:shadow-primary/40 active:scale-95'
+                }`}
+            >
+              {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className="ml-0.5" />}
+            </button>
+          </div>
+
+          <input type="file" ref={imageInputRef} className="hidden" accept="image/*" multiple onChange={(e) => handleFileChange(e)} />
+          <input type="file" ref={fileInputRef} className="hidden" multiple onChange={(e) => handleFileChange(e)} />
+        </div>
       </div>
+
+      {/* Right Sidebar (Chat Info) */}
+      {isInfoOpen && (
+        <ChatInfoSidebar />
+      )}
     </div>
   );
 };

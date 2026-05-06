@@ -28,14 +28,13 @@ import { HomeHeader } from "../../components/home/HomeHeader";
 import { ConversationList } from "../../components/home/ConversationList";
 import { MessageActionSheet } from "../../components/home/MessageActionSheet";
 import { ProfileTab } from "../../components/home/ProfileTab";
+import BotChatScreen from "../BotChatScreen";
 import { Conversation, Message } from "../../store/types";
 
 const TAB_ALIAS: Record<string, string> = {
   messages: "chat",
   chat: "chat",
-  friends: "contacts",
-  contacts: "contacts",
-  ai: "notifications",
+  ai: "ai",
   notifications: "notifications",
   profile: "profile",
 };
@@ -189,6 +188,7 @@ export default function HomeScreen({
               onOpenGroupConversation={(conv: any) => navigation.navigate('Chat', { conversationId: conv.id })}
             />
           )}
+          {activeTab === "ai" && <BotChatScreen />}
           {activeTab === "notifications" && <NotificationScreen onNavigate={(s: string, p: any) => navigation.navigate(s, p)} />}
           {activeTab === "profile" && (
             <ProfileTab 
