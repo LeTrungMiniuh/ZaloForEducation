@@ -160,14 +160,107 @@ const ChatInfoSidebar: React.FC = () => {
     });
   }, [pinnedIds, messages, activeConvId]);
 
+  // Instant Previews Logic
+  const mediaPreview = useMemo(() => {
+    const local = messages.flatMap(m => [...(m.media || []), ...(m.files || [])].map(a => ({ ...normalizeAttachment(a), msgId: m.id, createdAt: m.createdAt })));
+    const remote = archiveAssets.media.items.flatMap(m => [...(m.media || []), ...(m.files || [])].map(a => ({ ...normalizeAttachment(a), msgId: m.id, createdAt: m.createdAt })));
+    const combined = [...local, ...remote];
+    const unique = Array.from(new Map(combined.map(a => [`${a.msgId}-${a.dataUrl}`, a])).values());
+    return (unique as any[])
+      .filter(a => a.mimeType?.startsWith("image/") || a.mimeType?.startsWith("video/"))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 4);
+  }, [messages, archiveAssets.media.items]);
+
+  const filePreview = useMemo(() => {
+    const filterFn = (a: any) => {
+      const name = a.name?.toLowerCase() || "";
+      const mime = a.mimeType?.toLowerCase() || "";
+      return (
+        !name.includes("location.json") &&
+        !name.includes("contact.json") &&
+        !mime.startsWith("audio/")
+      );
+    };
+
+    const local = messages.flatMap((m) =>
+      (m.files || [])
+        .map((a) => ({
+          ...normalizeAttachment(a),
+          msgId: m.id,
+          createdAt: m.createdAt,
+        }))
+        .filter(filterFn),
+    );
+    const remote = archiveAssets.file.items.flatMap((m) =>
+      (m.files || [])
+        .map((a) => ({
+          ...normalizeAttachment(a),
+          msgId: m.id,
+          createdAt: m.createdAt,
+        }))
+        .filter(filterFn),
+    );
+    const combined = [...local, ...remote];
+    const unique = Array.from(
+      new Map(combined.map((a) => [`${a.msgId}-${a.name}`, a])).values(),
+    );
+    return (unique as any[])
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )
+      .slice(0, 3);
+  }, [messages, archiveAssets.file.items]);
+
+  const linkPreview = useMemo(() => {
+    const extractLinks = (m: any) => {
+      const urls = m.content?.match(/https?:\/\/[^\s]+/g) || [];
+      return urls.map((url: string) => ({ url, msgId: m.id, createdAt: m.createdAt }));
+    };
+    const local = messages.flatMap(extractLinks);
+    const remote = archiveAssets.link.items.flatMap(extractLinks);
+    const combined = [...local, ...remote];
+    const unique = Array.from(new Map(combined.map(a => [`${a.msgId}-${a.url}`, a])).values());
+    return (unique as any[])
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 3);
+  }, [messages, archiveAssets.link.items]);
+
+  useEffect(() => {
+    if (!showTransferOwnerModal) return;
+    if (!transferOwnerCandidates.length) {
+      setSelectedNewOwnerEmail(null);
+      return;
+    }
+
+    const selectedStillValid = selectedNewOwnerEmail
+      ? transferOwnerCandidates.includes(selectedNewOwnerEmail)
+      : false;
+
+    if (!selectedStillValid) {
+      setSelectedNewOwnerEmail(transferOwnerCandidates[0]);
+    }
+  }, [showTransferOwnerModal, transferOwnerCandidates, selectedNewOwnerEmail]);
+
   if (!activeChat) return null;
 
   const partnerEmail =
     activeChat.type === "direct"
       ? Array.isArray(activeChat.members)
-        ? activeChat.members.find((m) => m !== user?.email)
+        ? activeChat.members.find((m) => {
+            const normalizedM = String(m || "")
+              .trim()
+              .toLowerCase();
+            const normalizedMe = String(user?.email || "")
+              .trim()
+              .toLowerCase();
+            return normalizedM !== normalizedMe;
+          })
         : undefined
       : undefined;
+
+  const isBot = partnerEmail?.toLowerCase() === 'bot@zaloedu.system';
 
   const chatName =
     activeChat.type === "direct"
@@ -262,73 +355,6 @@ const ChatInfoSidebar: React.FC = () => {
     setShowMutePanel(false);
     setShowCustomMuteInputs(false);
   };
-
-  // Instant Previews Logic
-  const mediaPreview = useMemo(() => {
-    const local = messages.flatMap(m => [...(m.media || []), ...(m.files || [])].map(a => ({ ...normalizeAttachment(a), msgId: m.id, createdAt: m.createdAt })));
-    const remote = archiveAssets.media.items.flatMap(m => [...(m.media || []), ...(m.files || [])].map(a => ({ ...normalizeAttachment(a), msgId: m.id, createdAt: m.createdAt })));
-    const combined = [...local, ...remote];
-    const unique = Array.from(new Map(combined.map(a => [`${a.msgId}-${a.dataUrl}`, a])).values());
-    return (unique as any[])
-      .filter(a => a.mimeType?.startsWith("image/") || a.mimeType?.startsWith("video/"))
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 4);
-  }, [messages, archiveAssets.media.items]);
-
-  const filePreview = useMemo(() => {
-    const filterFn = (a: any) => {
-      const name = a.name?.toLowerCase() || "";
-      const mime = a.mimeType?.toLowerCase() || "";
-      return (
-        !name.includes("location.json") &&
-        !name.includes("contact.json") &&
-        !mime.startsWith("audio/")
-      );
-    };
-
-    const local = messages.flatMap((m) =>
-      (m.files || [])
-        .map((a) => ({
-          ...normalizeAttachment(a),
-          msgId: m.id,
-          createdAt: m.createdAt,
-        }))
-        .filter(filterFn),
-    );
-    const remote = archiveAssets.file.items.flatMap((m) =>
-      (m.files || [])
-        .map((a) => ({
-          ...normalizeAttachment(a),
-          msgId: m.id,
-          createdAt: m.createdAt,
-        }))
-        .filter(filterFn),
-    );
-    const combined = [...local, ...remote];
-    const unique = Array.from(
-      new Map(combined.map((a) => [`${a.msgId}-${a.name}`, a])).values(),
-    );
-    return (unique as any[])
-      .sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      )
-      .slice(0, 3);
-  }, [messages, archiveAssets.file.items]);
-
-  const linkPreview = useMemo(() => {
-    const extractLinks = (m: any) => {
-      const urls = m.content?.match(/https?:\/\/[^\s]+/g) || [];
-      return urls.map((url: string) => ({ url, msgId: m.id, createdAt: m.createdAt }));
-    };
-    const local = messages.flatMap(extractLinks);
-    const remote = archiveAssets.link.items.flatMap(extractLinks);
-    const combined = [...local, ...remote];
-    const unique = Array.from(new Map(combined.map(a => [`${a.msgId}-${a.url}`, a])).values());
-    return (unique as any[])
-      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 3);
-  }, [messages, archiveAssets.link.items]);
 
   const uniqueSenders = activeChat?.members || [];
 
@@ -524,21 +550,6 @@ const ChatInfoSidebar: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    if (!showTransferOwnerModal) return;
-    if (!transferOwnerCandidates.length) {
-      setSelectedNewOwnerEmail(null);
-      return;
-    }
-
-    const selectedStillValid = selectedNewOwnerEmail
-      ? transferOwnerCandidates.includes(selectedNewOwnerEmail)
-      : false;
-
-    if (!selectedStillValid) {
-      setSelectedNewOwnerEmail(transferOwnerCandidates[0]);
-    }
-  }, [showTransferOwnerModal, transferOwnerCandidates, selectedNewOwnerEmail]);
 
   const handleAddMembers = async () => {
     setIsAddMembersModalOpen(true);
@@ -618,10 +629,10 @@ const ChatInfoSidebar: React.FC = () => {
             }
             alt=""
             onClick={
-              activeChat.type === "group" ? undefined : handleOpenProfile
+              (activeChat.type === "group" || isBot) ? undefined : handleOpenProfile
             }
             title={
-              partnerEmail
+              (partnerEmail && !isBot)
                 ? "Xem trang cá nhân"
                 : activeChat.type === "group"
                   ? "Đổi ảnh đại diện"
@@ -681,7 +692,7 @@ const ChatInfoSidebar: React.FC = () => {
         )}
         <p className="text-[12px] text-on-surface-variant font-medium mt-1">
           {activeChat.type === "direct"
-            ? "Trò chuyện cá nhân"
+            ? isBot ? "Trợ lý AI" : "Trò chuyện cá nhân"
             : "Hội thoại nhóm"}
         </p>
       </div>
@@ -850,7 +861,7 @@ const ChatInfoSidebar: React.FC = () => {
             )}
 
           {/* Section: Pinned Messages */}
-          {activeChat.type === "group" && pinnedIds.length > 0 && (
+          {activeChat.type === "group" && !isBot && pinnedIds.length > 0 && (
             <div className="mt-4 px-4">
               <div className="flex items-center justify-between mb-2 px-1">
                 <h4 className="text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
@@ -930,31 +941,32 @@ const ChatInfoSidebar: React.FC = () => {
               <span
                 className={`text-[11px] font-bold ${muted ? "text-primary" : "text-on-surface-variant/70"}`}
               >
-                {getMuteStatusLabel()}
+                {!isBot && getMuteStatusLabel()}
               </span>
             </button>
 
-            {/* Custom Mute Schedule (tin_notification) */}
-            <button
-              onClick={() => setShowMutePanel((prev) => !prev)}
-              className="w-full flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all"
-            >
-              <span className="flex items-center gap-3">
-                <Bell size={20} className="text-on-surface-variant" />
-                Khung giờ tắt thông báo
-              </span>
-              <div className="flex items-center gap-1">
-                {muteSummary && (
-                  <span className="text-[11px] font-medium text-primary">
-                    {muteSummary}
-                  </span>
-                )}
-                <ChevronDown
-                  size={14}
-                  className={`text-on-surface-variant transition-transform ${showMutePanel ? "rotate-180" : ""}`}
-                />
-              </div>
-            </button>
+            {!isBot && (
+              <button
+                onClick={() => setShowMutePanel((prev) => !prev)}
+                className="w-full flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-surface-container text-on-surface font-semibold text-[13px] transition-all"
+              >
+                <span className="flex items-center gap-3">
+                  <Bell size={20} className="text-on-surface-variant" />
+                  Khung giờ tắt thông báo
+                </span>
+                <div className="flex items-center gap-1">
+                  {muteSummary && (
+                    <span className="text-[11px] font-medium text-primary">
+                      {muteSummary}
+                    </span>
+                  )}
+                  <ChevronDown
+                    size={14}
+                    className={`text-on-surface-variant transition-transform ${showMutePanel ? "rotate-180" : ""}`}
+                  />
+                </div>
+              </button>
+            )}
 
             {showMutePanel && (
               <div className="mx-2 my-2 rounded-2xl border border-outline-variant/20 bg-surface-container/90 p-3 space-y-3 shadow-lg">
@@ -1074,7 +1086,7 @@ const ChatInfoSidebar: React.FC = () => {
               Xóa lịch sử trò chuyện
             </button>
 
-            {activeChat.type === "group" && (
+            {activeChat.type === "group" && !isBot && (
               <>
                 <div className="pt-4 pb-2">
                   <h4 className="px-3 text-[11px] font-extrabold text-on-surface-variant uppercase tracking-wider">

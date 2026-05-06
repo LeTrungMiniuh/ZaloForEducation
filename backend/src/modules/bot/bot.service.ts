@@ -355,10 +355,11 @@ export class BotService {
   private async extractPdfText(url: string, fileName: string): Promise<string> {
     let parser: PDFParse | null = null;
     try {
+      this.logger.log(`Attempting to download PDF for extraction: ${url}`);
       const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!response.ok) {
         this.logger.warn(`Failed to download PDF: ${url} (status ${response.status})`);
-        return `[PDF đính kèm: ${fileName}] — không thể tải tệp.`;
+        return `[PDF đính kèm: ${fileName}] — không thể tải tệp (Lỗi ${response.status}).`;
       }
 
       const arrayBuffer = await response.arrayBuffer();

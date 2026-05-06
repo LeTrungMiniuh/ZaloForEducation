@@ -5,6 +5,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../constants/Theme';
+import { useChatStore } from '../store/chatStore';
+import { BOT_EMAIL } from '../constants/bot';
 
 // Auth Screens
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -37,6 +39,14 @@ import ChangePasswordScreen from '../screens/profile/ChangePasswordScreen';
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
+const AiChatWrapper = (props: any) => (
+  <ChatScreen 
+    {...props}
+    onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)}
+    params={{ targetEmail: 'bot@zaloedu.system' }} 
+  />
+);
+
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   return (
     <Text
@@ -54,6 +64,17 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
 
 function TabNavigator({ onLogout }: { onLogout: any }) {
   const insets = useSafeAreaInsets();
+  const { conversations } = useChatStore();
+
+  const totalUnread = (conversations || []).reduce((acc, conv) => {
+    // Check if it's a bot conversation
+    const isBot = Array.isArray(conv.members) && conv.members.some((m: string) => {
+      const normalized = String(m || "").toLowerCase();
+      return normalized === BOT_EMAIL || normalized.includes('bot@zaloedu.system');
+    });
+    if (isBot) return acc;
+    return acc + (conv.unreadCount || 0);
+  }, 0);
 
   return (
     <Tab.Navigator
@@ -90,15 +111,26 @@ function TabNavigator({ onLogout }: { onLogout: any }) {
         },
       })}
     >
-      <Tab.Screen name="Messages" options={{ tabBarLabel: 'Tin nhắn' }}>
+      <Tab.Screen 
+        name="Messages" 
+        options={{ 
+          tabBarLabel: 'Tin nhắn',
+          tabBarBadge: totalUnread > 0 ? totalUnread : undefined,
+          tabBarBadgeStyle: { backgroundColor: Colors.primary, fontSize: 10 }
+        }}
+      >
         {(props: any) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'messages' }} />}
       </Tab.Screen>
       <Tab.Screen name="Contacts" options={{ tabBarLabel: 'Danh bạ' }}>
         {(props: any) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'contacts' }} />}
       </Tab.Screen>
-      <Tab.Screen name="AI" options={{ tabBarLabel: 'AI Assistant' }}>
-        {(props: any) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'ai' }} />}
-      </Tab.Screen>
+      <Tab.Screen 
+        name="AI" 
+        component={AiChatWrapper} 
+        options={{ 
+          tabBarLabel: 'AI Assistant',
+        }} 
+      />
       <Tab.Screen name="ProfileTab" options={{ tabBarLabel: 'Cá nhân' }}>
         {(props: any) => <ProfileScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} onLogout={onLogout} params={props.route.params} />}
       </Tab.Screen>

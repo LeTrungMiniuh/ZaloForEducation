@@ -818,39 +818,58 @@ export class ChatService {
     }
 
     const timestamp = new Date().toISOString();
+    let attempts = 0;
+    const maxAttempts = 3;
 
-    // Use Transaction to reset unreadCount and update Read Marker
-    await this.db.docClient.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          // 1. Reset Unread Count for this User-Conv mapping
-          {
-            Update: {
-              TableName: this.db.tableName,
-              Key: { PK: `USER#${email.toLowerCase()}`, SK: prefId },
-              UpdateExpression: "SET lastReadAt = :ts, unreadCount = :zero",
-              ExpressionAttributeValues: {
-                ":ts": timestamp,
-                ":zero": 0,
+    while (attempts < maxAttempts) {
+      try {
+        await this.db.docClient.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                Update: {
+                  TableName: this.db.tableName,
+                  Key: { PK: `USER#${email.toLowerCase()}`, SK: prefId },
+                  UpdateExpression: "SET lastReadAt = :ts, unreadCount = :zero",
+                  ExpressionAttributeValues: {
+                    ":ts": timestamp,
+                    ":zero": 0,
+                  },
+                },
               },
-            },
-          },
-          // 2. [PRODUCTION] Update Global Read Marker for this member
-          {
-            Put: {
-              TableName: this.db.tableName,
-              Item: {
-                PK: prefId,
-                SK: `READ#${email.toLowerCase()}`,
-                lastReadAt: timestamp,
-                lastReadMessageId: messageId || null,
-                updatedAt: timestamp,
+              {
+                Put: {
+                  TableName: this.db.tableName,
+                  Item: {
+                    PK: prefId,
+                    SK: `READ#${email.toLowerCase()}`,
+                    lastReadAt: timestamp,
+                    lastReadMessageId: messageId || null,
+                    updatedAt: timestamp,
+                  },
+                },
               },
-            },
-          },
-        ],
-      }),
-    );
+            ],
+          }),
+        );
+        break; // Success
+      } catch (err: any) {
+        attempts++;
+        const isConflict =
+          err.name === "TransactionCanceledException" &&
+          (err.message?.includes("TransactionConflict") ||
+            err.CancellationReasons?.some(
+              (r: any) => r.Code === "TransactionConflict",
+            ));
+
+        if (isConflict && attempts < maxAttempts) {
+          const delay = 50 * attempts;
+          await new Promise((res) => setTimeout(res, delay));
+          continue;
+        }
+        throw err;
+      }
+    }
 
     // Notify all devices of this user
     this.chatGateway.emitConversationRead(email, convId);

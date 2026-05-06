@@ -152,8 +152,14 @@ export const useSearchStore = create<SearchStore>((set, get) => {
 
       const data = res?.data || res || { contacts: [], messages: [], files: [] };
 
-      const contacts = (data.contacts || []).map(enrichContact);
-      const messages = (data.messages || []).map(enrichMessage);
+      const contacts = (data.contacts || []).map(enrichContact).filter((c: any) => {
+        const email = String(c.userId || c.email || "").toLowerCase();
+        return email !== 'bot@zaloedu.system' && !email.includes('bot@zaloedu.system');
+      });
+      const messages = (data.messages || []).map(enrichMessage).filter((m: any) => {
+        const senderId = String(m.senderId || "").toLowerCase();
+        return senderId !== 'bot@zaloedu.system' && !senderId.includes('bot@zaloedu.system');
+      });
       const files = (data.files || []).map(enrichFile);
       const sections = buildSections(contacts, messages, files);
       const results = [...contacts, ...messages, ...files];

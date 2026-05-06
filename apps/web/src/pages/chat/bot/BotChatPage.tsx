@@ -3,6 +3,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useChatStore } from '../../../store/chatStore';
 import ChatInput from '../../../components/chat/ChatInput';
 import MessageBubble from '../../../components/chat/MessageBubble';
+import ChatInfoSidebar from '../../../components/chat/ChatInfoSidebar';
 import ImageModal from '../../../components/chat/ImageModal';
 import { getMessageTimeContext, getDisplayName } from '../../../utils/chatUtils';
 import type { Attachment } from '../../../utils/chatUtils';
@@ -20,6 +21,8 @@ import {
   ArrowDown,
   Bot,
   Sparkles,
+  Search,
+  PanelRightOpen,
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 
@@ -59,6 +62,7 @@ const BotChatPage: React.FC = () => {
   const isLoadingMoreRef = useRef(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [isBotTyping, setIsBotTyping] = useState(false);
+  const [isInfoOpen, setIsInfoOpen] = useState(true);
 
   // Init bot conversation
   useEffect(() => {
@@ -128,12 +132,6 @@ const BotChatPage: React.FC = () => {
     }
   };
 
-  const scrollToMessage = (messageId: string, behavior: ScrollBehavior = 'smooth') => {
-    const el = document.getElementById(`msg-${messageId}`);
-    if (el && scrollRef.current) {
-      el.scrollIntoView({ behavior, block: 'center' });
-    }
-  };
 
   // Handle scroll for Infinite Load and Scroll Bottom Button
   const handleScroll = () => {
@@ -330,7 +328,8 @@ const BotChatPage: React.FC = () => {
   } | null>(null);
 
   return (
-    <div className="flex flex-col h-full bg-[#f7f9fb] dark:bg-surface-container-lowest">
+    <div className="flex h-full w-full overflow-hidden bg-white dark:bg-surface-container-lowest">
+      <div className="flex-1 flex flex-col h-full bg-[#f7f9fb] dark:bg-surface-container-low min-w-0">
       {/* Header */}
       <header className="h-16 flex items-center gap-4 px-6 bg-white/90 dark:bg-surface-container/90 backdrop-blur-xl border-b border-outline-variant/15 dark:border-outline-variant/30 z-20 shrink-0">
         <div className="relative">
@@ -341,10 +340,28 @@ const BotChatPage: React.FC = () => {
         </div>
         <div className="flex flex-col">
           <h2 className="font-extrabold text-on-surface leading-tight text-[16px] tracking-tight">ZaloEdu AI</h2>
-          <p className="text-[12px] text-primary font-bold flex items-center gap-1">
-            <Bot size={12} />
-            {isBotTyping ? 'Đang soạn tin...' : 'Trợ lý giáo dục AI'}
+          <p className="text-[12px] text-on-surface-variant font-bold flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span>
+            {isBotTyping ? 'AI đang soạn tin...' : 'Trợ lý giáo dục AI'}
           </p>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <button
+            className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary"
+            title="Tìm kiếm tin nhắn"
+          >
+            <Search size={20} />
+          </button>
+          
+          <div className="w-px h-6 bg-outline-variant/20 mx-1" />
+          
+          <button
+            onClick={() => setIsInfoOpen(!isInfoOpen)}
+            className={`w-10 h-10 flex items-center justify-center rounded-full transition-all ${isInfoOpen ? "bg-primary/10 text-primary" : "hover:bg-surface-container text-on-surface-variant hover:text-primary"}`}
+            title="Thông tin hội thoại"
+          >
+            <PanelRightOpen size={20} />
+          </button>
         </div>
       </header>
 
@@ -463,6 +480,13 @@ const BotChatPage: React.FC = () => {
         replyTarget={replyTarget}
         onClearReply={() => setReplyTarget(null)}
       />
+
+      </div>
+
+      {/* Info Sidebar */}
+      {botConvId && isInfoOpen && (
+        <ChatInfoSidebar />
+      )}
 
       {/* Context Menu Overlay */}
       {contextMenu && (

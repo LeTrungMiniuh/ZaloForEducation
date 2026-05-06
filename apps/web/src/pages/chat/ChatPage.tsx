@@ -56,6 +56,25 @@ const ChatPage: React.FC = () => {
     nextCursor,
     prevCursor,
   } = useChatStore();
+
+  const activeChat = conversations.find((c) => c.id === activeConvId);
+  const partnerEmail =
+    activeChat?.type === "direct"
+      ? Array.isArray(activeChat.members)
+        ? activeChat.members.find((m) => {
+            const normalizedM = String(m || "")
+              .trim()
+              .toLowerCase();
+            const normalizedMe = String(user?.email || "")
+              .trim()
+              .toLowerCase();
+            return normalizedM !== normalizedMe;
+          })
+        : undefined
+      : undefined;
+
+  const isBot = partnerEmail?.toLowerCase() === 'bot@zaloedu.system';
+
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -731,6 +750,7 @@ const ChatPage: React.FC = () => {
               onClearReply={() => setReplyTarget(null)}
               onOpenPollModal={() => setIsPollModalOpen(true)}
               onOpenReminderModal={() => setIsReminderModalOpen(true)}
+              isBot={isBot}
             />
           </>
         ) : (

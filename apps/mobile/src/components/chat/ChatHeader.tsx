@@ -13,6 +13,7 @@ interface ChatHeaderProps {
   typingText: string;
   onStartCall: (type: 'audio' | 'video') => void;
   onOpenDetails?: () => void;
+  isBot?: boolean;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -25,15 +26,18 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   typingText,
   onStartCall,
   onOpenDetails,
+  isBot,
 }) => {
   return (
     <LinearGradient colors={["#0058bc", "#00418f"]} style={[styles.header, { paddingTop: insets.top }]}>
-      <TouchableOpacity 
-        onPress={goBack}
-        style={{ paddingRight: 10, paddingVertical: 5 }}
-      >
-        <Text style={styles.headerBack}>arrow_back</Text>
-      </TouchableOpacity>
+      {goBack && (
+        <TouchableOpacity 
+          onPress={goBack}
+          style={{ paddingRight: 10, paddingVertical: 5 }}
+        >
+          <Text style={styles.headerBack}>arrow_back</Text>
+        </TouchableOpacity>
+      )}
       <View style={styles.avatarContainer}>
         <Image 
           source={{ uri: displayAvatar }} 
@@ -50,12 +54,16 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         <Text style={styles.headerSub}>{typingText}</Text>
       </View>
       <View style={styles.headerIcons}>
-        <TouchableOpacity style={styles.headerIconButton} onPress={() => onStartCall('audio')}>
-          <Text style={styles.headerIcon}>call</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.headerIconButton} onPress={() => onStartCall('video')}>
-          <Text style={styles.headerIcon}>videocam</Text>
-        </TouchableOpacity>
+        {!isBot && (
+          <>
+            <TouchableOpacity style={styles.headerIconButton} onPress={() => onStartCall('audio')}>
+              <Text style={styles.headerIcon}>call</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerIconButton} onPress={() => onStartCall('video')}>
+              <Text style={styles.headerIcon}>videocam</Text>
+            </TouchableOpacity>
+          </>
+        )}
         <TouchableOpacity style={styles.headerIconButton} onPress={onOpenDetails}>
           <Text style={styles.headerIcon}>list</Text>
         </TouchableOpacity>
