@@ -174,20 +174,20 @@ const AudioPlayer = ({ url, isMe }: { url: string; isMe: boolean }) => {
         <View style={styles.audioHeader}>
           <Text style={[styles.audioLabel, isMe && styles.audioLabelMe]}>Tin nhắn thoại</Text>
           <Text style={[styles.audioTime, isMe && styles.audioTimeMe]}>
-             {duration > 0 ? formatTime(duration) : '--:--'}
+            {duration > 0 ? formatTime(duration) : '--:--'}
           </Text>
         </View>
-        <Pressable 
-          style={styles.audioTrack} 
+        <Pressable
+          style={styles.audioTrack}
           onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
           onPress={handleSeek}
         >
-          <View 
+          <View
             style={[
-              styles.audioFill, 
-              { width: duration > 0 ? `${(position / duration) * 100}%` : '0%' }, 
+              styles.audioFill,
+              { width: duration > 0 ? `${(position / duration) * 100}%` : '0%' },
               isMe && styles.audioFillMe
-            ]} 
+            ]}
           />
           <View style={[styles.audioKnob, { left: duration > 0 ? `${(position / duration) * 100}%` : '0%' }, isMe && styles.audioKnobMe]} />
         </Pressable>
@@ -218,13 +218,13 @@ const HighlightText = ({ text, keyword, style }: { text: string; keyword?: strin
   );
 };
 
-export default function MessageBubble({ 
-  message, 
-  isMe, 
-  userProfile, 
-  onLongPress, 
+export default function MessageBubble({
+  message,
+  isMe,
+  userProfile,
+  onLongPress,
   onPress,
-  onReaction, 
+  onReaction,
   onReply,
   onSystemMessagePress,
   isHighlighted,
@@ -307,7 +307,7 @@ export default function MessageBubble({
   // SWIPE TO REPLY LOGIC
   const translateX = useRef(new Animated.Value(0)).current;
   const swipeThreshold = 60;
-  
+
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gestureState) => {
@@ -320,15 +320,15 @@ export default function MessageBubble({
       },
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dx > swipeThreshold) {
-          onReply({ 
-          ...message, 
-          senderName: (() => {
-            const replySender = String(message.senderId || "").trim().toLowerCase();
-            if (replySender === String(user?.email || "").trim().toLowerCase()) return "Bạn";
-            const p = userProfiles?.[replySender];
-            return p?.nickname || p?.fullName || p?.fullname || replySender;
-          })()
-        });
+          onReply({
+            ...message,
+            senderName: (() => {
+              const replySender = String(message.senderId || "").trim().toLowerCase();
+              if (replySender === String(user?.email || "").trim().toLowerCase()) return "Bạn";
+              const p = userProfiles?.[replySender];
+              return p?.nickname || p?.fullName || p?.fullname || replySender;
+            })()
+          });
         }
         Animated.spring(translateX, {
           toValue: 0,
@@ -456,7 +456,7 @@ export default function MessageBubble({
 
     return (
       <View style={styles.systemContainer}>
-        <TouchableOpacity 
+        <TouchableOpacity
           activeOpacity={targetId ? 0.7 : 1}
           onPress={() => targetId && onSystemMessagePress && onSystemMessagePress(targetId)}
           style={[styles.systemBadge, targetId && { borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.1)' }]}
@@ -475,7 +475,7 @@ export default function MessageBubble({
   const RenderBubbleContent = () => (
     <>
       {message.replyTo && (
-        <TouchableOpacity 
+        <TouchableOpacity
           activeOpacity={0.8}
           onPress={() => onReplyPress && onReplyPress(message.replyTo.id)}
           style={[styles.replyBox, isMe && styles.replyBoxMe]}
@@ -495,8 +495,8 @@ export default function MessageBubble({
               </Text>
             </View>
             {(message.replyTo.media && message.replyTo.media.length > 0) && (
-              <Image 
-                source={{ uri: message.replyTo.media[0].url || message.replyTo.media[0].dataUrl }} 
+              <Image
+                source={{ uri: message.replyTo.media[0].url || message.replyTo.media[0].dataUrl }}
                 style={styles.replyImagePreview}
               />
             )}
@@ -511,10 +511,10 @@ export default function MessageBubble({
       ) : (
         <>
           {message.content && !isMediaOnly ? (
-            <HighlightText 
-              text={message.content} 
-              keyword={highlightKeyword} 
-              style={[styles.messageText, isMe ? styles.messageTextMe : styles.messageTextOther]} 
+            <HighlightText
+              text={message.content}
+              keyword={highlightKeyword}
+              style={[styles.messageText, isMe ? styles.messageTextMe : styles.messageTextOther]}
             />
           ) : null}
 
@@ -523,20 +523,20 @@ export default function MessageBubble({
               {(() => {
                 const videos = message.media.filter(isVideoAttachment);
                 const images = message.media.filter((m: any) => !isVideoAttachment(m));
-                
+
                 return (
                   <>
                     {videos.length > 0 && (
                       <View style={[styles.videoGrid, images.length > 0 && { marginBottom: 8 }]}>
                         {videos.map((item: any, idx: number) => (
-                          <TouchableOpacity 
-                            key={`vid-${idx}`} 
+                          <TouchableOpacity
+                            key={`vid-${idx}`}
                             style={[styles.videoBox, videos.length === 1 && styles.singleVideoBox]}
                             onPress={() => handleImagePress(item)}
                           >
-                            <Image 
-                              source={(item.url || item.dataUrl) ? { uri: item.url || item.dataUrl } : DEFAULT_AVATAR} 
-                              style={styles.mediaImage} 
+                            <Image
+                              source={(item.url || item.dataUrl) ? { uri: item.url || item.dataUrl } : DEFAULT_AVATAR}
+                              style={styles.mediaImage}
                               resizeMode="cover"
                             />
                             <View style={styles.videoOverlay}>
@@ -561,21 +561,21 @@ export default function MessageBubble({
                         {images.map((item: any, idx: number) => {
                           const isSticker = isStickerMedia(item);
                           return (
-                            <TouchableOpacity 
-                              key={`img-${idx}`} 
+                            <TouchableOpacity
+                              key={`img-${idx}`}
                               style={[
                                 styles.imageBox,
                                 images.length === 1 && styles.singleImageBox
                               ]}
                               onPress={() => handleImagePress(item)}
                             >
-                              <Image 
-                                source={(item.url || item.dataUrl) ? { uri: item.url || item.dataUrl } : DEFAULT_AVATAR} 
+                              <Image
+                                source={(item.url || item.dataUrl) ? { uri: item.url || item.dataUrl } : DEFAULT_AVATAR}
                                 style={[
-                                  styles.mediaImage, 
+                                  styles.mediaImage,
                                   isSticker && styles.stickerImage,
                                   images.length === 1 && styles.singleMediaImage
-                                ]} 
+                                ]}
                                 resizeMode={isSticker ? "contain" : "cover"}
                               />
                             </TouchableOpacity>
@@ -592,7 +592,7 @@ export default function MessageBubble({
           {/* 1. Special Cards (Location/Contact) */}
           {message.location && (
             <View style={styles.fileList}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.specialCard, isMe && styles.specialCardMe]}
                 onPress={() => {
                   const url = Platform.select({
@@ -615,7 +615,7 @@ export default function MessageBubble({
 
           {message.contactCard && (
             <View style={styles.fileList}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.specialCard, isMe && styles.specialCardMe]}
                 onPress={() => {
                   if (onNavigate) onNavigate('Profile', { userId: message.contactCard.email });
@@ -651,8 +651,8 @@ export default function MessageBubble({
               {message.files.map((file: any, idx: number) => {
                 const f = normalizeAttachment(file);
                 return (
-                  <TouchableOpacity 
-                    key={idx} 
+                  <TouchableOpacity
+                    key={idx}
                     style={[styles.fileCard, isMe && styles.fileCardMe]}
                     onPress={() => handleFilePress(f)}
                   >
@@ -671,7 +671,7 @@ export default function MessageBubble({
 
           {/* 4. Polls */}
           {!message.recalled && (message.poll || message.payload?.poll) && (
-            <PollMessage 
+            <PollMessage
               messageId={message.id}
               topic={(message.poll || message.payload?.poll).topic || ''}
               options={(message.poll || message.payload?.poll).options || []}
@@ -686,7 +686,7 @@ export default function MessageBubble({
 
           {/* 5. Reminders */}
           {!message.recalled && (message.reminder || message.payload?.reminder) && (
-            <ReminderMessage 
+            <ReminderMessage
               messageId={message.id}
               content={(message.reminder || message.payload?.reminder).content || (message.reminder || message.payload?.reminder).title}
               time={(message.reminder || message.payload?.reminder).time}
@@ -701,7 +701,7 @@ export default function MessageBubble({
 
   return (
     <View style={[
-      styles.container, 
+      styles.container,
       isMe ? styles.containerMe : styles.containerOther,
       (message.poll || message.payload?.poll) && { alignSelf: 'center', width: '100%', paddingHorizontal: 10 },
       groupPosition === 'middle' || groupPosition === 'last' ? { marginBottom: 2 } : { marginBottom: 8 }
@@ -717,7 +717,7 @@ export default function MessageBubble({
         <Text style={styles.replySwipeIcon}>reply</Text>
       </Animated.View>
 
-      <Animated.View 
+      <Animated.View
         {...panResponder.panHandlers}
         style={[
           { flexDirection: 'row', flex: 1, alignItems: 'flex-end', justifyContent: (message.poll || message.payload?.poll) ? 'center' : (isMe ? 'flex-end' : 'flex-start') },
@@ -725,150 +725,150 @@ export default function MessageBubble({
         ]}
       >
         {!isMe && !(message.poll || message.payload?.poll) && (
-        <View style={styles.avatarSpace}>
-          {showAvatar ? (
-            <Image 
-              source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} 
-              style={styles.avatar} 
-            />
-          ) : null}
-        </View>
-      )}
-      
-      <View style={[
-        styles.bubbleWrapper, 
-        isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperOther,
-        (message.poll || message.payload?.poll) && { maxWidth: '85%', alignSelf: 'center' }
-      ]}>
-        {isHighlighted && (
-          <Animated.View 
-            style={[
-              StyleSheet.absoluteFill, 
-              { backgroundColor: highlightBg, borderRadius: 20, zIndex: -1, borderWidth: 2, borderColor: '#ffb300' }
-            ]} 
-          />
-        )}
-        {isSelectionMode && (
-          <View style={[styles.selectionBadge, isSelected && styles.selectionBadgeActive]}>
-            <Text style={styles.selectionBadgeText}>{isSelected ? 'check_circle' : 'radio_button_unchecked'}</Text>
-          </View>
-        )}
-        {/* Name and Pin Header - Only show if pinned */}
-        {isPinned && (
-          <View style={styles.headerRow}>
-            <View style={styles.pinBadge}>
-              <Text style={styles.pinIcon}>push_pin</Text>
-              <Text style={styles.pinText}>Đã ghim</Text>
-            </View>
+          <View style={styles.avatarSpace}>
+            {showAvatar ? (
+              <Image
+                source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR}
+                style={styles.avatar}
+              />
+            ) : null}
           </View>
         )}
 
-        <Pressable 
-          onLongPress={() => onLongPress(message)}
-          onPress={() => {
-            if (isSelectionMode && onPress) onPress(message);
-          }}
-          delayLongPress={300}
-        >
-          {shouldHideBubble ? (
-            <View style={[
-              styles.noBubble,
-              isHighlighted && styles.bubbleHighlighted,
-              isSelected && styles.bubbleSelected
-            ]}>
-              <RenderBubbleContent />
-            </View>
-          ) : isMe ? (
-            <LinearGradient
-              colors={isHighlighted ? ['#fff176', '#ffd54f'] : (isMe ? ['#e3f2fd', '#bbdefb'] : ['#ffffff', '#ffffff'])}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
+        <View style={[
+          styles.bubbleWrapper,
+          isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperOther,
+          (message.poll || message.payload?.poll) && { maxWidth: '85%', alignSelf: 'center' }
+        ]}>
+          {isHighlighted && (
+            <Animated.View
               style={[
-                styles.bubble,
-                isMe ? styles.bubbleMe : styles.bubbleOther,
-                groupPosition === 'first' && (isMe ? styles.firstMe : styles.firstOther),
-                groupPosition === 'middle' && (isMe ? styles.middleMe : styles.middleOther),
-                groupPosition === 'last' && (isMe ? styles.lastMe : styles.lastOther),
-                isHighlighted && styles.bubbleHighlighted,
-                isSelected && styles.bubbleSelected
+                StyleSheet.absoluteFill,
+                { backgroundColor: highlightBg, borderRadius: 20, zIndex: -1, borderWidth: 2, borderColor: '#ffb300' }
               ]}
-            >
-              <RenderBubbleContent />
-            </LinearGradient>
-          ) : (
-            <View
-              style={[
-                styles.bubble,
-                styles.bubbleOther,
-                groupPosition === 'first' && styles.firstOther,
-                groupPosition === 'middle' && styles.middleOther,
-                groupPosition === 'last' && styles.lastOther,
-                isHighlighted && styles.bubbleHighlighted,
-                isSelected && styles.bubbleSelected
-              ]}
-            >
-              <RenderBubbleContent />
+            />
+          )}
+          {isSelectionMode && (
+            <View style={[styles.selectionBadge, isSelected && styles.selectionBadgeActive]}>
+              <Text style={styles.selectionBadgeText}>{isSelected ? 'check_circle' : 'radio_button_unchecked'}</Text>
             </View>
           )}
-        </Pressable>
+          {/* Name and Pin Header - Only show if pinned */}
+          {isPinned && (
+            <View style={styles.headerRow}>
+              <View style={styles.pinBadge}>
+                <Text style={styles.pinIcon}>push_pin</Text>
+                <Text style={styles.pinText}>Đã ghim</Text>
+              </View>
+            </View>
+          )}
 
-
-        {message.reactions && reactionSummary.length > 0 && (
-          <View style={[styles.reactionSummary, isMe ? styles.reactionSummaryMe : styles.reactionSummaryOther]}>
-            {reactionSummary.map(([emoji, users], idx) => (
-              <TouchableOpacity key={idx} style={styles.reactionBadge} onPress={() => onReaction(message, emoji)}>
-                <FluentEmoji emoji={emoji} style={styles.reactionEmojiIcon} />
-                <Text style={styles.reactionCount}>{users.length}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {(groupPosition === 'last' || groupPosition === 'single' || (isMe && message.status)) && (
-          <View style={[styles.footerRow, isMe && styles.footerRowMe]}>
-            {(groupPosition === 'last' || groupPosition === 'single') && (
-              <View style={styles.footerMetaPill}>
-                <Text style={styles.timeText}>
-                  {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-                </Text>
+          <Pressable
+            onLongPress={() => onLongPress(message)}
+            onPress={() => {
+              if (isSelectionMode && onPress) onPress(message);
+            }}
+            delayLongPress={300}
+          >
+            {shouldHideBubble ? (
+              <View style={[
+                styles.noBubble,
+                isHighlighted && styles.bubbleHighlighted,
+                isSelected && styles.bubbleSelected
+              ]}>
+                <RenderBubbleContent />
+              </View>
+            ) : isMe ? (
+              <LinearGradient
+                colors={isHighlighted ? ['#fff176', '#ffd54f'] : (isMe ? ['#e3f2fd', '#bbdefb'] : ['#ffffff', '#ffffff'])}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[
+                  styles.bubble,
+                  isMe ? styles.bubbleMe : styles.bubbleOther,
+                  groupPosition === 'first' && (isMe ? styles.firstMe : styles.firstOther),
+                  groupPosition === 'middle' && (isMe ? styles.middleMe : styles.middleOther),
+                  groupPosition === 'last' && (isMe ? styles.lastMe : styles.lastOther),
+                  isHighlighted && styles.bubbleHighlighted,
+                  isSelected && styles.bubbleSelected
+                ]}
+              >
+                <RenderBubbleContent />
+              </LinearGradient>
+            ) : (
+              <View
+                style={[
+                  styles.bubble,
+                  styles.bubbleOther,
+                  groupPosition === 'first' && styles.firstOther,
+                  groupPosition === 'middle' && styles.middleOther,
+                  groupPosition === 'last' && styles.lastOther,
+                  isHighlighted && styles.bubbleHighlighted,
+                  isSelected && styles.bubbleSelected
+                ]}
+              >
+                <RenderBubbleContent />
               </View>
             )}
-            
-            {isMe && (
-              <View style={styles.statusWrapper}>
-                {message.status === 'sending' ? (
-                  <View style={[styles.statusPill, { backgroundColor: '#eff6ff' }]}>
-                    <View style={styles.statusCircle} />
-                    <Text style={styles.statusText}>Đang gửi</Text>
-                  </View>
-                ) : message.status === 'error' ? (
-                  <View style={[styles.statusPill, { backgroundColor: '#fef2f2' }]}>
-                    <View style={[styles.statusCircle, { borderColor: '#ef4444' }]}>
-                      <Text style={[styles.statusCheck, { color: '#ef4444' }]}>!</Text>
+          </Pressable>
+
+
+          {message.reactions && reactionSummary.length > 0 && (
+            <View style={[styles.reactionSummary, isMe ? styles.reactionSummaryMe : styles.reactionSummaryOther]}>
+              {reactionSummary.map(([emoji, users], idx) => (
+                <TouchableOpacity key={idx} style={styles.reactionBadge} onPress={() => onReaction(message, emoji)}>
+                  <FluentEmoji emoji={emoji} style={styles.reactionEmojiIcon} />
+                  <Text style={styles.reactionCount}>{users.length}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {(groupPosition === 'last' || groupPosition === 'single' || (isMe && message.status)) && (
+            <View style={[styles.footerRow, isMe && styles.footerRowMe]}>
+              {(groupPosition === 'last' || groupPosition === 'single') && (
+                <View style={styles.footerMetaPill}>
+                  <Text style={styles.timeText}>
+                    {new Date(message.createdAt || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                </View>
+              )}
+
+              {isMe && (
+                <View style={styles.statusWrapper}>
+                  {message.status === 'sending' ? (
+                    <View style={[styles.statusPill, { backgroundColor: '#eff6ff' }]}>
+                      <View style={styles.statusCircle} />
+                      <Text style={styles.statusText}>Đang gửi</Text>
                     </View>
-                    <Text style={[styles.statusText, { color: '#dc2626' }]}>Lỗi</Text>
-                  </View>
-                ) : isSeen ? (
-                  <View style={[styles.statusPill, { backgroundColor: '#e0f2fe' }]}>
-                    <Image source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} style={styles.seenAvatar} />
-                    <Text style={[styles.statusText, { color: '#0369a1', fontWeight: '800' }]}>Đã xem</Text>
-                  </View>
-                ) : (
-                  <View style={[styles.statusPill, { backgroundColor: '#f8fafc' }]}>
-                    <View style={[styles.statusCircle, styles.statusSent]}>
-                      <Text style={styles.statusCheck}>✓</Text>
+                  ) : message.status === 'error' ? (
+                    <View style={[styles.statusPill, { backgroundColor: '#fef2f2' }]}>
+                      <View style={[styles.statusCircle, { borderColor: '#ef4444' }]}>
+                        <Text style={[styles.statusCheck, { color: '#ef4444' }]}>!</Text>
+                      </View>
+                      <Text style={[styles.statusText, { color: '#dc2626' }]}>Lỗi</Text>
                     </View>
-                    <Text style={styles.statusText}>Đã gửi</Text>
-                  </View>
-                )}
-              </View>
-            )}
-          </View>
-        )}
-      </View>
-    </Animated.View>
-  </View>
-);
+                  ) : isSeen ? (
+                    <View style={[styles.statusPill, { backgroundColor: '#e0f2fe' }]}>
+                      <Image source={userProfile?.avatarUrl ? { uri: userProfile.avatarUrl } : DEFAULT_AVATAR} style={styles.seenAvatar} />
+                      <Text style={[styles.statusText, { color: '#0369a1', fontWeight: '800' }]}>Đã xem</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.statusPill, { backgroundColor: '#f8fafc' }]}>
+                      <View style={[styles.statusCircle, styles.statusSent]}>
+                        <Text style={styles.statusCheck}>✓</Text>
+                      </View>
+                      <Text style={styles.statusText}>Đã gửi</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </Animated.View>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

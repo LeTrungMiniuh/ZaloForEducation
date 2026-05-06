@@ -979,6 +979,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
         )}
 
         <ChatModals 
+
         actionMessage={actionMessage} setActionMessage={setActionMessage} detailMessage={detailMessage} setDetailMessage={setDetailMessage} onReaction={toggleReaction} onReply={handleReply} 
         onForward={(m) => { setActionMessage(null); setIsForwardModalOpen(true); }}
         onRecall={(m) => patchMessageOptimistic(selectedChat.id, m.id, { action: 'recall' })}
