@@ -4,6 +4,7 @@ import styles from '../../screens/main/style/HomeScreen.styles';
 import { Colors } from '../../constants/Theme';
 import { Conversation } from '../../store/types';
 import { useSecurityAlerts } from '../../hooks/useSecurityAlerts';
+import { BOT_EMAIL } from '../../constants/bot';
 
 interface ConversationListProps {
   conversations: Conversation[];
@@ -27,7 +28,12 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   getConversationPreview,
 }) => {
   const baseConversations = conversations
-    .filter((chat) => !chat.hidden)
+    .filter((chat) => {
+      if (chat.hidden) return false;
+      // Hide bot conversation from inbox list
+      if (chat.type === 'direct' && chat.id.includes(BOT_EMAIL)) return false;
+      return true;
+    })
     .sort((left, right) => {
       const leftPinned = !!left.pinned;
       const rightPinned = !!right.pinned;
