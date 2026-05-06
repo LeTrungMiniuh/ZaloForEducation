@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { PhoneOff, Video, VideoOff, Mic, MicOff } from 'lucide-react';
+import { PhoneOff, Video, VideoOff, Mic, MicOff, Monitor } from 'lucide-react';
 import { useGroupCallStore } from '../../store/groupCallStore';
 import { useAuth } from '../../context/AuthContext';
 import { useGroupChime } from '../../hooks/useGroupChime';
@@ -17,12 +17,21 @@ const GroupCallOverlay: React.FC = () => {
     isCameraOn, 
     isMicOn,
     isMinimized,
-    resetGroupCall,
-    toggleMinimized
+    toggleMinimized,
+    isLocalScreenSharing,
+    screenShares,
   } = useGroupCallStore();
 
   const { socket, user } = useAuth();
-  const { setupSession, leaveSession, toggleMic, toggleCamera, session } = useGroupChime();
+  const { 
+    setupSession, 
+    leaveSession, 
+    toggleMic, 
+    toggleCamera, 
+    startScreenShare, 
+    stopScreenShare, 
+    session 
+  } = useGroupChime();
   const ringbackRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -146,6 +155,41 @@ const GroupCallOverlay: React.FC = () => {
           </div>
         </div>
       </div>
+ 
+      {/* Main Stage for Screen Share */}
+      {(() => {
+        const activeShare = Object.entries(screenShares).find(([_, s]) => s.isSharing);
+        const someoneIsSharing = !!activeShare || isLocalScreenSharing;
+        
+        if (!someoneIsSharing) return null;
+        
+        return (
+          <div className="mx-6 mb-6 aspect-video bg-black rounded-3xl overflow-hidden border border-white/10 relative shadow-2xl">
+            <video 
+              id="group-screen-share-video"
+              className="w-full h-full object-contain"
+              autoPlay
+              playsInline
+            />
+            <div className="absolute top-4 left-4 px-4 py-2 bg-black/60 backdrop-blur-md border border-white/10 rounded-full flex items-center gap-2">
+              <Monitor size={16} className="text-blue-400" />
+              <span className="text-xs font-bold text-white/90">
+                {isLocalScreenSharing ? "Bạn đang chia sẻ màn hình" : "Đang xem màn hình chia sẻ"}
+              </span>
+            </div>
+            
+            {/* [PRINCIPLE 10] Stop sharing button if local */}
+            {isLocalScreenSharing && (
+              <button 
+                onClick={stopScreenShare}
+                className="absolute bottom-4 right-4 px-4 py-2 bg-red-500 hover:bg-red-600 rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-lg"
+              >
+                Dừng chia sẻ
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Video Grid */}
       <div className="grow p-6 overflow-y-auto">
@@ -236,6 +280,17 @@ const GroupCallOverlay: React.FC = () => {
           className="w-20 h-20 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center shadow-2xl shadow-red-600/40 transition-transform active:scale-90"
         >
           <PhoneOff size={32} />
+        </button>
+
+        <button 
+          onClick={() => {
+            if (isLocalScreenSharing) stopScreenShare();
+            else startScreenShare();
+          }}
+          className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${isLocalScreenSharing ? 'bg-blue-500 shadow-lg shadow-blue-500/20' : 'bg-white/10'}`}
+          title="Chia sẻ màn hình"
+        >
+          <Monitor size={28} />
         </button>
 
         <button 

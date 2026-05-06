@@ -84,6 +84,11 @@ export const leaveCurrentSession = async (reason: string = "unknown") => {
       console.warn("[Chime] Cleanup error:", e);
     }
     globalSession = null;
+    const store = useCallStore.getState();
+    if (store.localScreenShareStream) {
+      store.localScreenShareStream.getTracks().forEach(t => t.stop());
+    }
+    store.clearAllScreenShares();
     globalTiles = {};
     globalVideoStarted = false;
     globalLocalVideo = null;
@@ -152,6 +157,80 @@ export const toggleMic = async (turnOn: boolean) => {
   } else {
     globalSession.audioVideo.realtimeMuteLocalAudio();
     console.log("[Chime] Microphone MUTED");
+  }
+};
+ 
+/**
+ * Bật chia sẻ màn hình (Screen Share)
+ */
+export const startScreenShare = async () => {
+  if (!globalSession) {
+    console.warn("[Chime] startScreenShare: No active session");
+    return;
+  }
+ 
+  const store = useCallStore.getState();
+  if (store.isLocalScreenSharing) return;
+ 
+  // [PRINCIPLE 7] Check if someone else is already sharing (simplified for now)
+  const isSomeoneSharing = Object.values(store.screenShares).some(s => s.isSharing);
+  if (isSomeoneSharing) {
+    console.warn("[Chime] Someone else is already sharing");
+    return;
+  }
+ 
+  try {
+    console.log("[Chime] Starting Screen Capture...");
+    // [PRINCIPLE 12] Performance: 720p
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 15 }
+      },
+      audio: false
+    });
+ 
+    // [PRINCIPLE 5] Handle stop from browser UI
+    const track = stream.getVideoTracks()[0];
+    track.onended = () => {
+      console.log("[Chime] Screen share track ended by browser");
+      stopScreenShare();
+    };
+ 
+    await globalSession.audioVideo.startContentShare(stream);
+    store.setLocalScreenSharing(true, stream);
+    
+    console.log("[Chime] Screen share STARTED");
+  } catch (e: any) {
+    console.error("[Chime] startScreenShare failed:", e);
+    // [PRINCIPLE 11] Permission handling
+    if (e.name === "NotAllowedError") {
+      alert("Bạn đã từ chối quyền chia sẻ màn hình.");
+    }
+  }
+};
+ 
+/**
+ * Tắt chia sẻ màn hình
+ */
+export const stopScreenShare = async () => {
+  if (!globalSession) return;
+  
+  const store = useCallStore.getState();
+  console.log("[Chime] Stopping Screen Share...");
+  
+  try {
+    globalSession.audioVideo.stopContentShare();
+    
+    // [PRINCIPLE 9] Cleanup tracks
+    if (store.localScreenShareStream) {
+      store.localScreenShareStream.getTracks().forEach(t => t.stop());
+    }
+    
+    store.setLocalScreenSharing(false, null);
+  } catch (e) {
+    console.error("[Chime] stopScreenShare error:", e);
   }
 };
 
@@ -325,8 +404,19 @@ export const useChime = () => {
             );
 
             console.log(
-              `[Web-Chime] 🎥 Tile Update: id=${tileId} isLocal=${isLocal} attendee=${attendeeId} active=${tileState.active}`,
+              `[Web-Chime] 🎥 Tile Update: id=${tileId} isLocal=${isLocal} attendee=${attendeeId} active=${tileState.active} isContent=${tileState.isContent}`,
             );
+
+            if (tileState.isContent) {
+              const store = useCallStore.getState();
+              if (!store.screenShares[attendeeId]) {
+                console.log(`[Web-Chime] 🖥️ Screen Share detected: ${attendeeId}`);
+                store.setScreenShare(attendeeId, { stream: null, isSharing: true });
+              }
+              const screenEl = document.getElementById("screen-share-video") as HTMLVideoElement;
+              if (screenEl) globalSession?.audioVideo.bindVideoElement(tileId, screenEl);
+              return;
+            }
 
             if (isLocal) {
               globalTiles.local = tileId;
@@ -362,6 +452,13 @@ export const useChime = () => {
           videoTileWasRemoved: (tileId: number) => {
             console.log(`[Web-Chime] ❌ Tile Removed: ${tileId}`);
             if (!isValidTileId(tileId)) return;
+
+            const store = useCallStore.getState();
+            // Simplified cleanup: if anyone is sharing, we check if it was them.
+            // In a 1-to-1 or limited group, clearing all on any removal is safe if only 1 share allowed.
+            if (Object.values(store.screenShares).some(s => s.isSharing)) {
+               store.clearAllScreenShares();
+            }
 
             if (globalTiles.local === tileId) {
               globalTiles.local = undefined;

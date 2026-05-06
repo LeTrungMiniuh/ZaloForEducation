@@ -106,6 +106,17 @@ export const useGroupChime = () => {
 
         if (!attendeeId) return;
 
+        if (tileState.isContent) {
+          const store = useGroupCallStore.getState();
+          if (!store.screenShares[attendeeId]) {
+            console.log(`[GroupChime] 🖥️ Screen Share detected: ${attendeeId}`);
+            store.setScreenShare(attendeeId, { stream: null, isSharing: true });
+          }
+          const screenEl = document.getElementById("group-screen-share-video") as HTMLVideoElement;
+          if (screenEl) sessionRef.current?.audioVideo.bindVideoElement(tileState.tileId, screenEl);
+          return;
+        }
+
         addRemoteTile({
           tileId: tileState.tileId,
           attendeeId: attendeeId,
@@ -115,6 +126,12 @@ export const useGroupChime = () => {
       },
       videoTileDidRemove: (tileId: number) => {
         removeRemoteTile(tileId);
+        
+        // [PRINCIPLE 9] Cleanup screen shares if the content tile is removed
+        const store = useGroupCallStore.getState();
+        if (Object.values(store.screenShares).some(s => s.isSharing)) {
+           store.clearAllScreenShares();
+        }
       },
       audioVideoDidStop: (sessionStatus: any) => {
         console.log('[GroupChime] AudioVideo Stopped', sessionStatus);
@@ -177,6 +194,14 @@ export const useGroupChime = () => {
       } catch (error) {
         console.error('[WebChime] Error leaving session:', error);
       }
+ 
+      // [PRINCIPLE 9] Cleanup screen share on leave
+      const store = useGroupCallStore.getState();
+      if (store.localScreenShareStream) {
+        store.localScreenShareStream.getTracks().forEach(t => t.stop());
+      }
+      store.clearAllScreenShares();
+ 
       sessionRef.current = null;
       setSession(null);
     }
@@ -205,6 +230,66 @@ export const useGroupChime = () => {
     }
     setCameraOn(on);
   };
+ 
+  /**
+   * Bật chia sẻ màn hình (Screen Share)
+   */
+  const startScreenShare = async () => {
+    if (!sessionRef.current) return;
+    
+    const store = useGroupCallStore.getState();
+    if (store.isLocalScreenSharing) return;
+ 
+    // [PRINCIPLE 7] Check if someone else is already sharing
+    if (Object.values(store.screenShares).some(s => s.isSharing)) {
+      console.warn("[GroupChime] Someone else is already sharing");
+      return;
+    }
+ 
+    try {
+      console.log("[GroupChime] Starting Screen Capture...");
+      // [PRINCIPLE 12] 720p
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 15 }
+        },
+        audio: false
+      });
+ 
+      // [PRINCIPLE 5] onended listener
+      const track = stream.getVideoTracks()[0];
+      track.onended = () => {
+        console.log("[GroupChime] Screen share track ended");
+        stopScreenShare();
+      };
+ 
+      await sessionRef.current.audioVideo.startContentShare(stream);
+      store.setLocalScreenSharing(true, stream);
+    } catch (e: any) {
+      console.error("[GroupChime] startScreenShare failed:", e);
+      if (e.name === "NotAllowedError") alert("Bạn đã từ chối quyền chia sẻ màn hình.");
+    }
+  };
+ 
+  /**
+   * Tắt chia sẻ màn hình
+   */
+  const stopScreenShare = async () => {
+    if (!sessionRef.current) return;
+    
+    const store = useGroupCallStore.getState();
+    try {
+      sessionRef.current.audioVideo.stopContentShare();
+      if (store.localScreenShareStream) {
+        store.localScreenShareStream.getTracks().forEach(t => t.stop());
+      }
+      store.setLocalScreenSharing(false, null);
+    } catch (e) {
+      console.error("[GroupChime] stopScreenShare error:", e);
+    }
+  };
 
   // Automatically setup session when data is available
   useEffect(() => {
@@ -232,6 +317,8 @@ export const useGroupChime = () => {
     leaveSession, 
     toggleMic, 
     toggleCamera, 
+    startScreenShare,
+    stopScreenShare,
     session 
   };
 };
