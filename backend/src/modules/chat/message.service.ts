@@ -6,12 +6,13 @@ import {
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, forwardRef, NotFoundException } from "@nestjs/common";
 import { Message } from "@zalo-edu/shared";
 import { v4 as uuidv4 } from "uuid";
 import { DynamoDBService } from "../../infrastructure/dynamodb.service";
 import { S3Service } from "../../infrastructure/s3.service";
 import { FriendshipService } from "./friendship.service";
+import { ChatGateway } from "./chat.gateway";
 
 @Injectable()
 export class MessageService {
@@ -19,29 +20,82 @@ export class MessageService {
     private readonly db: DynamoDBService,
     private readonly s3Service: S3Service,
     private readonly friendshipService: FriendshipService,
+    @Inject(forwardRef(() => ChatGateway))
+    private readonly chatGateway: ChatGateway,
   ) {}
 
+  private normalizeConvId(id: string): { raw: string; prefixed: string; original: string; veryRaw: string } {
+    const input = id.toUpperCase().startsWith("CONV#") ? id.substring(5) : id;
+    let normalized = input;
+    
+    if (input.toUpperCase().startsWith("DIRECT#")) {
+      const parts = input.split("#");
+      if (parts.length >= 3) {
+        const emails = parts.slice(1).map(e => e.toLowerCase()).sort();
+        normalized = `DIRECT#${emails[0]}#${emails[1]}`;
+      }
+    } else if (input.toUpperCase().startsWith("GROUP#")) {
+      normalized = `GROUP#${input.substring(6)}`;
+    } else {
+      normalized = input.toLowerCase();
+    }
+
+    return {
+      raw: normalized,
+      prefixed: `CONV#${normalized}`,
+      original: id.toUpperCase().startsWith("CONV#") ? id : `CONV#${id}`,
+      veryRaw: id,
+    };
+  }
+
   private async ensureConversationMember(convId: string, userEmail: string) {
-    const metadata = await this.db.docClient.send(
+    const { raw: rawId, prefixed: prefId, original: origId, veryRaw } = this.normalizeConvId(convId);
+    const emailLower = userEmail.toLowerCase();
+    
+    console.debug(`[MessageService] ensureConversationMember checking: prefId=${prefId}, origId=${origId}, veryRaw=${veryRaw}, user=${emailLower}`);
+    
+    // 1. Try to find Metadata
+    let metadataRes = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: 'METADATA' },
+        Key: { PK: prefId, SK: "METADATA" },
       }),
     );
 
-    const members: string[] = Array.isArray(metadata.Item?.members)
-      ? metadata.Item.members
-      : [];
-
-    const isMember = members.some(
-      (member) => String(member).toLowerCase() === String(userEmail).toLowerCase(),
-    );
-
-    if (!isMember) {
-      throw new BadRequestException('You are not a member of this conversation');
+    if (!metadataRes.Item && origId !== prefId) {
+      metadataRes = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: origId, SK: "METADATA" },
+        }),
+      );
     }
 
-    return metadata.Item as any;
+    if (!metadataRes.Item && rawId !== prefId && rawId !== origId) {
+      metadataRes = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: rawId, SK: "METADATA" },
+        }),
+      );
+    }
+
+    if (!metadataRes.Item) {
+      console.error(`[MessageService] Metadata NOT FOUND for ${prefId}, ${origId} or ${rawId}`);
+      throw new BadRequestException(`Không tìm thấy cuộc hội thoại: ${prefId}`);
+    }
+
+    const metadata = metadataRes.Item as any;
+    const members: string[] = Array.isArray(metadata.members) ? metadata.members : [];
+
+    // 2. Check membership (Case-Insensitive)
+    const isMember = members.some(m => String(m).toLowerCase() === emailLower);
+    if (!isMember) {
+      console.error(`[MessageService] User ${emailLower} is not a member of ${prefId}. Members: ${JSON.stringify(members)}`);
+      throw new BadRequestException("Bạn không phải là thành viên của cuộc hội thoại này");
+    }
+
+    return metadata;
   }
 
   /**
@@ -57,8 +111,10 @@ export class MessageService {
     replyTo?: any,
     extraFields: Record<string, any> = {},
   ) {
-    if (senderEmail !== 'system') {
-      await this.ensureConversationMember(convId, senderEmail);
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+
+    if (senderEmail !== "system") {
+      await this.ensureConversationMember(prefixedConvId, senderEmail);
     }
 
     const timestamp = new Date().toISOString();
@@ -73,38 +129,44 @@ export class MessageService {
     let location = (extraFields as any)?.location || null;
 
     if (filteredFiles.length > 0) {
-      filteredFiles = filteredFiles.filter(f => {
-        const fileName = (f.name || '').toLowerCase();
-        const mimeType = (f.mimeType || '').toLowerCase();
+      filteredFiles = filteredFiles.filter((f) => {
+        const fileName = (f.name || "").toLowerCase();
+        const mimeType = (f.mimeType || "").toLowerCase();
 
         // 1. Extract Contact Card data
-        if (fileName === 'contact.json') {
+        if (fileName === "contact.json") {
           try {
             if (!contactCard) {
-              const data = typeof f.dataUrl === 'string' ? JSON.parse(f.dataUrl) : f.dataUrl;
+              const data =
+                typeof f.dataUrl === "string"
+                  ? JSON.parse(f.dataUrl)
+                  : f.dataUrl;
               contactCard = data;
             }
           } catch (e) {
-            console.error('[MessageService] Failed to parse contact.json', e);
+            console.error("[MessageService] Failed to parse contact.json", e);
           }
           return false;
         }
 
         // 2. Extract Location data
-        if (fileName === 'location.json') {
+        if (fileName === "location.json") {
           try {
             if (!location) {
-              const data = typeof f.dataUrl === 'string' ? JSON.parse(f.dataUrl) : f.dataUrl;
+              const data =
+                typeof f.dataUrl === "string"
+                  ? JSON.parse(f.dataUrl)
+                  : f.dataUrl;
               location = data;
             }
           } catch (e) {
-            console.error('[MessageService] Failed to parse location.json', e);
+            console.error("[MessageService] Failed to parse location.json", e);
           }
           return false;
         }
 
         // 3. Extract audio recordings to top-level field and remove from files array
-        if (mimeType.startsWith('audio/')) {
+        if (mimeType.startsWith("audio/")) {
           if (!audioUrl) audioUrl = f.url || f.dataUrl;
           return false;
         }
@@ -115,7 +177,7 @@ export class MessageService {
 
     const newMessage: any = {
       id: SK,
-      conversationId: convId,
+      conversationId: rawConvId,
       senderId: senderEmail,
       content,
       type,
@@ -135,7 +197,7 @@ export class MessageService {
     const metadata = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: "METADATA" },
+        Key: { PK: prefixedConvId, SK: "METADATA" },
       }),
     );
     const members: string[] = metadata.Item?.members || [];
@@ -173,9 +235,10 @@ export class MessageService {
         Put: {
           TableName: this.db.tableName,
           Item: {
-            PK: convId,
+            PK: prefixedConvId,
             SK: SK,
             ...newMessage,
+            conversationId: rawConvId,
           },
         },
       },
@@ -183,19 +246,28 @@ export class MessageService {
       {
         Update: {
           TableName: this.db.tableName,
-          Key: { PK: convId, SK: "METADATA" },
-          UpdateExpression: "SET lastMessage = :sk, lastMessageContent = :content, lastMessageSenderId = :senderId, lastMessageTimestamp = :ts, updatedAt = :time, listClearedAt = :cleared ADD totalMessages :inc",
+          Key: { PK: prefixedConvId, SK: "METADATA" },
+          UpdateExpression:
+            "SET lastMessage = :sk, lastMessageContent = :content, lastMessageSenderId = :senderId, lastMessageTimestamp = :ts, updatedAt = :time, listClearedAt = :cleared ADD totalMessages :inc",
           ExpressionAttributeValues: {
             ":sk": SK,
             ":content": (() => {
-              if (type === 'system') return content;
-              if (type === 'SYSTEM_CALL') {
-                const callType = extraFields?.callType || 'audio';
-                return callType === 'video' ? '[Cuộc gọi video]' : '[Cuộc gọi thoại]';
+              if (type === "system") return content;
+              if (type === "SYSTEM_CALL") {
+                const callType = extraFields?.callType || "audio";
+                const isGroup = !!extraFields?.isGroup;
+                if (isGroup) {
+                  return callType === "video"
+                    ? "[Cuộc gọi video nhóm]"
+                    : "[Cuộc gọi thoại nhóm]";
+                }
+                return callType === "video"
+                  ? "[Cuộc gọi video]"
+                  : "[Cuộc gọi thoại]";
               }
-              if (type === 'contact_card') return '[Danh thiếp]';
-              if (type === 'location') return '[Vị trí]';
-              if (!content || content.startsWith('MSG#')) {
+              if (type === "contact_card") return "[Danh thiếp]";
+              if (type === "location") return "[Vị trí]";
+              if (!content || content.startsWith("MSG#")) {
                 if (media && media.length > 0) {
                   const hasSticker = media.some((item: any) => {
                     const mime = String(
@@ -222,8 +294,8 @@ export class MessageService {
             ":senderId": senderEmail,
             ":ts": Date.now(),
             ":time": timestamp,
-            ":cleared": {}, 
-            ":inc": 1
+            ":cleared": {},
+            ":inc": 1,
           },
         },
       },
@@ -231,7 +303,7 @@ export class MessageService {
       {
         Update: {
           TableName: this.db.tableName,
-          Key: { PK: `USER#${senderEmail}`, SK: convId },
+          Key: { PK: `USER#${senderEmail.toLowerCase()}`, SK: prefixedConvId },
           UpdateExpression: "SET updatedAt = :ts, lastReadAt = :readAt",
           ExpressionAttributeValues: {
             ":ts": timestamp,
@@ -247,12 +319,12 @@ export class MessageService {
       transactItems.push({
         Update: {
           TableName: this.db.tableName,
-          Key: { PK: `USER#${member}`, SK: convId },
+          Key: { PK: `USER#${String(member).toLowerCase()}`, SK: prefixedConvId },
           // [PRODUCTION] Atomic increment unreadCount
           UpdateExpression: "SET updatedAt = :ts ADD unreadCount :inc",
           ExpressionAttributeValues: {
             ":ts": timestamp,
-            ":inc": 1
+            ":inc": 1,
           },
         },
       });
@@ -281,18 +353,24 @@ export class MessageService {
       previousEmoji?: string;
     },
   ) {
-    await this.ensureConversationMember(convId, userEmail);
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+    await this.ensureConversationMember(prefixedConvId, userEmail);
 
     const existingRes = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: messageId },
+        Key: { PK: prefixedConvId, SK: messageId },
       }),
     );
 
     const existing = existingRes.Item as any;
     if (!existing) {
       throw new BadRequestException("Message not found");
+    }
+
+    // [SENIOR] STRICT PARTITION VALIDATION
+    if (existing.conversationId !== prefixedConvId) {
+      throw new BadRequestException("Message does not belong to this conversation partition");
     }
 
     const now = new Date().toISOString();
@@ -321,7 +399,7 @@ export class MessageService {
       await this.db.docClient.send(
         new UpdateCommand({
           TableName: this.db.tableName,
-          Key: { PK: convId, SK: messageId },
+          Key: { PK: prefixedConvId, SK: messageId },
           UpdateExpression:
             "SET reactions = :reactions, updatedAt = :updatedAt",
           ExpressionAttributeValues: {
@@ -346,7 +424,7 @@ export class MessageService {
       await this.db.docClient.send(
         new UpdateCommand({
           TableName: this.db.tableName,
-          Key: { PK: convId, SK: messageId },
+          Key: { PK: prefixedConvId, SK: messageId },
           UpdateExpression:
             "SET content = :content, recalled = :recalled, media = :media, files = :files, reactions = :reactions, updatedAt = :updatedAt",
           ExpressionAttributeValues: {
@@ -378,7 +456,7 @@ export class MessageService {
       const metadataRes = await this.db.docClient.send(
         new GetCommand({
           TableName: this.db.tableName,
-          Key: { PK: convId, SK: "METADATA" },
+          Key: { PK: prefixedConvId, SK: "METADATA" },
         }),
       );
       const metadata = metadataRes.Item as any;
@@ -405,7 +483,7 @@ export class MessageService {
             {
               Update: {
                 TableName: this.db.tableName,
-                Key: { PK: convId, SK: messageId },
+                Key: { PK: prefixedConvId, SK: messageId },
                 UpdateExpression:
                   "SET pinned = :pinned, pinnedBy = :pinnedBy, pinnedAt = :pinnedAt, updatedAt = :updatedAt",
                 ExpressionAttributeValues: {
@@ -419,7 +497,7 @@ export class MessageService {
             {
               Update: {
                 TableName: this.db.tableName,
-                Key: { PK: convId, SK: "METADATA" },
+                Key: { PK: prefixedConvId, SK: "METADATA" },
                 UpdateExpression:
                   "SET pinnedMessageIds = :pinedIds, updatedAt = :updatedAt",
                 ExpressionAttributeValues: {
@@ -447,7 +525,7 @@ export class MessageService {
         : `${userName} đã bỏ ghim một tin nhắn.`;
 
       this.sendMessage(
-        convId,
+        prefixedConvId,
         "system",
         systemContent,
         "system",
@@ -455,7 +533,9 @@ export class MessageService {
         [],
         null,
         { systemActionBy: userEmail },
-      ).catch((e) => console.error("Failed to send pin system message", e));
+      ).then((msg) => {
+        this.chatGateway.emitReceiveMessage(prefixedConvId, msg);
+      }).catch((e) => console.error("Failed to send pin system message", e));
 
       return {
         ...existing,
@@ -475,7 +555,7 @@ export class MessageService {
       await this.db.docClient.send(
         new UpdateCommand({
           TableName: this.db.tableName,
-          Key: { PK: convId, SK: messageId },
+          Key: { PK: prefixedConvId, SK: messageId },
           UpdateExpression: "SET removed = :removed, updatedAt = :updatedAt",
           ExpressionAttributeValues: {
             ":removed": removed,
@@ -494,16 +574,154 @@ export class MessageService {
     throw new BadRequestException("Unsupported patch action");
   }
 
-  /**
-   * MARK MESSAGE AS SEEN
-   */
-  async markAsSeen(convId: string, messageId: string, userEmail: string) {
-    await this.ensureConversationMember(convId, userEmail);
+  async votePoll(
+    prefixedConvId: string,
+    messageId: string,
+    userEmail: string,
+    optionIndex: number,
+  ) {
+    await this.ensureConversationMember(prefixedConvId, userEmail);
+
+    if (!Number.isInteger(optionIndex) || optionIndex < 0) {
+      throw new BadRequestException("Invalid option index");
+    }
 
     const existingRes = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: messageId },
+        Key: { PK: prefixedConvId, SK: messageId },
+      }),
+    );
+
+    const existing = existingRes.Item as any;
+    if (!existing) {
+      throw new BadRequestException("Message not found");
+    }
+
+    const poll = existing?.payload?.poll || existing?.poll;
+    if (!poll || !Array.isArray(poll.options) || poll.options.length < 2) {
+      throw new BadRequestException("This message is not a valid poll");
+    }
+
+    if (poll.isClosed) {
+      throw new BadRequestException("Bình chọn đã đóng. Không thể bình chọn.");
+    }
+
+    if (optionIndex >= poll.options.length) {
+      throw new BadRequestException("Selected option is out of range");
+    }
+
+    const votes: Record<string, string> = { ...(poll.votes || {}) };
+    // Allow changing vote - just update the user's vote
+    votes[userEmail] = String(optionIndex);
+    const updatedAt = new Date().toISOString();
+
+    const payload = {
+      ...(existing.payload || {}),
+      poll: {
+        ...poll,
+        allowMultiple: false,
+        votes,
+      },
+    };
+
+    await this.db.docClient.send(
+      new UpdateCommand({
+        TableName: this.db.tableName,
+        Key: { PK: prefixedConvId, SK: messageId },
+        UpdateExpression: "SET payload = :payload, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":payload": payload,
+          ":updatedAt": updatedAt,
+        },
+      }),
+    );
+
+    return {
+      ...existing,
+      payload,
+      updatedAt,
+    };
+  }
+
+  async closePoll(convId: string, messageId: string, userEmail: string) {
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+    await this.ensureConversationMember(prefixedConvId, userEmail);
+
+    const existingRes = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: prefixedConvId, SK: messageId },
+      }),
+    );
+
+    const existing = existingRes.Item as any;
+    if (!existing) {
+      throw new BadRequestException("Message not found");
+    }
+
+    const poll = existing?.payload?.poll || existing?.poll;
+    if (!poll) {
+      throw new BadRequestException("This message is not a valid poll");
+    }
+
+    // Check if user is the sender of the message
+    if (
+      String(existing.senderId || "")
+        .trim()
+        .toLowerCase() !==
+      String(userEmail || "")
+        .trim()
+        .toLowerCase()
+    ) {
+      throw new BadRequestException(
+        "Chỉ người tạo bình chọn mới có thể đóng nó.",
+      );
+    }
+
+    if (poll.isClosed) {
+      throw new BadRequestException("Bình chọn đã đóng rồi.");
+    }
+
+    const updatedAt = new Date().toISOString();
+    const payload = {
+      ...(existing.payload || {}),
+      poll: {
+        ...poll,
+        isClosed: true,
+      },
+    };
+
+    await this.db.docClient.send(
+      new UpdateCommand({
+        TableName: this.db.tableName,
+        Key: { PK: prefixedConvId, SK: messageId },
+        UpdateExpression: "SET payload = :payload, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":payload": payload,
+          ":updatedAt": updatedAt,
+        },
+      }),
+    );
+
+    return {
+      ...existing,
+      payload,
+      updatedAt,
+    };
+  }
+
+  /**
+   * MARK MESSAGE AS SEEN
+   */
+  async markAsSeen(convId: string, messageId: string, userEmail: string) {
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+    await this.ensureConversationMember(prefixedConvId, userEmail);
+
+    const existingRes = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: prefixedConvId, SK: messageId },
       }),
     );
 
@@ -516,7 +734,7 @@ export class MessageService {
     await this.db.docClient.send(
       new UpdateCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: messageId },
+        Key: { PK: prefixedConvId, SK: messageId },
         UpdateExpression:
           "SET seen = :seen, #status = :status, updatedAt = :now",
         ExpressionAttributeNames: { "#status": "status" },
@@ -532,12 +750,13 @@ export class MessageService {
   }
 
   async getMessage(convId: string, messageId: string, userEmail: string) {
-    await this.ensureConversationMember(convId, userEmail);
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+    await this.ensureConversationMember(prefixedConvId, userEmail);
 
     const res = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: messageId },
+        Key: { PK: prefixedConvId, SK: messageId },
       }),
     );
 
@@ -555,13 +774,15 @@ export class MessageService {
     userEmail: string,
     limit: number = 50,
     lastEvaluatedKey?: any,
+    scanForward: boolean = false,
   ) {
-    await this.ensureConversationMember(convId, userEmail);
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+    await this.ensureConversationMember(prefixedConvId, userEmail);
 
     const metadataRes = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: "METADATA" },
+        Key: { PK: prefixedConvId, SK: "METADATA" },
       }),
     );
     const autoDeleteDays = Number(metadataRes.Item?.autoDeleteDays || 0);
@@ -570,7 +791,7 @@ export class MessageService {
     const userMapping = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: `USER#${userEmail}`, SK: convId },
+        Key: { PK: `USER#${userEmail.toLowerCase()}`, SK: prefixedConvId },
       }),
     );
 
@@ -579,12 +800,14 @@ export class MessageService {
 
     const params: any = {
       TableName: this.db.tableName,
-      KeyConditionExpression: "PK = :pk AND SK > :lastCleared",
+      KeyConditionExpression: scanForward 
+        ? "PK = :pk AND SK > :lastCleared" 
+        : "PK = :pk AND SK > :lastCleared", // Both use > lastCleared to respect clear history
       ExpressionAttributeValues: {
-        ":pk": convId,
+        ":pk": prefixedConvId,
         ":lastCleared": msgPrefix,
       },
-      ScanIndexForward: false, // get newest first
+      ScanIndexForward: false, // newest first
       Limit: limit,
     };
 
@@ -618,8 +841,8 @@ export class MessageService {
 
     return {
       messages: (filteredItems as any[])
-        .map(msg => ({ ...msg, id: msg.id || msg.SK }))
-        .sort((a, b) => b.id.localeCompare(a.id)), // Force newest-first (descending) by id (which contains SK)
+        .map((msg) => ({ ...msg, id: msg.id || msg.SK }))
+        .sort((a, b) => a.id.localeCompare(b.id)), // Force oldest-first (ascending)
       nextCursor,
     };
   }
@@ -628,7 +851,8 @@ export class MessageService {
    * CLEAR HISTORY FOR A CONVERSATION (SOFT DELETE FOR ME)
    */
   async clearHistory(convId: string, userEmail: string) {
-    await this.ensureConversationMember(convId, userEmail);
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+    await this.ensureConversationMember(prefixedConvId, userEmail);
 
     const timestamp = new Date().toISOString();
 
@@ -636,7 +860,7 @@ export class MessageService {
     await this.db.docClient.send(
       new UpdateCommand({
         TableName: this.db.tableName,
-        Key: { PK: `USER#${userEmail}`, SK: convId },
+        Key: { PK: `USER#${userEmail.toLowerCase()}`, SK: prefixedConvId },
         UpdateExpression: "SET lastClearedAt = :ts",
         ExpressionAttributeValues: {
           ":ts": timestamp,
@@ -645,8 +869,8 @@ export class MessageService {
     );
 
     // Call background cleanup (Deep Cleanup)
-    this.performDeepCleanup(convId).catch((err) =>
-      console.error(`Deep cleanup failed for ${convId}:`, err),
+    this.performDeepCleanup(prefixedConvId).catch((err) =>
+      console.error(`Deep cleanup failed for ${prefixedConvId}:`, err),
     );
 
     return { success: true, lastClearedAt: timestamp };
@@ -656,11 +880,12 @@ export class MessageService {
    * BACKGROUND CLEANUP: Delete messages and S3 files if ALL members have cleared history
    */
   private async performDeepCleanup(convId: string) {
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
     // 1. Get Conversation Metadata to find members
     const metadata = await this.db.docClient.send(
       new GetCommand({
         TableName: this.db.tableName,
-        Key: { PK: convId, SK: "METADATA" },
+        Key: { PK: prefixedConvId, SK: "METADATA" },
       }),
     );
 
@@ -670,7 +895,7 @@ export class MessageService {
     // 2. Fetch all guest mappings for this conversation
     const mappingKeys = members.map((email) => ({
       PK: `USER#${email}`,
-      SK: convId,
+      SK: rawConvId,
     }));
 
     const batchMappings = await this.db.docClient.send(
@@ -704,7 +929,7 @@ export class MessageService {
       TableName: this.db.tableName,
       KeyConditionExpression: "PK = :pk AND SK <= :minTs",
       ExpressionAttributeValues: {
-        ":pk": convId,
+        ":pk": prefixedConvId,
         ":minTs": `MSG#${minClearedAt}`,
       },
     };
@@ -717,7 +942,7 @@ export class MessageService {
     if (messagesToDelete.length === 0) return;
 
     console.log(
-      `[DEEP CLEANUP] Found ${messagesToDelete.length} messages to permanently delete in ${convId}`,
+      `[DEEP CLEANUP] Found ${messagesToDelete.length} messages to permanently delete in ${prefixedConvId}`,
     );
 
     // 6. Delete files from S3 and messages from DB
@@ -759,38 +984,98 @@ export class MessageService {
     }
 
     console.log(
-      `[DEEP CLEANUP] Successfully deleted ${messagesToDelete.length} messages and associated S3 files for ${convId}`,
+      `[DEEP CLEANUP] Successfully deleted ${messagesToDelete.length} messages and associated S3 files for ${prefixedConvId}`,
     );
   }
 
   /**
    * GET CONTEXT AROUND A MESSAGE (FOR SEARCH DEEP-LINKING)
-   * Fetches messages from targetId UP TO the latest, and provides nextCursor for OLDER.
+   * Fetches messages from targetId UP TO a window, and provides nextCursor for OLDER.
    */
   async getMessagesContext(
     convId: string,
     messageId: string,
     userEmail: string,
-    limit: number = 50
+    limit: number = 50,
   ) {
-    await this.ensureConversationMember(convId, userEmail);
+    const { raw: rawConvId, prefixed: prefixedConvId, original: originalConvId, veryRaw } = this.normalizeConvId(convId);
+    console.debug(`[MessageService] getMessagesContext: checking membership for ${originalConvId}`);
+    const metadata = await this.ensureConversationMember(originalConvId, userEmail);
+    console.debug(`[MessageService] getMessagesContext: membership OK for ${originalConvId}`);
 
     // 1. Get user's lastClearedAt timestamp
-    const userMapping = await this.db.docClient.send(new GetCommand({
-      TableName: this.db.tableName,
-      Key: { PK: `USER#${userEmail}`, SK: convId }
-    }));
+    let userMapping = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: `USER#${userEmail.toLowerCase()}`, SK: prefixedConvId },
+      }),
+    );
+    
+    if (!userMapping.Item && originalConvId !== prefixedConvId) {
+      console.debug(`[MessageService] UserMapping not found for prefixed, trying original: ${originalConvId}`);
+      userMapping = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: `USER#${userEmail.toLowerCase()}`, SK: originalConvId },
+        }),
+      );
+    }
+    
     const lastClearedAt = userMapping.Item?.lastClearedAt || "";
     const msgPrefix = `MSG#${lastClearedAt}`;
 
     // 2. Fetch the target message
-    const targetRes = await this.db.docClient.send(new GetCommand({
-      TableName: this.db.tableName,
-      Key: { PK: convId, SK: messageId }
-    }));
+    console.debug(`[MessageService] getMessagesContext: searching target message ${messageId} in ${prefixedConvId}`);
+    let targetRes = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: prefixedConvId, SK: messageId },
+      }),
+    );
+
+    if (!targetRes.Item && originalConvId !== prefixedConvId) {
+      console.debug(`[MessageService] Target message not found in prefixed, trying original: ${originalConvId}`);
+      targetRes = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: originalConvId, SK: messageId },
+        }),
+      );
+    }
+
+    if (!targetRes.Item && rawConvId !== prefixedConvId && rawConvId !== originalConvId) {
+      console.debug(`[MessageService] Target message not found in original, trying raw: ${rawConvId}`);
+      targetRes = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: rawConvId, SK: messageId },
+        }),
+      );
+    }
+
+    if (!targetRes.Item && veryRaw !== prefixedConvId && veryRaw !== originalConvId && veryRaw !== rawConvId) {
+      console.debug(`[MessageService] Target message not found in raw, trying veryRaw: ${veryRaw}`);
+      targetRes = await this.db.docClient.send(
+        new GetCommand({
+          TableName: this.db.tableName,
+          Key: { PK: veryRaw, SK: messageId },
+        }),
+      );
+    }
+
     const targetItem = targetRes.Item as any;
-    if (!targetItem || (lastClearedAt && targetItem.SK <= msgPrefix)) {
-      throw new BadRequestException('Target message not found or cleared');
+    if (!targetItem) {
+      console.error(`[MessageService] Target message NOT FOUND in any PK format! SK: ${messageId}`);
+      throw new BadRequestException(`Không tìm thấy tin nhắn: ${messageId}`);
+    }
+
+    // Use the PK where the target message was actually found
+    const workingPK = targetRes.Item.PK || prefixedConvId;
+    console.debug(`[MessageService] getMessagesContext: target message FOUND in PK: ${workingPK}`);
+
+    if (lastClearedAt && targetItem.SK <= msgPrefix) {
+      console.warn(`[MessageService] Target message is cleared: SK=${targetItem.SK}, clearedBefore=${msgPrefix}`);
+      throw new BadRequestException("Tin nhắn này đã được xóa khỏi lịch sử trò chuyện của bạn");
     }
 
     // 3. Query messages OLDER than target (for nextCursor)
@@ -798,7 +1083,7 @@ export class MessageService {
       TableName: this.db.tableName,
       KeyConditionExpression: "PK = :pk AND SK BETWEEN :cleared AND :targetSk",
       ExpressionAttributeValues: {
-        ":pk": convId,
+        ":pk": workingPK,
         ":cleared": msgPrefix,
         ":targetSk": messageId,
       },
@@ -806,43 +1091,175 @@ export class MessageService {
       Limit: limit,
     };
 
-    // 4. Query messages NEWER than target (generous limit for "all messages" feel)
+    // 4. Query messages NEWER than target (windowed for performance)
     const newerParams = {
       TableName: this.db.tableName,
       KeyConditionExpression: "PK = :pk AND SK > :targetSk",
       ExpressionAttributeValues: {
-        ":pk": convId,
+        ":pk": workingPK,
         ":targetSk": messageId,
       },
-      ScanIndexForward: true, 
-      Limit: 2000, // Fetch up to 2000 newer messages (virtually all for most chats)
+      ScanIndexForward: true,
+      Limit: 50,
     };
 
     const [olderRes, newerRes] = await Promise.all([
       this.db.docClient.send(new QueryCommand(olderParams)),
-      this.db.docClient.send(new QueryCommand(newerParams))
+      this.db.docClient.send(new QueryCommand(newerParams)),
     ]);
 
     const olderItems = (olderRes.Items || []) as any[];
     const newerItems = (newerRes.Items || []) as any[];
-    
-    // Result: [Older (some)] + [Target] + [Newer (all to latest)]
+
+    // Result: [Older (oldest first)] + [Target] + [Newer (oldest first)]
     const combined = [
-      ...olderItems.filter(m => m.SK !== messageId).reverse(),
+      ...olderItems.filter((m) => m.id !== messageId && m.SK !== messageId).reverse(),
       targetItem,
-      ...newerItems
+      ...newerItems,
     ];
 
     let nextCursor = null;
     if (olderRes.LastEvaluatedKey) {
-      nextCursor = Buffer.from(JSON.stringify(olderRes.LastEvaluatedKey)).toString('base64');
+      nextCursor = Buffer.from(
+        JSON.stringify(olderRes.LastEvaluatedKey),
+      ).toString("base64");
+    }
+
+    let prevCursor = null;
+    if (newerRes.LastEvaluatedKey) {
+      prevCursor = Buffer.from(
+        JSON.stringify(newerRes.LastEvaluatedKey),
+      ).toString("base64");
     }
 
     return {
       messages: (combined as any[])
-        .filter(msg => !msg.removed?.includes(userEmail))
-        .map(msg => ({ ...msg, id: msg.id || msg.SK })),
+        .filter((msg) => !msg.removed?.includes(userEmail))
+        .map((msg) => ({ ...msg, id: msg.id || msg.SK })),
       nextCursor,
+      prevCursor,
     };
+  }
+
+  async getConversationAssets(
+    convId: string,
+    userEmail: string,
+    type: "media" | "file" | "link",
+    limit = 50,
+    cursor?: string,
+  ) {
+    const { prefixed: prefId } = this.normalizeConvId(convId);
+    await this.ensureConversationMember(prefId, userEmail);
+
+    let filterExp = "";
+    const expAttrNames: any = {};
+    const expAttrValues: any = {
+      ":pk": prefId,
+      ":skPrefix": "MSG#",
+    };
+
+    // [FIX] Harden against invalid cursors from frontend (e.g. leaked from other conversations)
+    if (cursor && !cursor.startsWith("MSG#")) {
+      cursor = undefined;
+    }
+
+    if (type === "media") {
+      filterExp = "attribute_exists(media) OR #t = :mediaType OR #t = :imgType OR #t = :vidType";
+      expAttrNames["#t"] = "type";
+      expAttrValues[":mediaType"] = "media";
+      expAttrValues[":imgType"] = "image";
+      expAttrValues[":vidType"] = "video";
+    } else if (type === "file") {
+      filterExp = "attribute_exists(files) OR #t = :fileType";
+      expAttrNames["#t"] = "type";
+      expAttrValues[":fileType"] = "file";
+    } else if (type === "link") {
+      filterExp = "contains(content, :http) AND #t = :textType";
+      expAttrNames["#t"] = "type";
+      expAttrValues[":http"] = "http";
+      expAttrValues[":textType"] = "text";
+    }
+
+    const command = new QueryCommand({
+      TableName: this.db.tableName,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
+      FilterExpression: filterExp,
+      ExpressionAttributeNames: Object.keys(expAttrNames).length > 0 ? expAttrNames : undefined,
+      ExpressionAttributeValues: expAttrValues,
+      Limit: limit * 5, // Overshoot limit to account for filtered items
+      ScanIndexForward: false, // Newer first
+      ExclusiveStartKey: cursor ? { PK: prefId, SK: cursor } : undefined,
+    });
+
+    const res = await this.db.docClient.send(command);
+    let items = res.Items || [];
+
+    // Final filtering for links to avoid system messages or false positives
+    if (type === "link") {
+      const urlRegex = /https?:\/\/[^\s]+/;
+      items = items.filter(i => urlRegex.test(i.content || ""));
+    }
+
+    // Limit to requested count
+    const sliced = items.slice(0, limit);
+
+    return {
+      items: sliced.map(m => ({ ...m, id: m.id || m.SK })),
+      nextCursor: res.LastEvaluatedKey ? res.LastEvaluatedKey.SK : null,
+    };
+  }
+
+  /**
+   * SEARCH MESSAGES IN CONVERSATION - Case Insensitive
+   */
+  async searchMessages(convId: string, userEmail: string, query: string) {
+    const { raw: rawConvId, prefixed: prefixedConvId } = this.normalizeConvId(convId);
+    await this.ensureConversationMember(prefixedConvId, userEmail);
+
+    // 1. Get user's lastClearedAt timestamp
+    const userMapping = await this.db.docClient.send(
+      new GetCommand({
+        TableName: this.db.tableName,
+        Key: { PK: `USER#${userEmail.toLowerCase()}`, SK: prefixedConvId },
+      }),
+    );
+    const lastClearedAt = userMapping.Item?.lastClearedAt || "";
+    const msgPrefix = `MSG#${lastClearedAt}`;
+
+    const params: any = {
+      TableName: this.db.tableName,
+      KeyConditionExpression: "PK = :pk AND SK > :lastCleared", 
+      ExpressionAttributeValues: {
+        ":pk": prefixedConvId,
+        ":lastCleared": msgPrefix,
+      },
+      ScanIndexForward: false, // newest first
+    };
+
+    const result = await this.db.docClient.send(new QueryCommand(params));
+    const items = (result.Items || []) as any[];
+
+    const lowerQuery = query.toLowerCase();
+
+    // Filtering logic
+    const filtered = items.filter((msg) => {
+      // 1. Exclude system messages related to calls or "thu hồi"
+      if (msg.type === "system" || msg.type === "SYSTEM_CALL" || msg.recalled) {
+        return false;
+      }
+
+      // 2. Case insensitive content check
+      const content = String(msg.content || "").toLowerCase();
+      if (!content.includes(lowerQuery)) return false;
+
+      // 3. Exclude if deleted for me
+      if (msg.removed && Array.isArray(msg.removed) && msg.removed.includes(userEmail)) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return filtered.map((msg) => ({ ...msg, id: msg.id || msg.SK }));
   }
 }

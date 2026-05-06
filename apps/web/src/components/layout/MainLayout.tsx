@@ -4,10 +4,12 @@ import Sidebar from './Sidebar';
 import SearchOverlay from './SearchOverlay';
 import AddFriendModal from '../chat/AddFriendModal';
 import { useSocketListeners } from '../../hooks/useSocketListeners';
+import { useGroupSocketListeners } from '../../hooks/useGroupSocketListeners';
 
 const MainLayout: React.FC = () => {
   // Activate global socket listeners
   useSocketListeners();
+  useGroupSocketListeners();
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-surface text-on-surface antialiased font-['Plus_Jakarta_Sans']">

@@ -113,4 +113,29 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     if (!this.enabled || !this.client) return -1;
     return await this.client.ttl(key);
   }
+
+  async hSet(key: string, field: string, value: string) {
+    if (!this.enabled || !this.client) return;
+    await this.client.hSet(key, field, value);
+  }
+
+  async hGetAll(key: string): Promise<Record<string, string>> {
+    if (!this.enabled || !this.client) return {};
+    return await this.client.hGetAll(key);
+  }
+
+  async hDel(key: string, field: string) {
+    if (!this.enabled || !this.client) return;
+    await this.client.hDel(key, field);
+  }
+
+  async hLen(key: string): Promise<number> {
+    if (!this.enabled || !this.client) return 0;
+    return await this.client.hLen(key);
+  }
+
+  async hGet(key: string, field: string): Promise<string | null> {
+    if (!this.enabled || !this.client) return null;
+    return await this.client.hGet(key, field) as any;
+  }
 }

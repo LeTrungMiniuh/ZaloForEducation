@@ -42,7 +42,7 @@ const TAB_ALIAS: Record<string, string> = {
 
 const normalizeHomeTab = (tab: string) => TAB_ALIAS[String(tab || "").trim().toLowerCase()] || "chat";
 
-const DEFAULT_AVATAR = require('../../../assets/logo_blue.png');
+const DEFAULT_AVATAR = { uri: "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png" };
 
 export default function HomeScreen({
   navigation,
@@ -136,6 +136,10 @@ export default function HomeScreen({
   }, [fetchConversationsData]);
 
   const handleSelectChat = (chat: Conversation) => {
+    if (chat.id === "CONV#SYSTEM") {
+      navigation.navigate("SecurityAlerts");
+      return;
+    }
     navigation.navigate('Chat', { conversationId: chat.id });
   };
 

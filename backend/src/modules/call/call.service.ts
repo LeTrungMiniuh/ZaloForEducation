@@ -4,6 +4,7 @@ import {
   CreateMeetingCommand,
   CreateAttendeeCommand,
   DeleteMeetingCommand,
+  DeleteAttendeeCommand,
 } from '@aws-sdk/client-chime-sdk-meetings';
 import { v4 as uuidv4 } from 'uuid';
 import { RedisService } from '../../infrastructure/redis.service';
@@ -26,38 +27,44 @@ export class CallService {
     this.logger.log(`Creating ${type} meeting for ${conversationId} (CallId: ${callId}) by ${userEmail}`);
 
     try {
+      // [FIX] Xóa meeting cũ của conversation nếu có (tránh rác trên AWS)
+      const activeCallId = await this.redis.get(`call:active:${conversationId}`);
+      if (activeCallId && activeCallId !== callId) {
+        this.logger.log(`[Chime] Found old active call ${activeCallId} for conv ${conversationId}, cleaning up...`);
+        await this.hangupMeeting(conversationId, activeCallId, 'system');
+      }
+
       // [SENIOR] Idempotency check theo callId
       const existing = await this.redis.get(`call:session:${callId}`);
       if (existing) {
         this.logger.log(`Reusing existing session for CallId: ${callId}`);
-        return JSON.parse(existing);
+        const parsed = JSON.parse(existing);
+        return { 
+          meeting: parsed.meeting, 
+          callType: parsed.callType, 
+          initiatorEmail: parsed.initiatorEmail 
+        };
       }
 
       const meetingResponse = await this.chime.send(
         new CreateMeetingCommand({
-          ClientRequestToken: uuidv4(),
+          ClientRequestToken: callId, // [FIX] Dùng callId để AWS tự handle idempotency, không dùng uuidv4()
           MediaRegion: process.env.AWS_REGION || 'ap-southeast-1',
           ExternalMeetingId: conversationId,
         }),
       );
 
-      const attendeeResponse = await this.chime.send(
-        new CreateAttendeeCommand({
-          MeetingId: meetingResponse.Meeting?.MeetingId,
-          ExternalUserId: userEmail,
-        }),
-      );
-
+      // ✅ KHÔNG tạo Attendee ở đây
       const result = {
         meeting: meetingResponse.Meeting,
-        attendee: attendeeResponse.Attendee,
         callType: type,
-        initiatorEmail: userEmail, // [SENIOR] Fix reversed logic: lock the initiator
+        initiatorEmail: userEmail,
       };
 
       await this.redis.set(`call:session:${callId}`, JSON.stringify(result), 1800);
-      // Đồng thời lưu vết cuộc gọi gần nhất của conversation để dễ cleanup
       await this.redis.set(`call:active:${conversationId}`, callId, 1800);
+      await this.redis.set(`call:state:${callId}`, 'CALLING', 1800); // ✅ Thêm State Machine
+      
       return result;
     } catch (error) {
       this.logger.error(`AWS_CHIME_ERROR`, error.stack);
@@ -66,17 +73,69 @@ export class CallService {
   }
 
   async joinMeeting(conversationId: string, callId: string, userEmail: string) {
-    this.logger.log(`User ${userEmail} joining ${conversationId} (CallId: ${callId})`);
- 
+    this.logger.log(`[DEBUG-JOIN] ===== joinMeeting START =====`);
+    this.logger.log(`[DEBUG-JOIN] conversationId: ${conversationId}`);
+    this.logger.log(`[DEBUG-JOIN] callId: ${callId}`);
+    this.logger.log(`[DEBUG-JOIN] userEmail: ${userEmail}`);
+
     try {
       const meetingData = await this.redis.get(`call:session:${callId}`);
+      this.logger.log(`[DEBUG-JOIN] Redis session found: ${!!meetingData}`);
+
       if (!meetingData) {
         this.logger.warn(`Redis session NOT FOUND for CallId: ${callId}`);
         throw new BadRequestException(`Meeting session not found for this call ID`);
       }
 
       const parsed = JSON.parse(meetingData);
+      this.logger.log(`[DEBUG-JOIN] MeetingId: ${parsed.meeting?.MeetingId}`);
+      this.logger.log(`[DEBUG-JOIN] initiatorEmail: ${parsed.initiatorEmail}`);
 
+      // ✅ [LIFECYCLE CONTROL] Kiểm tra state để chặn Race Condition
+      const callState = await this.redis.get(`call:state:${callId}`);
+      const isCaller = userEmail === parsed.initiatorEmail;
+
+      if (!callState) {
+        throw new BadRequestException('Call state not found');
+      }
+
+      if (isCaller) {
+        if (callState !== 'CALLING' && callState !== 'ACCEPTED') {
+          throw new BadRequestException(`Caller cannot join at state: ${callState}`);
+        }
+      } else {
+        if (callState !== 'CALLING' && callState !== 'ACCEPTED') {
+          this.logger.warn(`[LIFECYCLE BLOCK] Callee attempted to join invalid state. Current state: ${callState}`);
+          throw new BadRequestException(`Callee cannot join at state: ${callState}`);
+        }
+        // ✅ [FIX] Callee gọi /call/join là biểu hiện của việc Accept.
+        // Update state sang ACCEPTED để tránh Race Condition giữa Socket và HTTP.
+        if (callState === 'CALLING') {
+          await this.redis.set(`call:state:${callId}`, 'ACCEPTED', 1800);
+        }
+      }
+
+      // [FIX] Xóa attendee cũ nếu còn (tránh statusCode: 4)
+      const attendeeKey = `call:attendee:${callId}:${userEmail}`;
+      const existingAttendeeStr = await this.redis.get(attendeeKey);
+      this.logger.log(`[DEBUG-JOIN] Existing attendee in Redis: ${!!existingAttendeeStr}`);
+      if (existingAttendeeStr) {
+        const existingAttendee = JSON.parse(existingAttendeeStr);
+        try {
+          await this.chime.send(
+            new DeleteAttendeeCommand({
+              MeetingId: parsed.meeting.MeetingId,
+              AttendeeId: existingAttendee.AttendeeId,
+            }),
+          );
+          this.logger.log(`[Chime] Deleted old attendee ${existingAttendee.AttendeeId} for ${userEmail}`);
+        } catch (e) {
+          this.logger.warn(`[Chime] Old attendee already gone: ${e.message}`);
+        }
+        await this.redis.del(attendeeKey);
+      }
+
+      // Tạo Attendee mới
       const attendeeResponse = await this.chime.send(
         new CreateAttendeeCommand({
           MeetingId: parsed.meeting.MeetingId,
@@ -84,9 +143,15 @@ export class CallService {
         }),
       );
 
+      await this.redis.set(attendeeKey, JSON.stringify(attendeeResponse.Attendee), 1800);
+
+      this.logger.log(`[Chime] Created attendee ${attendeeResponse.Attendee?.AttendeeId} for ${userEmail}`);
+
       return {
-        ...parsed,
+        meeting: parsed.meeting,
         attendee: attendeeResponse.Attendee,
+        callType: parsed.callType,
+        initiatorEmail: parsed.initiatorEmail,
       };
     } catch (error) {
       if (error.name === 'NotFoundException') {

@@ -69,7 +69,6 @@ export default function LoginScreen({ onNavigate }: LoginProps) {
 
       if (data.accessToken) {
         await login(data.user, data.accessToken, deviceId);
-        if (onNavigate) onNavigate('Main');
         return;
       }
 

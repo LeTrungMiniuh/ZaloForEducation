@@ -13,7 +13,10 @@
     "mobile:dev": "npm run start -w apps/mobile",
     "install:all": "npm install",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "test:e2e:poll": "node scratch/e2e_poll_test.mjs",
+    "test:e2e:poll:no-otp": "node scratch/e2e_poll_test.mjs",
+    "build:prod": "npm run build -w @zalo-edu/shared && npm run build -w backend"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

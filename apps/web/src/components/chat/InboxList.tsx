@@ -1,23 +1,24 @@
-import React, { useState } from 'react';
-import { useChatStore } from '../../store/chatStore';
-import { useAuth } from '../../context/AuthContext';
-import { getDisplayName, getDisplayAvatar, isUnread, getMessagePreview } from '../../utils/chatUtils';
-import CreateGroupModal from './CreateGroupModal';
-import { BOT_EMAIL } from '@zalo-edu/shared';
-import ConversationTagPicker from './ConversationTagPicker';
-import Swal from 'sweetalert2';
-
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useChatStore } from "../../store/chatStore";
+import { useAuth } from "../../context/AuthContext";
 import {
-  Lock,
-  MoreHorizontal,
-  UserPlus,
-  Users,
-  MessageSquarePlus,
-  Settings,
-  Menu
-} from 'lucide-react';
+  getDisplayName,
+  getDisplayAvatar,
+  isUnread,
+  getConversationPreviewText,
+  DEFAULT_GROUP_AVATAR,
+} from "../../utils/chatUtils";
+import CreateGroupModal from "./CreateGroupModal";
+import { BOT_EMAIL } from "@zalo-edu/shared";
+import ConversationTagPicker from "./ConversationTagPicker";
+import Swal from "sweetalert2";
+import { useSecurityAlerts } from "../../hooks/useSecurityAlerts";
+
+import { Lock, MoreHorizontal, UserPlus, Users, Menu } from "lucide-react";
 
 const InboxList: React.FC = () => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const {
     conversations,
@@ -37,7 +38,7 @@ const InboxList: React.FC = () => {
     tags,
   } = useChatStore();
 
-  const [chatFilter, setChatFilter] = useState<'all' | 'unread'>('all');
+  const [chatFilter, setChatFilter] = useState<"all" | "unread">("all");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
   const [convMenu, setConvMenu] = useState<null | {
@@ -50,6 +51,8 @@ const InboxList: React.FC = () => {
     x: number;
     y: number;
   }>(null);
+
+  const { alerts, unreadCount: systemUnreadCount } = useSecurityAlerts();
 
   // Fetch conversations on mount
   React.useEffect(() => {
@@ -75,8 +78,12 @@ const InboxList: React.FC = () => {
         if (conv.type === "direct") {
           const partnerEmail = Array.isArray(conv.members)
             ? conv.members.find((m) => {
-                const normalizedM = String(m || "").trim().toLowerCase();
-                const normalizedMe = String(user?.email || "").trim().toLowerCase();
+                const normalizedM = String(m || "")
+                  .trim()
+                  .toLowerCase();
+                const normalizedMe = String(user?.email || "")
+                  .trim()
+                  .toLowerCase();
                 return normalizedM !== normalizedMe;
               })
             : undefined;
@@ -93,79 +100,102 @@ const InboxList: React.FC = () => {
     setSearchQuery(e.target.value);
     setIsSearching(false);
   };
-  const normalizedSearch = String(searchQuery || '').trim().toLowerCase();
+  const normalizedSearch = String(searchQuery || "")
+    .trim()
+    .toLowerCase();
 
   const conversationMatchesSearch = (conv: any) => {
     if (!normalizedSearch) return true;
 
-    const partnerEmail = conv.type === 'direct'
-      ? (Array.isArray(conv.members) ? conv.members.find((m: string) => m !== user?.email) : '')
-      : '';
+    const partnerEmail =
+      conv.type === "direct"
+        ? Array.isArray(conv.members)
+          ? conv.members.find((m: string) => m !== user?.email)
+          : ""
+        : "";
 
-    const name = conv.type === 'direct'
-      ? getDisplayName(partnerEmail, user, userProfiles)
-      : (conv.name || '');
+    const name =
+      conv.type === "direct"
+        ? getDisplayName(partnerEmail, user, userProfiles)
+        : conv.name || "";
 
     const haystack = [
-      String(name || ''),
-      String(partnerEmail || ''),
-      String(conv.lastMessageContent || ''),
-      String(conv.lastMessage || ''),
-    ].join(' ').toLowerCase();
+      String(name || ""),
+      String(partnerEmail || ""),
+      String(conv.lastMessageContent || ""),
+      String(conv.lastMessage || ""),
+    ]
+      .join(" ")
+      .toLowerCase();
 
     return haystack.includes(normalizedSearch);
   };
 
   const handleHideConversation = async (convId: string) => {
     const res = await Swal.fire({
-      title: 'Ẩn trò chuyện',
-      text: 'Thiết lập mã PIN cá nhân (4-6 số) để ẩn hội thoại này.',
-      input: 'password',
-      inputPlaceholder: 'Nhập mã PIN',
-      inputAttributes: { maxlength: '6', autocapitalize: 'off', autocorrect: 'off' },
+      title: "Ẩn trò chuyện",
+      text: "Thiết lập mã PIN cá nhân (4-6 số) để ẩn hội thoại này.",
+      input: "password",
+      inputPlaceholder: "Nhập mã PIN",
+      inputAttributes: {
+        maxlength: "6",
+        autocapitalize: "off",
+        autocorrect: "off",
+      },
       showCancelButton: true,
-      confirmButtonText: 'Ẩn',
-      cancelButtonText: 'Hủy',
-      confirmButtonColor: '#00418f',
+      confirmButtonText: "Ẩn",
+      cancelButtonText: "Hủy",
+      confirmButtonColor: "#00418f",
       inputValidator: (value) => {
-        if (!/^\d{4,6}$/.test(String(value || ''))) {
-          return 'PIN phải gồm 4-6 chữ số.';
+        if (!/^\d{4,6}$/.test(String(value || ""))) {
+          return "PIN phải gồm 4-6 chữ số.";
         }
         return undefined;
-      }
+      },
     });
 
     if (!res.isConfirmed || !res.value) return;
     hideConversationWithPin(convId, String(res.value));
     setConvMenu(null);
-    Swal.fire({ icon: 'success', title: 'Đã ẩn trò chuyện', timer: 1300, showConfirmButton: false });
+    Swal.fire({
+      icon: "success",
+      title: "Đã ẩn trò chuyện",
+      timer: 1300,
+      showConfirmButton: false,
+    });
   };
 
   const handleUnhideConversation = async (convId: string) => {
     const res = await Swal.fire({
-      title: 'Mở khóa trò chuyện',
-      text: 'Nhập mã PIN để hiện lại hội thoại.',
-      input: 'password',
-      inputPlaceholder: 'Nhập mã PIN',
+      title: "Mở khóa trò chuyện",
+      text: "Nhập mã PIN để hiện lại hội thoại.",
+      input: "password",
+      inputPlaceholder: "Nhập mã PIN",
       showCancelButton: true,
-      confirmButtonText: 'Mở khóa',
-      cancelButtonText: 'Hủy',
-      confirmButtonColor: '#00418f',
+      confirmButtonText: "Mở khóa",
+      cancelButtonText: "Hủy",
+      confirmButtonColor: "#00418f",
     });
     if (!res.isConfirmed || !res.value) return;
 
     const ok = unhideConversationWithPin(convId, String(res.value));
     if (!ok) {
-      Swal.fire('Sai mã PIN', 'PIN không đúng, vui lòng thử lại.', 'error');
+      Swal.fire("Sai mã PIN", "PIN không đúng, vui lòng thử lại.", "error");
       return;
     }
     setConvMenu(null);
-    Swal.fire({ icon: 'success', title: 'Đã hiện lại trò chuyện', timer: 1300, showConfirmButton: false });
+    Swal.fire({
+      icon: "success",
+      title: "Đã hiện lại trò chuyện",
+      timer: 1300,
+      showConfirmButton: false,
+    });
   };
 
   const filteredConversations = conversations.filter((conv: any) => {
     // 0. Exclude Bot conversations
-    if (Array.isArray(conv.members) && conv.members.includes(BOT_EMAIL)) return false;
+    if (Array.isArray(conv.members) && conv.members.includes(BOT_EMAIL))
+      return false;
 
     // 1. Unread filter
     if (chatFilter === "unread" && !isUnread(conv, user?.email)) return false;
@@ -187,6 +217,30 @@ const InboxList: React.FC = () => {
     return conversationMatchesSearch(conv);
   });
 
+  if (alerts.length > 0) {
+    const systemConv = {
+      id: "CONV#SYSTEM",
+      name: "Cảnh báo bảo mật",
+      type: "system",
+      avatar:
+        "https://ui-avatars.com/api/?name=Alert&background=ff3b30&color=fff&bold=true",
+      lastMessageContent: alerts[0].title,
+      updatedAt: alerts[0].at,
+      unreadCount: systemUnreadCount,
+    };
+
+    const matchesSearch = normalizedSearch
+      ? "cảnh báo bảo mật alert".includes(normalizedSearch) ||
+        (alerts[0].title || "").toLowerCase().includes(normalizedSearch)
+      : true;
+    const matchesUnread =
+      chatFilter === "unread" ? systemUnreadCount > 0 : true;
+
+    if (matchesSearch && matchesUnread) {
+      filteredConversations.unshift(systemConv as any);
+    }
+  }
+
   return (
     <div className="w-85 h-full border-r border-outline-variant/30 flex flex-col bg-white dark:bg-surface-container shrink-0">
       {/* Search Header */}
@@ -207,13 +261,15 @@ const InboxList: React.FC = () => {
 
           <div className="flex items-center gap-1">
             <button
-              onClick={() => useChatStore.getState().setIsAddFriendModalOpen(true)}
+              onClick={() =>
+                useChatStore.getState().setIsAddFriendModalOpen(true)
+              }
               className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
             >
               <UserPlus size={20} />
             </button>
             <button
-              onClick={() => setIsCreateGroupModalOpen(true)}
+              onClick={() => navigate("/group")}
               className="w-10 h-10 flex items-center justify-center hover:bg-white/60 dark:hover:bg-surface-container-high rounded-full transition-all text-on-surface-variant hover:text-primary active:scale-95"
             >
               <Users size={20} />
@@ -374,25 +430,38 @@ const InboxList: React.FC = () => {
             const conversationTag = (tags || []).find(
               (t: any) => t.id === (chat as any).tagId,
             );
-            const partnerEmail = chat.type === "direct"
-              ? (Array.isArray(chat.members) ? chat.members.find((m) => {
-                  const normalizedM = String(m || "").trim().toLowerCase();
-                  const normalizedMe = String(user?.email || "").trim().toLowerCase();
-                  return normalizedM !== normalizedMe;
-                }) : undefined)
-              : undefined;
+            const partnerEmail =
+              chat.type === "direct"
+                ? Array.isArray(chat.members)
+                  ? chat.members.find((m) => {
+                      const normalizedM = String(m || "")
+                        .trim()
+                        .toLowerCase();
+                      const normalizedMe = String(user?.email || "")
+                        .trim()
+                        .toLowerCase();
+                      return normalizedM !== normalizedMe;
+                    })
+                  : undefined
+                : undefined;
 
-            const chatName = chat.type === "direct"
-              ? getDisplayName(partnerEmail, user, userProfiles)
-              : chat.name || "Group";
+            const chatName =
+              chat.type === "direct"
+                ? getDisplayName(partnerEmail, user, userProfiles)
+                : chat.name || "Group";
 
-            const chatAvatar = chat.type === "direct"
-              ? getDisplayAvatar(partnerEmail, user, userProfiles)
-              : chat.avatar || "/logo_blue.png";
+            const chatAvatar =
+              chat.type === "direct"
+                ? getDisplayAvatar(partnerEmail, user, userProfiles)
+                : chat.avatar || DEFAULT_GROUP_AVATAR;
 
             const unread = isUnread(chat, user?.email);
-            const normalizedPartner = partnerEmail ? String(partnerEmail).trim().toLowerCase() : "";
-            const isOnline = normalizedPartner ? userProfiles[normalizedPartner]?.status === "online" : false;
+            const normalizedPartner = partnerEmail
+              ? String(partnerEmail).trim().toLowerCase()
+              : "";
+            const isOnline = normalizedPartner
+              ? userProfiles[normalizedPartner]?.status === "online"
+              : false;
             const isHidden = !!hiddenConversations[chat.id];
 
             return (
@@ -401,8 +470,8 @@ const InboxList: React.FC = () => {
                 onClick={() => {
                   if (isHidden) {
                     Swal.fire({
-                      icon: 'info',
-                      title: 'Trò chuyện đang ẩn',
+                      icon: "info",
+                      title: "Trò chuyện đang ẩn",
                       text: 'Bấm dấu ... rồi chọn "Mở khóa trò chuyện" để nhập PIN.',
                       timer: 2000,
                       showConfirmButton: false,
@@ -412,7 +481,9 @@ const InboxList: React.FC = () => {
                   setActiveConversation(chat.id);
                 }}
                 className={`group flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all ${
-                  isSelected ? "bg-primary/10 shadow-sm" : "hover:bg-surface-container/70"
+                  isSelected
+                    ? "bg-primary/10 shadow-sm"
+                    : "hover:bg-surface-container/70"
                 }`}
               >
                 <div className="relative shrink-0">
@@ -421,7 +492,7 @@ const InboxList: React.FC = () => {
                     alt={chatName}
                     src={chatAvatar}
                   />
-                  {isOnline && (
+                  {isOnline && (chat as any).type !== "system" && (
                     <div className="absolute top-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-surface-container rounded-full shadow-sm ring-1 ring-black/5 animate-pulse"></div>
                   )}
                 </div>
@@ -452,59 +523,70 @@ const InboxList: React.FC = () => {
                           folder
                         </span>
                       )}
-                      <p className={`text-[13px] truncate ${unread ? "font-bold text-on-surface" : "text-on-surface-variant"}`}>
+                      <p
+                        className={`text-[13px] truncate ${unread ? "font-bold text-on-surface" : "text-on-surface-variant"}`}
+                      >
                         {isHidden
-                          ? 'Trò chuyện đã ẩn (yêu cầu PIN)'
+                          ? "Trò chuyện đã ẩn (yêu cầu PIN)"
                           : (() => {
-                              const isMe = chat.lastMessageSenderId === user?.email;
-                              const prefix = isMe ? 'Bạn: ' : '';
-
-                              // Build a lightweight message object for getMessagePreview
-                              const previewMsg = {
-                                recalled: false,
-                                type: (chat as any).lastMessageType,
-                                content: chat.lastMessageContent || chat.lastMessage,
-                                media: (chat as any).lastMessageMedia,
-                                files: (chat as any).lastMessageFiles,
-                              };
-                              const preview = getMessagePreview(previewMsg);
-
-                              // Special call label formatting
-                              if (preview === '[Cuộc gọi thoại]' || preview === '[Cuộc gọi video]') {
-                                const type = preview.includes('video') ? 'video' : 'thoại';
-                                return isMe ? `Cuộc gọi ${type} đi` : `Cuộc gọi ${type} đến`;
+                              if ((chat as any).type === "system") {
+                                return chat.lastMessageContent;
                               }
 
-                              return `${prefix}${preview}`;
+                              const preview = getConversationPreviewText(
+                                chat,
+                                user,
+                                userProfiles,
+                              );
+
+                              // Keep call previews using the more explicit call direction labels.
+                              if (
+                                preview === "[Cuộc gọi thoại]" ||
+                                preview === "[Cuộc gọi video]"
+                              ) {
+                                const type = preview.includes("video")
+                                  ? "video"
+                                  : "thoại";
+                                return chat.lastMessageSenderId === user?.email
+                                  ? `Cuộc gọi ${type} đi`
+                                  : `Cuộc gọi ${type} đến`;
+                              }
+
+                              return preview;
                             })()}
                       </p>
                     </div>
                     {unread && chat.unreadCount > 0 && (
-                      <div className="min-w-[20px] h-5 bg-error text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1.5 ml-2 shadow-sm shadow-error/20">
-                        {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
+                      <div className="min-w-5 h-5 bg-error text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1.5 ml-2 shadow-sm shadow-error/20">
+                        {chat.unreadCount > 99 ? "99+" : chat.unreadCount}
                       </div>
                     )}
-                    {unread && (!chat.unreadCount || chat.unreadCount === 0) && (
-                      <div className="w-2.5 h-2.5 bg-primary rounded-full shrink-0 ml-2 shadow-sm shadow-primary/20"></div>
-                    )}
+                    {unread &&
+                      (!chat.unreadCount || chat.unreadCount === 0) && (
+                        <div className="w-2.5 h-2.5 bg-primary rounded-full shrink-0 ml-2 shadow-sm shadow-primary/20"></div>
+                      )}
                   </div>
                 </div>
 
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    setConvMenu({
-                      convId: chat.id,
-                      x: Math.min(rect.right - 220, window.innerWidth - 240),
-                      y: Math.min(rect.bottom + 8, window.innerHeight - 180),
-                    });
-                  }}
-                  className="rounded-full p-1 text-on-surface-variant opacity-0 transition group-hover:opacity-100 hover:bg-surface-container"
-                  title="Tùy chọn"
-                >
-                  <MoreHorizontal size={18} />
-                </button>
+                {(chat as any).type !== "system" && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const rect = (
+                        e.currentTarget as HTMLElement
+                      ).getBoundingClientRect();
+                      setConvMenu({
+                        convId: chat.id,
+                        x: Math.min(rect.right - 220, window.innerWidth - 240),
+                        y: Math.min(rect.bottom + 8, window.innerHeight - 180),
+                      });
+                    }}
+                    className="rounded-full p-1 text-on-surface-variant opacity-0 transition group-hover:opacity-100 hover:bg-surface-container"
+                    title="Tùy chọn"
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
+                )}
               </div>
             );
           })
@@ -514,11 +596,11 @@ const InboxList: React.FC = () => {
       {convMenu && (
         <>
           <div
-            className="fixed inset-0 z-[100]"
+            className="fixed inset-0 z-100"
             onClick={() => setConvMenu(null)}
           />
           <div
-            className="fixed z-[110] w-56 overflow-hidden rounded-2xl border border-outline-variant/20 bg-white p-2 shadow-2xl"
+            className="fixed z-110 w-56 overflow-hidden rounded-2xl border border-outline-variant/20 bg-white p-2 shadow-2xl"
             style={{ left: convMenu.x, top: convMenu.y }}
           >
             <button
@@ -546,7 +628,9 @@ const InboxList: React.FC = () => {
               className="w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] font-medium text-on-surface hover:bg-surface-container"
             >
               <Lock size={14} />
-              {hiddenConversations[convMenu.convId] ? 'Mở khóa trò chuyện' : 'Ẩn trò chuyện'}
+              {hiddenConversations[convMenu.convId]
+                ? "Mở khóa trò chuyện"
+                : "Ẩn trò chuyện"}
             </button>
             <button
               onClick={() => {

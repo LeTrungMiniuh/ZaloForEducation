@@ -32,9 +32,11 @@ interface ChatInputProps {
   replyTarget?: any;
   onClearReply?: () => void;
   onTyping?: () => void;
+  onOpenPollModal?: () => void;
+  onOpenReminderModal?: () => void;
 }
 
-export default function ChatInput({ onSendMessage, replyTarget, onClearReply, onTyping }: ChatInputProps) {
+export default function ChatInput({ onSendMessage, replyTarget, onClearReply, onTyping, onOpenPollModal, onOpenReminderModal }: ChatInputProps) {
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<any[]>([]);
@@ -466,6 +468,20 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
                 <Text style={[styles.toolIcon, { color: '#8b5cf6' }]}>contact_page</Text>
               </View>
               <Text style={styles.toolLabel}>Danh thiếp</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.toolItem} onPress={() => { setShowExtraTools(false); onOpenPollModal?.(); }}>
+              <View style={[styles.toolIconBox, { backgroundColor: '#eff6ff' }]}>
+                <Text style={[styles.toolIcon, { color: Colors.primary }]}>bar_chart</Text>
+              </View>
+              <Text style={styles.toolLabel}>Bình chọn</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.toolItem} onPress={() => { setShowExtraTools(false); onOpenReminderModal?.(); }}>
+              <View style={[styles.toolIconBox, { backgroundColor: '#fef3c7' }]}>
+                <Text style={[styles.toolIcon, { color: '#d97706' }]}>event_available</Text>
+              </View>
+              <Text style={styles.toolLabel}>Nhắc hẹn</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.toolItem} onPress={() => setShowExtraTools(false)}>

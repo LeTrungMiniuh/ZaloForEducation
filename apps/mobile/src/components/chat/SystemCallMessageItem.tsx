@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { apiGet } from '../../utils/api';
 
 /**
  * SystemCallMessageItem - Custom Premium Design 10/10
@@ -9,9 +10,39 @@ interface SystemCallMessageItemProps {
   message: any;
   currentUserEmail: string;
   onCallBack?: (type: 'audio' | 'video') => void;
+  onJoinCall?: (callId: string, type: string) => void;
 }
 
-const SystemCallMessageItem = ({ message, currentUserEmail, onCallBack }: SystemCallMessageItemProps) => {
+const SystemCallMessageItem = ({ message, currentUserEmail, onCallBack, onJoinCall }: SystemCallMessageItemProps) => {
+  const [isActive, setIsActive] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const callId = message.callId || message.metadata?.callId;
+
+  useEffect(() => {
+    if (!callId) return;
+
+    const checkStatus = async () => {
+      setLoading(true);
+      try {
+        const res = await apiGet(`/group-call/status/${callId}`);
+        if (res.ok) {
+          setIsActive(res.isActive);
+        }
+      } catch (error) {
+        console.error("[SystemCallMessageItem] Check status failed:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkStatus();
+    
+    // Polling every 10s if active to see when it ends
+    const interval = setInterval(checkStatus, 10000);
+    return () => clearInterval(interval);
+  }, [callId]);
+
   const callerId = message.callerId || message.senderId;
   const isCaller = callerId === currentUserEmail;
 
@@ -33,6 +64,14 @@ const SystemCallMessageItem = ({ message, currentUserEmail, onCallBack }: System
   };
 
   const getTheme = (status: string, isFromMe: boolean) => {
+    if (isActive) {
+      return {
+        bg: '#E8F5E9',
+        border: '#C8E6C9',
+        text: '#2E7D32',
+        btnText: '#1B5E20',
+      };
+    }
     switch (status) {
       case 'completed':
         return {
@@ -60,6 +99,8 @@ const SystemCallMessageItem = ({ message, currentUserEmail, onCallBack }: System
   };
 
   const getStatusText = (status: string, isFromMe: boolean) => {
+    if (isActive) return 'Cuộc gọi đang diễn ra';
+
     const typeLabel = callType === 'video' ? 'video' : 'thoại';
     switch (status) {
       case 'completed':
@@ -78,8 +119,11 @@ const SystemCallMessageItem = ({ message, currentUserEmail, onCallBack }: System
 
   const theme = getTheme(callStatus, isCaller);
   const statusText = getStatusText(callStatus, isCaller);
+  const isGroup = !!(message.isGroup || message.metadata?.isGroup);
   const isVideo = callType === 'video';
-  const callLabel = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
+  const callLabel = isGroup 
+    ? (isVideo ? 'Cuộc gọi video nhóm' : 'Cuộc gọi thoại nhóm')
+    : (isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại');
   const callIcon = isVideo ? '📹' : '📞';
   const durationStr = formatDuration(duration);
 
@@ -92,20 +136,30 @@ const SystemCallMessageItem = ({ message, currentUserEmail, onCallBack }: System
             <Text style={styles.typeIcon}>{callIcon}</Text>
             <Text style={[styles.typeLabel, { color: theme.text, opacity: 0.7 }]}>
               {callLabel}
-              {durationStr ? ` (${durationStr})` : ''}
+              {durationStr && !isActive ? ` (${durationStr})` : ''}
             </Text>
           </View>
         </View>
         
         <View style={[styles.divider, { backgroundColor: theme.border, opacity: 0.5 }]} />
         
-        <TouchableOpacity
-          onPress={() => onCallBack?.(callType)}
-          style={styles.callBackBtn}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.callBackText, { color: theme.btnText }]}>GỌI LẠI</Text>
-        </TouchableOpacity>
+        {isActive ? (
+          <TouchableOpacity
+            onPress={() => callId && onJoinCall?.(callId, callType)}
+            style={styles.callBackBtn}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.callBackText, { color: theme.btnText }]}>THAM GIA LẠI</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            onPress={() => onCallBack?.(callType)}
+            style={styles.callBackBtn}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.callBackText, { color: theme.btnText }]}>GỌI LẠI</Text>
+          </TouchableOpacity>
+        )}
       </View>
       <Text style={styles.timestamp}>
         {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

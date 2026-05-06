@@ -10,13 +10,17 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
-  useWindowDimensions
+  useWindowDimensions,
+  Modal
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useChatStore } from '../../store/chatStore';
 import { useCallStore } from "../../store/callStore";
+import { useGroupCallStore } from "../../store/groupCallStore";
 import { useAuth } from '../../context/AuthContext';
+import { ImageBackground } from "react-native";
 import { chatGet, chatPost, chatPatch, apiPost, chatUpload } from '../../utils/api';
 import SocketService from '../../utils/socket';
 import MessageBubble from '../../components/chat/MessageBubble';
@@ -41,8 +45,14 @@ import { ChatHeader } from "../../components/chat/ChatHeader";
 import { PinBanner } from "../../components/chat/PinBanner";
 import { ChatModals } from "../../components/chat/ChatModals";
 import { ForwardModal } from "../../components/chat/ForwardModal";
+import PollComposer from "../../components/chat/PollComposer";
+import ReminderComposer from "../../components/chat/ReminderComposer";
+import { dismissNotificationsByConversation } from "../../utils/reminderNotifications";
 
 const CHAT_MUTE_SCHEDULE_KEY = "chat_notification_mute_schedule_v1";
+const CHAT_PINNED_CONVERSATIONS_KEY = 'chat_pinned_conversations_v1';
+const CHAT_HIDDEN_CONVERSATIONS_KEY = 'chat_hidden_conversations_v1';
+const CHAT_ALIAS_CONVERSATIONS_KEY = 'chat_alias_conversations_v1';
 
 interface ChatScreenProps {
   onNavigate?: (screen: string, params?: any) => void;
@@ -73,14 +83,18 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     sendMessageOptimistic,
     userProfiles,
     fetchMoreMessages,
+    fetchNewerMessages,
     isLoadingMessages,
     nextCursor,
+    prevCursor,
     fetchToken,
     targetMessageId, // from store
     patchMessageOptimistic,
     deleteMessageOptimistic,
     markNotificationsRead,
-    currentUserEmail
+    currentUserEmail,
+    fetchMessage,
+    pinnedMessagesCache
   } = useChatStore();
 
   const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
@@ -92,13 +106,18 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
   const [isPinsExpanded, setIsPinsExpanded] = useState(false);
   const [replyTarget, setReplyTarget] = useState<any>(null);
   const [actionMessage, setActionMessage] = useState<any>(null);
+  const [detailMessage, setDetailMessage] = useState<any>(null);
   const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [muteScheduleMap, setMuteScheduleMap] = useState<Record<string, any>>({});
   const [showMuteMenuModal, setShowMuteMenuModal] = useState(false);
   const [showCustomMuteModal, setShowCustomMuteModal] = useState(false);
   const [customMuteStartTime, setCustomMuteStartTime] = useState("22:00");
   const [customMuteEndTime, setCustomMuteEndTime] = useState("07:00");
+  const [isPollModalOpen, setIsPollModalOpen] = useState(false);
+  const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
 
   const typingTimeoutRef = useRef<any>(null);
   const messagesScrollRef = useRef<FlatList>(null);
@@ -119,20 +138,31 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     });
 
     const results: any[] = [];
-    const sorted = [...uniqueMessages].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const sorted = uniqueMessages; // Use deduplicated messages
 
     for (let i = 0; i < sorted.length; i++) {
       const current = sorted[i];
-      const next = sorted[i - 1]; // Tin nhắn mới hơn (vì list inverted)
-      const prev = sorted[i + 1]; // Tin nhắn cũ hơn
+      const next = i > 0 ? sorted[i - 1] : null; 
+      const prev = i < sorted.length - 1 ? sorted[i + 1] : null;
+
+      // [SENIOR] Pre-calculate timestamps and date strings once
+      const currentObj = current.createdAt ? new Date(current.createdAt) : null;
+      const currentTs = currentObj ? currentObj.getTime() : 0;
+      const currDateStr = currentObj ? currentObj.toDateString() : '';
+
+      const prevObj = prev && prev.createdAt ? new Date(prev.createdAt) : null;
+      const prevTs = prevObj ? prevObj.getTime() : 0;
+      const prevDateStr = prevObj ? prevObj.toDateString() : '';
+
+      const nextTs = next && next.createdAt ? new Date(next.createdAt).getTime() : 0;
 
       // Kiểm tra Grouping
       const isMe = normalizeEmail(current.senderId) === normalizeEmail(currentUserEmail);
       const prevIsMe = prev && normalizeEmail(prev.senderId) === normalizeEmail(current.senderId);
       const nextIsMe = next && normalizeEmail(next.senderId) === normalizeEmail(current.senderId);
 
-      const diffPrev = prev ? Math.abs(new Date(current.createdAt).getTime() - new Date(prev.createdAt).getTime()) : Infinity;
-      const diffNext = next ? Math.abs(new Date(current.createdAt).getTime() - new Date(next.createdAt).getTime()) : Infinity;
+      const diffPrev = prevTs ? Math.abs(currentTs - prevTs) : Infinity;
+      const diffNext = nextTs ? Math.abs(currentTs - nextTs) : Infinity;
 
       const gapLimit = 5 * 60 * 1000; // 5 phút
 
@@ -149,20 +179,18 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
 
       // Thêm Date Separator nếu cần
       if (prev) {
-        const currDate = new Date(current.createdAt).toDateString();
-        const prevDate = new Date(prev.createdAt).toDateString();
-        if (currDate !== prevDate) {
+        if (currDateStr !== prevDateStr) {
           results.push({
             id: `date-${current.id}`,
             type: 'date_separator',
-            date: currDate,
+            date: currDateStr,
           });
         }
       } else if (i === sorted.length - 1) {
         results.push({
           id: `date-start`,
           type: 'date_separator',
-          date: new Date(current.createdAt).toDateString(),
+          date: currDateStr,
         });
       }
     }
@@ -171,32 +199,61 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
 
   // SCROLL TO MESSAGE LOGIC
   const [hasScrolledToTarget, setHasScrolledToTarget] = useState(false);
+  const hasScrolledRef = useRef(false); // [SENIOR] Atomic lock for scrolling
+  const scrollRetryCountRef = useRef(0);
 
   const performScrollToMessage = useCallback(() => {
-    if (!targetMessageId || !messagesScrollRef.current || processedMessages.length === 0 || hasScrolledToTarget) return;
+    if (!targetMessageId || !messagesScrollRef.current || processedMessages.length === 0 || hasScrolledRef.current) {
+      return;
+    }
 
     const index = processedMessages.findIndex(m => m.id === targetMessageId || m.SK === targetMessageId);
-    if (index !== -1) {
-      console.log("[ChatScreen] Force scrolling to index", index, "for message", targetMessageId);
-      messagesScrollRef.current?.scrollToIndex({
-        index,
-        animated: true,
-        viewPosition: 0.5,
-      });
-      setHasScrolledToTarget(true);
-      lastScrolledMessageId.current = targetMessageId;
+    
+    if (index === -1) {
+      if (!isLoadingMessages) console.warn("[ChatScreen] Target not found in window:", targetMessageId);
+      return;
     }
-  }, [targetMessageId, processedMessages, hasScrolledToTarget]);
+
+    // [SENIOR] ATOMIC LOCK: Set ref immediately to prevent any re-triggering
+    hasScrolledRef.current = true;
+    setHasScrolledToTarget(true);
+    
+    console.log("[ChatScreen] JUMPING to index:", index, "Total:", processedMessages.length);
+    
+    const scroll = () => {
+      if (!messagesScrollRef.current) return;
+      try {
+        messagesScrollRef.current.scrollToIndex({
+          index,
+          animated: true,
+          viewPosition: 0.5,
+        });
+        
+        setTimeout(() => {
+          useChatStore.getState().setTargetMessageId(null);
+        }, 3500);
+      } catch (err) {
+        console.warn("[ChatScreen] scrollToIndex failed, using offset fallback:", err);
+        messagesScrollRef.current?.scrollToOffset({
+          offset: index * 150, // Slightly larger estimate for fallback
+          animated: true
+        });
+      }
+    };
+
+    setTimeout(scroll, 100); 
+  }, [targetMessageId, processedMessages, isLoadingMessages]);
 
   useEffect(() => {
     if (!isLoadingMessages && targetMessageId && !hasScrolledToTarget) {
-      const t = setTimeout(performScrollToMessage, 1000);
+      const t = setTimeout(performScrollToMessage, 100); // Much faster
       return () => clearTimeout(t);
     }
   }, [isLoadingMessages, targetMessageId, hasScrolledToTarget, performScrollToMessage]);
 
   useEffect(() => {
     setHasScrolledToTarget(false);
+    hasScrolledRef.current = false; // Reset lock when target changes
   }, [targetMessageId]);
 
   // DERIVED
@@ -207,21 +264,43 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
 
 
   const activePinnedMessages = useMemo(() => {
+    // [SENIOR] Strictly isolated filter
+    if (!selectedChat) return [];
     const ids: string[] = selectedChat?.pinnedMessageIds || [];
     return ids.map(id => {
-      const msg = messages.find(m => m.id === id);
-      return msg ? msg : { id, isPlaceholder: true };
+      const msg = messages.find(m => m.id === id && m.conversationId === selectedChat.id);
+      if (msg) return msg;
+      const cached = pinnedMessagesCache[id];
+      if (cached) return cached;
+      return { id, isPlaceholder: true };
     }).slice(0, 3);
-  }, [selectedChat?.pinnedMessageIds, messages]);
+  }, [selectedChat, messages, pinnedMessagesCache]);
+
+  // [SENIOR] Parallel hydration of pinned messages
+  useEffect(() => {
+    if (!selectedChat?.id) return;
+    const pinnedIds: string[] = selectedChat.pinnedMessageIds || [];
+    const missingIds = pinnedIds.filter(id => 
+      !messages.some(m => m.id === id) && 
+      !pinnedMessagesCache[id]
+    );
+    if (missingIds.length > 0) {
+      missingIds.forEach(id => fetchMessage(selectedChat.id, id));
+    }
+  }, [selectedChat?.id, selectedChat?.pinnedMessageIds, messages, pinnedMessagesCache, fetchMessage]);
 
   // UTILS
   const getDisplayName = useCallback((email: string | null | undefined) => {
     if (!email) return "Người dùng";
     const normalized = normalizeEmail(email);
+    
+    // Check if there's an alias for this conversation
+    if (selectedChat?.alias) return selectedChat.alias;
+    
     if (normalized === normalizeEmail(user?.email)) return "Bạn";
     const p = userProfiles[normalized];
     return p?.nickname || p?.fullName || p?.fullname || normalized;
-  }, [userProfiles, user, normalizeEmail]);
+  }, [userProfiles, user, normalizeEmail, selectedChat?.alias]);
 
   const getDisplayAvatar = useCallback((email?: string) => {
     const defaultAvatar = "https://fptupload.s3.ap-southeast-1.amazonaws.com/Zalo_Edu_Logo_2e176b6b7f.png";
@@ -251,6 +330,33 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     };
     loadNotificationPrefs();
   }, []);
+
+  useEffect(() => {
+    const syncConversationPreferences = async () => {
+      try {
+        const [pinnedRaw, hiddenRaw, aliasRaw] = await Promise.all([
+          AsyncStorage.getItem(CHAT_PINNED_CONVERSATIONS_KEY),
+          AsyncStorage.getItem(CHAT_HIDDEN_CONVERSATIONS_KEY),
+          AsyncStorage.getItem(CHAT_ALIAS_CONVERSATIONS_KEY),
+        ]);
+
+        const pinnedMap = pinnedRaw ? JSON.parse(pinnedRaw) : {};
+        const hiddenMap = hiddenRaw ? JSON.parse(hiddenRaw) : {};
+        const aliasMap = aliasRaw ? JSON.parse(aliasRaw) : {};
+
+        setConversations((prev: any[]) => prev.map((conv) => ({
+          ...conv,
+          pinned: !!pinnedMap?.[conv.id],
+          hidden: !!hiddenMap?.[conv.id],
+          alias: aliasMap?.[conv.id] || conv.alias || '',
+        })));
+      } catch (error) {
+        console.warn('[ChatScreen] Failed to sync conversation preferences', error);
+      }
+    };
+
+    syncConversationPreferences();
+  }, [setConversations]);
 
   // INITIALIZATION
   useEffect(() => {
@@ -284,6 +390,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
         if (SocketService.socket) SocketService.socket.emit("join_room", { convId: activeId });
         useChatStore.getState().markReadLocal(activeId);
         markNotificationsRead(activeId);
+        dismissNotificationsByConversation(activeId).catch(() => {});
         chatPatch(`/conversations/${encodeURIComponent(activeId)}/read`, {}).catch(() => {});
       }
     };
@@ -334,7 +441,32 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     const handlePinUpdate = (data: any) => {
       const convId = data.conversationId || data.convId;
       if (convId && data.pinnedMessageIds) {
-        setConversations((prev: any[]) => prev.map(c => c.id === convId ? { ...c, pinnedMessageIds: data.pinnedMessageIds } : c));
+        useChatStore.getState().updateConversationById(convId, {
+          pinnedMessageIds: data.pinnedMessageIds,
+        });
+      }
+    };
+    const handleGroupUpdate = (data: any) => {
+      if (data.convId === conversationId || data.id === conversationId) {
+        setConversations((prev: any[]) => prev.map(c => c.id === data.id ? { ...c, ...data.updates } : c));
+        if (data.updates) {
+          setLocalConversation((prev: any) => prev ? { ...prev, ...data.updates } : null);
+        }
+      }
+    };
+    const handleGroupDissolve = (data: any) => {
+      if (data.convId === conversationId || data.id === conversationId) {
+        Alert.alert("Thông báo", "Nhóm đã bị giải tán bởi trưởng nhóm.");
+        if (goBack) goBack();
+      }
+    };
+    const handleConversationUpdated = (data: any) => {
+      const convId = data.conversationId || data.convId || data.id;
+      if (convId === conversationId) {
+        setConversations((prev: any[]) => prev.map(c => c.id === convId ? { ...c, ...data.updates } : c));
+        if (data.updates) {
+          setLocalConversation((prev: any) => prev ? { ...prev, ...data.updates } : null);
+        }
       }
     };
     socket.on("typing", handleTyping);
@@ -342,12 +474,18 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     socket.on("message_update", handleMessageUpdate);
     socket.on("message_delete", handleMessageDelete);
     socket.on("PIN_UPDATE", handlePinUpdate);
+    socket.on("group_updated", handleGroupUpdate);
+    socket.on("conversation:updated", handleConversationUpdated);
+    socket.on("group_dissolved", handleGroupDissolve);
     return () => {
       socket.off("typing", handleTyping);
       socket.off("message_reaction", handleMessageReaction);
       socket.off("message_update", handleMessageUpdate);
       socket.off("message_delete", handleMessageDelete);
       socket.off("PIN_UPDATE", handlePinUpdate);
+      socket.off("group_updated", handleGroupUpdate);
+      socket.off("conversation:updated", handleConversationUpdated);
+      socket.off("group_dissolved", handleGroupDissolve);
     };
   }, [conversationId, currentUserEmail, updateMessage, setConversations]);
 
@@ -360,6 +498,69 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     })();
     setReplyTarget({ ...message, senderName });
   }, [currentUserEmail, userProfiles, normalizeEmail]);
+
+  const handleViewMessageDetail = useCallback((message: any) => {
+    const senderEmail = normalizeEmail(message.senderId);
+    const senderName = senderEmail === normalizeEmail(currentUserEmail)
+      ? 'Bạn'
+      : (userProfiles?.[senderEmail]?.nickname || userProfiles?.[senderEmail]?.fullName || userProfiles?.[senderEmail]?.fullname || senderEmail || 'Người dùng');
+    const senderAvatar = senderEmail === normalizeEmail(currentUserEmail)
+      ? (user?.avatarUrl || '')
+      : (userProfiles?.[senderEmail]?.avatarUrl || userProfiles?.[senderEmail]?.avatar || '');
+    setDetailMessage({ ...message, senderName, senderAvatar });
+  }, [currentUserEmail, normalizeEmail, userProfiles]);
+
+  const handleMarkMessage = useCallback((message: any) => {
+    updateMessage(message.id, { marked: !message.marked });
+    Alert.alert('Đã cập nhật', message.marked ? 'Đã bỏ đánh dấu tin nhắn.' : 'Tin nhắn đã được đánh dấu.');
+  }, [updateMessage]);
+
+  const handleStartMultiSelect = useCallback((message: any) => {
+    setIsMultiSelectMode(true);
+    setSelectedMessageIds((prev) => prev.includes(message.id) ? prev : [...prev, message.id]);
+  }, []);
+
+  const handleToggleSelectedMessage = useCallback((messageId: string) => {
+    setSelectedMessageIds((prev) => (
+      prev.includes(messageId) ? prev.filter((id) => id !== messageId) : [...prev, messageId]
+    ));
+  }, []);
+
+  const exitMultiSelectMode = useCallback(() => {
+    setIsMultiSelectMode(false);
+    setSelectedMessageIds([]);
+  }, []);
+
+  const handleDeleteSelectedMessages = useCallback(async () => {
+    if (!selectedChat?.id || selectedMessageIds.length === 0) return;
+    await Promise.all(selectedMessageIds.map((id) => deleteMessageOptimistic(selectedChat.id, id)));
+    exitMultiSelectMode();
+  }, [deleteMessageOptimistic, exitMultiSelectMode, selectedChat?.id, selectedMessageIds]);
+
+  const handleCopySelectedMessages = useCallback(async () => {
+    const selected = messages.filter((message) => selectedMessageIds.includes(message.id));
+    const text = selected.map((message) => `${getDisplayName(message.senderId)}: ${message.content || '[Đính kèm]'}`).join('\n');
+    if (text) {
+      await Clipboard.setStringAsync(text);
+      Alert.alert('Đã sao chép', 'Nội dung các tin nhắn đã được sao chép.');
+    }
+  }, [getDisplayName, messages, selectedMessageIds]);
+
+  const handleMarkSelectedMessages = useCallback(() => {
+    selectedMessageIds.forEach((messageId) => {
+      const message = messages.find((item) => item.id === messageId);
+      if (message) updateMessage(messageId, { marked: !message.marked });
+    });
+    Alert.alert('Đã cập nhật', `Đã đánh dấu ${selectedMessageIds.length} tin nhắn.`);
+  }, [messages, selectedMessageIds, updateMessage]);
+
+  const handlePinSelectedMessages = useCallback(() => {
+    selectedMessageIds.forEach((messageId) => {
+      const message = messages.find((item) => item.id === messageId);
+      if (message) patchMessageOptimistic(selectedChat.id, messageId, { action: message.pinned ? 'unpin' : 'pin' });
+    });
+    Alert.alert('Đã cập nhật', `Đã xử lý ghim cho ${selectedMessageIds.length} tin nhắn.`);
+  }, [messages, patchMessageOptimistic, selectedChat?.id, selectedMessageIds]);
 
   // HANDLERS
   const handleChatSend = async (content: string, attachments: any[] = []) => {
@@ -374,10 +575,14 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
       files: replyTarget.files
     } : undefined;
 
+    const isAudio = attachments.some(a => String(a.mimeType || "").toLowerCase().startsWith("audio/"));
+
     // 1. Send optimistic message immediately
-    const tempId = sendMessageOptimistic(chatId, currentUserEmail || "", content, "text", { 
-      attachments,
+    const tempId = await sendMessageOptimistic(chatId, { 
+      content,
+      type: isAudio ? "audio" : (attachments.length > 0 ? "media" : "text"),
       replyTo: replyToData,
+      files: attachments,
       skipApi: true
     });
     
@@ -420,11 +625,15 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
           url: a.dataUrl, dataUrl: a.dataUrl, name: a.name, mimeType: a.mimeType, size: a.size,
         }));
 
+        const audioFile = files.find((f: any) => String(f.mimeType || "").toLowerCase().startsWith("audio/"));
+        const isAudio = !!audioFile;
+
         const payload = { 
-          content: content || (media.length > 0 ? '[Hình ảnh]' : files.length > 0 ? '[Tệp tin]' : ''), 
-          type: (media.length > 0 || files.length > 0) ? 'media' : 'text',
+          content: content || (isAudio ? '[Tin nhắn thoại]' : media.length > 0 ? '[Hình ảnh]' : files.length > 0 ? '[Tệp tin]' : ''), 
+          type: isAudio ? 'audio' : (media.length > 0 || files.length > 0) ? 'media' : 'text',
           media: media.length > 0 ? media : undefined, 
           files: files.length > 0 ? files : undefined, 
+          audioUrl: audioFile ? audioFile.url : undefined,
           replyTo: replyToData 
         };
 
@@ -443,12 +652,75 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     })();
   };
 
+  const handleSendPoll = async (poll: { topic: string; options: string[]; allowMultiple?: boolean; allowAddOption?: boolean }) => {
+    if (!selectedChat?.id) return;
+    try {
+      await sendMessageOptimistic(selectedChat.id, {
+        content: `[Bình chọn: ${poll.topic}]`,
+        type: "poll",
+        payload: {
+          poll: {
+            topic: poll.topic,
+            options: poll.options,
+            allowMultiple: poll.allowMultiple || false,
+            allowAddOption: poll.allowAddOption || false,
+            votes: {},
+            isClosed: false
+          }
+        }
+      });
+    } catch (err) {
+      console.error("Failed to send poll", err);
+    }
+  };
+
+  const handleVotePoll = async (messageId: string, optionIndex: number) => {
+    if (!selectedChat?.id) return;
+    try {
+      // Use the store action directly for consistency
+      await useChatStore.getState().votePoll(selectedChat.id, messageId, optionIndex);
+    } catch (err) {
+      console.error("Failed to vote poll", err);
+    }
+  };
+
+  const handleClosePoll = async (messageId: string) => {
+    if (!selectedChat?.id) return;
+    try {
+      await useChatStore.getState().closePoll(selectedChat.id, messageId);
+    } catch (err) {
+      console.error("Failed to close poll", err);
+    }
+  };
+
+  const handleSendReminder = async (reminder: { title: string; date: string; time: string; repeatType: any; audience: "self" | "group" }) => {
+    if (!selectedChat?.id) return;
+    try {
+      await sendMessageOptimistic(selectedChat.id, {
+        content: `[Nhắc hẹn: ${reminder.title}]`,
+        type: "reminder",
+        payload: {
+          reminder: {
+            title: reminder.title,
+            content: reminder.title, // Add content as well for web compatibility
+            date: reminder.date,
+            time: reminder.time,
+            repeatType: reminder.repeatType,
+            audience: reminder.audience
+          }
+        }
+      });
+    } catch (err) {
+      console.error("Failed to send reminder", err);
+    }
+  };
+
   const handleStartCall = async (type: 'audio' | 'video') => {
     if (!selectedChat || selectedChat.type !== 'direct') return Alert.alert('Thất bại', 'Chỉ hỗ trợ gọi 1:1');
     const partnerEmail = selectedChat.partner || (Array.isArray(selectedChat.members) ? selectedChat.members.find((m: string) => m !== user?.email) : undefined);
     if (!partnerEmail) return Alert.alert('Lỗi', 'Không tìm thấy thông tin đối phương');
     const activeCallId = uuidv4();
-    startOutgoingCall({ email: partnerEmail, fullName: getDisplayName(partnerEmail) }, type, selectedChat.id, activeCallId);
+    startOutgoingCall({ email: partnerEmail, fullName: getDisplayName(partnerEmail), avatarUrl: getDisplayAvatar(partnerEmail) }, type, selectedChat.id, activeCallId);
     const res = await apiPost('/call/create', { conversationId: selectedChat.id, callId: activeCallId, type });
     if (res.ok) {
       setMeetingInfo(res.meeting, res.attendee);
@@ -521,7 +793,14 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
 
       {/* 2. CHAT AREA (Logic cũ của bạn) */}
       <View style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+        <ImageBackground 
+          source={require('../../../assets/background/background1.png')}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+        >
+          {/* Subtle overlay for mobile too */}
+          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ChatHeader 
           insets={insets} goBack={goBack} selectedChat={selectedChat}
           displayName={selectedChat.type === 'direct' ? getDisplayName(partner) : selectedChat.name}
@@ -544,19 +823,47 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
           data={processedMessages}
           inverted
           keyExtractor={(m) => m.id}
-          onScroll={(e) => setShowScrollToBottom(e.nativeEvent.contentOffset.y > 300)}
+          initialNumToRender={targetMessageId ? 80 : 20}
+          windowSize={targetMessageId ? 61 : 21}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 10,
+          }}
+          onScroll={(e) => {
+            const y = e.nativeEvent.contentOffset.y;
+            setShowScrollToBottom(y > 300);
+
+            // [SENIOR] Load NEWER messages when scrolling to the bottom (y near 0 in inverted list)
+            if (y < 200 && prevCursor && !isLoadingMessages && selectedChat?.id) {
+              fetchNewerMessages(selectedChat.id, 30, fetchToken);
+            }
+          }}
           onContentSizeChange={() => {
             if (targetMessageId && !hasScrolledToTarget) {
               performScrollToMessage();
             }
           }}
           onEndReached={() => selectedChat?.id && nextCursor && !isLoadingMessages && fetchMoreMessages(selectedChat.id, 30, fetchToken)}
-          onEndReachedThreshold={0.3}
+          onEndReachedThreshold={0.5}
           onScrollToIndexFailed={(info) => {
-            const wait = new Promise(resolve => setTimeout(resolve, 500));
-            wait.then(() => {
-              messagesScrollRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 });
+            if (scrollRetryCountRef.current > 3) {
+              console.warn("[ChatScreen] Max scroll retries reached, giving up to prevent loop.");
+              setHasScrolledToTarget(true); // Mark as done to stop attempts
+              return;
+            }
+            scrollRetryCountRef.current += 1;
+            console.warn("[ChatScreen] Scroll failed, retrying...", info.index, "attempt", scrollRetryCountRef.current);
+            messagesScrollRef.current?.scrollToOffset({ 
+              offset: info.averageItemLength * info.index, 
+              animated: false 
             });
+            setTimeout(() => {
+              messagesScrollRef.current?.scrollToIndex({ 
+                index: info.index, 
+                animated: true, 
+                viewPosition: 0.5 
+              });
+            }, 500);
           }}
           renderItem={({ item: m }) => {
             if (m.type === 'date_separator') {
@@ -581,6 +888,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
                 userProfile={userProfiles[normalizeEmail(m.senderId)]} 
                 userProfiles={userProfiles} 
                 onLongPress={setActionMessage} 
+                onPress={isMultiSelectMode ? (msg) => handleToggleSelectedMessage(msg.id) : undefined}
                 onReaction={toggleReaction} 
                 onReply={handleReply} 
                 onReplyPress={(id) => setActiveConversation(selectedChat.id, id)} 
@@ -590,22 +898,62 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
                 groupPosition={m.groupPosition}
                 isSeen={isSeen}
                 onNavigate={onNavigate}
+                isSelectionMode={isMultiSelectMode}
+                isSelected={selectedMessageIds.includes(m.id)}
+                onVotePoll={handleVotePoll}
+                onClosePoll={handleClosePoll}
               />
             );
           }}
         />
 
+        {isMultiSelectMode && (
+          <View style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#eff6ff', borderTopWidth: 1, borderTopColor: '#dbeafe' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#1d4ed8' }}>
+                Đã chọn {selectedMessageIds.length} tin nhắn
+              </Text>
+              <TouchableOpacity onPress={exitMultiSelectMode} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#fff' }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>Hủy chọn</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <TouchableOpacity onPress={handleCopySelectedMessages} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#fff' }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#8b5cf6' }}>Sao chép</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleMarkSelectedMessages} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#f0fdf4' }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>Đánh dấu</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handlePinSelectedMessages} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#fefce8' }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#ca8a04' }}>Ghim</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleDeleteSelectedMessages} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#ef4444' }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>Xóa</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {showScrollToBottom && (
           <TouchableOpacity 
             style={styles.scrollToBottomBtn} 
             onPress={() => {
-              messagesScrollRef.current?.scrollToOffset({ offset: 0, animated: true });
-              if (targetMessageId) useChatStore.getState().setTargetMessageId(null);
+              if (targetMessageId || prevCursor) {
+                // Return to latest
+                console.log("[ChatScreen] Manual return to latest for:", conversationId);
+                if (conversationId) {
+                  setHasScrolledToTarget(false);
+                  hasScrolledRef.current = false;
+                  setActiveConversation(conversationId, null);
+                }
+              } else {
+                messagesScrollRef.current?.scrollToOffset({ offset: 0, animated: true });
+              }
             }}
           >
-            {targetMessageId && (
+            {(targetMessageId || prevCursor) && (
               <View style={styles.jumpToLatestBadge}>
-                <Text style={styles.jumpToLatestText}>Về tin nhắn mới</Text>
+                <Text style={styles.jumpToLatestText}>Về tin mới nhất</Text>
               </View>
             )}
             <Text style={styles.scrollToBottomIcon}>arrow_downward</Text>
@@ -613,17 +961,32 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
         )}
 
         <ChatInput 
-          key={`input-${selectedChat.id}`} onSendMessage={handleChatSend} replyTarget={replyTarget} onClearReply={() => setReplyTarget(null)}
+          key={`input-${selectedChat.id}`} 
+          onSendMessage={handleChatSend} 
+          replyTarget={replyTarget} 
+          onClearReply={() => setReplyTarget(null)}
           onTyping={() => { if (SocketService.socket && selectedChat.id && !typingTimeoutRef.current) { SocketService.socket.emit("typing", { convId: selectedChat.id, isTyping: true }); typingTimeoutRef.current = setTimeout(() => { typingTimeoutRef.current = null; }, 2000); } }}
+          onOpenPollModal={() => setIsPollModalOpen(true)}
+          onOpenReminderModal={() => setIsReminderModalOpen(true)}
         />
-      </KeyboardAvoidingView>
 
-      <ChatModals 
-        actionMessage={actionMessage} setActionMessage={setActionMessage} onReaction={toggleReaction} onReply={handleReply} 
+        {/* TARGETING MESSAGE OVERLAY */}
+        {isLoadingMessages && targetMessageId && (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.7)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
+            <ActivityIndicator size="large" color="#0084ff" />
+            <Text style={{ marginTop: 12, fontWeight: '600', color: '#0084ff' }}>Đang tìm vị trí tin nhắn...</Text>
+          </View>
+        )}
+
+        <ChatModals 
+        actionMessage={actionMessage} setActionMessage={setActionMessage} detailMessage={detailMessage} setDetailMessage={setDetailMessage} onReaction={toggleReaction} onReply={handleReply} 
         onForward={(m) => { setActionMessage(null); setIsForwardModalOpen(true); }}
         onRecall={(m) => patchMessageOptimistic(selectedChat.id, m.id, { action: 'recall' })}
         onDelete={(m) => deleteMessageOptimistic(selectedChat.id, m.id)}
         onPin={handlePinMessage}
+        onMark={handleMarkMessage}
+        onViewDetail={handleViewMessageDetail}
+        onStartMultiSelect={handleStartMultiSelect}
         userEmail={currentUserEmail || ""} showMuteMenuModal={showMuteMenuModal} setShowMuteMenuModal={setShowMuteMenuModal}
         onSelectMuteSchedule={handleSelectMuteSchedule} showCustomMuteModal={showCustomMuteModal} setShowCustomMuteModal={setShowCustomMuteModal}
         customMuteStartTime={customMuteStartTime} setCustomMuteStartTime={setCustomMuteStartTime} customMuteEndTime={customMuteEndTime} setCustomMuteEndTime={setCustomMuteEndTime}
@@ -635,10 +998,43 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
       />
 
       <ForwardModal 
-        visible={isForwardModalOpen} onClose={() => setIsForwardModalOpen(false)} message={actionMessage}
-        onForward={(targetId) => sendMessageOptimistic(targetId, user?.email, actionMessage.content, actionMessage.type, { attachments: actionMessage.media || actionMessage.files })}
+        visible={isForwardModalOpen} 
+        onClose={() => setIsForwardModalOpen(false)} 
+        message={actionMessage}
+        onForward={(targetId) => sendMessageOptimistic(targetId, { 
+          content: actionMessage.content, 
+          type: actionMessage.type, 
+          media: actionMessage.media, 
+          files: actionMessage.files 
+        })}
       />
-      </View>
+
+      <Modal visible={isPollModalOpen} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <PollComposer 
+            onClose={() => setIsPollModalOpen(false)}
+            onCreate={(p) => {
+              handleSendPoll(p);
+              setIsPollModalOpen(false);
+            }}
+          />
+        </View>
+      </Modal>
+
+      <Modal visible={isReminderModalOpen} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <ReminderComposer 
+            onClose={() => setIsReminderModalOpen(false)}
+            onCreate={(r) => {
+              handleSendReminder(r);
+              setIsReminderModalOpen(false);
+            }}
+          />
+        </View>
+      </Modal>
+      </KeyboardAvoidingView>
+      </ImageBackground>
     </View>
+  </View>
   );
 }

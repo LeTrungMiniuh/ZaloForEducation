@@ -1,5 +1,6 @@
-import React from 'react';
-import { Phone, Video, PhoneOff } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Phone, Video } from 'lucide-react';
+import api from '../../services/api';
 
 interface SystemCallMessageItemProps {
   message: {
@@ -14,12 +15,43 @@ interface SystemCallMessageItemProps {
     callStatus?: string;
     duration?: number;
     metadata?: any;
+    callId?: string;
+    isGroup?: boolean;
   };
   currentUserEmail: string;
   onCallBack?: (callType: 'audio' | 'video') => void;
+  onJoinCall?: (callId: string, type: string) => void;
 }
 
-const SystemCallMessageItem: React.FC<SystemCallMessageItemProps> = ({ message, currentUserEmail, onCallBack }) => {
+const SystemCallMessageItem: React.FC<SystemCallMessageItemProps> = ({ 
+  message, 
+  currentUserEmail, 
+  onCallBack,
+  onJoinCall 
+}) => {
+  const [isActive, setIsActive] = useState(false);
+
+  const callId = message.callId || message.metadata?.callId;
+
+  useEffect(() => {
+    if (!callId) return;
+
+    const checkStatus = async () => {
+      try {
+        const res = await api.get(`/group-call/status/${callId}`);
+        setIsActive(res.data.isActive);
+      } catch (error) {
+        console.error("[SystemCallMessageItem] Check status failed:", error);
+      }
+    };
+
+    checkStatus();
+    
+    // Polling every 10s if active to see when it ends
+    const interval = setInterval(checkStatus, 10000);
+    return () => clearInterval(interval);
+  }, [callId]);
+
   // [SENIOR 10/10] Super Radar: Tìm dữ liệu chuẩn nhất từ mọi ngóc ngách
   const callerId = message.callerId || message.senderId;
   const isCaller = callerId === currentUserEmail;
@@ -41,6 +73,15 @@ const SystemCallMessageItem: React.FC<SystemCallMessageItemProps> = ({ message, 
   };
 
   const getTheme = (status: string, isFromMe: boolean) => {
+    if (isActive) {
+      return {
+        bg: 'bg-emerald-50/80',
+        border: 'border-emerald-100',
+        text: 'text-emerald-800',
+        btnText: 'text-emerald-900',
+        btnHover: 'hover:bg-emerald-100/50',
+      };
+    }
     switch (status) {
       case 'completed':
         return {
@@ -69,6 +110,8 @@ const SystemCallMessageItem: React.FC<SystemCallMessageItemProps> = ({ message, 
   };
 
   const getStatusText = (status: string, isFromMe: boolean) => {
+    if (isActive) return 'Cuộc gọi đang diễn ra';
+    
     const typeLabel = callType === 'video' ? 'video' : 'thoại';
     switch (status) {
       case 'completed':
@@ -87,8 +130,11 @@ const SystemCallMessageItem: React.FC<SystemCallMessageItemProps> = ({ message, 
 
   const theme = getTheme(callStatus, isCaller);
   const statusText = getStatusText(callStatus, isCaller);
+  const isGroup = !!(message.isGroup || message.metadata?.isGroup);
   const isVideo = callType === 'video';
-  const callLabel = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
+  const callLabel = isGroup 
+    ? (isVideo ? 'Cuộc gọi video nhóm' : 'Cuộc gọi thoại nhóm')
+    : (isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại');
   const CallIcon = isVideo ? Video : Phone;
   const durationStr = formatDuration(duration);
 
@@ -105,7 +151,7 @@ const SystemCallMessageItem: React.FC<SystemCallMessageItemProps> = ({ message, 
               <CallIcon size={12} strokeWidth={3} />
               <span className="text-[13px] font-semibold">
                 {callLabel}
-                {durationStr ? ` (${durationStr})` : ''}
+                {durationStr && !isActive ? ` (${durationStr})` : ''}
               </span>
             </div>
           </div>
@@ -113,13 +159,22 @@ const SystemCallMessageItem: React.FC<SystemCallMessageItemProps> = ({ message, 
           {/* Divider */}
           <div className={`h-[1px] w-full opacity-30 ${theme.border.replace('border-', 'bg-')}`} />
           
-          {/* Call Back Action */}
-          <button
-            onClick={() => onCallBack?.(callType)}
-            className={`w-full py-3 text-[12px] font-black ${theme.btnText} ${theme.btnHover} transition-colors uppercase tracking-[0.1em]`}
-          >
-            GỌI LẠI
-          </button>
+          {/* Call Action */}
+          {isActive ? (
+            <button
+              onClick={() => callId && onJoinCall?.(callId, callType)}
+              className={`w-full py-3 text-[12px] font-black ${theme.btnText} ${theme.btnHover} transition-colors uppercase tracking-[0.1em]`}
+            >
+              THAM GIA LẠI
+            </button>
+          ) : (
+            <button
+              onClick={() => onCallBack?.(callType)}
+              className={`w-full py-3 text-[12px] font-black ${theme.btnText} ${theme.btnHover} transition-colors uppercase tracking-[0.1em]`}
+            >
+              GỌI LẠI
+            </button>
+          )}
         </div>
         <span className={`text-[9px] font-black text-gray-300 mt-2 uppercase tracking-widest ${isCaller ? 'text-right mr-3' : 'text-left ml-3'}`}>
           {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

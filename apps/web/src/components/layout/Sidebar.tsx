@@ -52,8 +52,19 @@ const Sidebar: React.FC = () => {
   return (
     <>
       <aside className="fixed left-0 top-0 h-full z-50 w-20 flex flex-col items-center py-6 bg-gradient-to-br from-[#0058bc] to-[#00418f] shadow-[0px_20px_40px_rgba(0,65,143,0.06)] shrink-0">
+        {/* Decorative education patterns at the bottom */}
+        <div 
+          className="absolute bottom-0 left-0 right-0 h-80 opacity-70 pointer-events-none"
+          style={{
+            backgroundImage: 'url(/background/sidebar_bg.png)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'bottom',
+            maskImage: 'linear-gradient(to top, black, transparent)',
+            WebkitMaskImage: 'linear-gradient(to top, black, transparent)'
+          }}
+        />
         {/* Top Avatar Area */}
-        <div className="mb-8 group relative">
+        <div className="mb-8 group relative z-10">
           <img
             alt="User Avatar"
             onClick={() => navigate('/profile')}
@@ -63,7 +74,7 @@ const Sidebar: React.FC = () => {
         </div>
 
         {/* Middle Navigation area */}
-        <nav className="flex flex-col gap-4 flex-1">
+        <nav className="flex flex-col gap-4 flex-1 relative z-10">
           {navItems.map((item) => (
             <NavLink
               key={item.id}
@@ -103,11 +114,11 @@ const Sidebar: React.FC = () => {
         </nav>
 
         {/* Bottom Area */}
-        <div className="mt-auto flex flex-col gap-4">
+        <div className="mt-auto flex flex-col gap-4 relative z-[20]">
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              className={`rounded-2xl transition-all duration-300 p-3 scale-95 flex items-center justify-center relative hover:bg-white/10 text-white/60 hover:text-white ${isDropdownOpen ? (isDark ? 'bg-[#4b5d7a] text-[#eef3fb] border border-[#6c7fa1]' : 'bg-white/20 text-white') : ''}`}
+              className={`rounded-2xl transition-all duration-300 p-3 scale-95 flex items-center justify-center relative hover:bg-white/10 text-white/60 hover:text-white z-30 ${isDropdownOpen ? (isDark ? 'bg-[#4b5d7a] text-[#eef3fb] border border-[#6c7fa1]' : 'bg-white/20 text-white') : ''}`}
             >
               <Settings size={26} />
             </button>

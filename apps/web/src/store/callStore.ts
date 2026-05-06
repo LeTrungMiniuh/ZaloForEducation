@@ -1,6 +1,12 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 
-export type CallState = 'IDLE' | 'RINGING' | 'CALLING' | 'JOINING' | 'CONNECTED' | 'ENDED';
+export type CallState =
+  | "IDLE"
+  | "RINGING"
+  | "CALLING"
+  | "JOINING"
+  | "CONNECTED"
+  | "ENDED";
 
 let callTimeout: any = null;
 let resetTimeout: any = null;
@@ -23,8 +29,9 @@ interface CallStore {
   attendeeData: any | null;
   peerProfile: any | null;
   isIncoming: boolean;
-  callType: 'audio' | 'video';
+  callType: "audio" | "video";
   toEmail: string | null;
+  toEmails: string[];
   startTime: number | null;
 
   // Media states
@@ -34,35 +41,64 @@ interface CallStore {
   isConnecting: boolean;
   connectionError: string | null;
   remoteTiles: any[];
-  
+
   // Upgrade states
   upgradeRequestPending: boolean;
   incomingUpgradeRequest: boolean;
   upgradeRequesterEmail: string | null;
 
-  engine: 'webrtc' | 'chime' | null;
+  engine: "webrtc" | "chime" | null;
   callOffer: any | null;
+
+  pendingMeetingData: any | null; // ✅ THÊM
+  pendingAttendeeData: any | null; // ✅ THÊM
 
   // Actions
   setCallState: (state: CallState) => void;
   setConnecting: (isConnecting: boolean) => void;
   setConnectionError: (error: string | null) => void;
-  setMeetingData: (meeting: any, attendee: any, type?: 'audio' | 'video') => void;
-  initiateCall: (convId: string, activeCallId: string, type: 'audio' | 'video', toEmail: string, profile: any, engine?: 'webrtc' | 'chime') => void;
-  setIncomingCall: (convId: string, activeCallId: string, peer: any, type: 'audio' | 'video', fromEmail: string, engine?: 'webrtc' | 'chime', offer?: any) => void;
+  setMeetingData: (
+    meeting: any,
+    attendee: any,
+    type?: "audio" | "video",
+  ) => void;
+  initiateCall: (
+    convId: string,
+    activeCallId: string,
+    type: "audio" | "video",
+    toEmail: string,
+    profile: any,
+    engine?: "webrtc" | "chime",
+    targetEmails?: string[],
+  ) => void;
+  setIncomingCall: (
+    convId: string,
+    activeCallId: string,
+    peer: any,
+    type: "audio" | "video",
+    fromEmail: string,
+    engine?: "webrtc" | "chime",
+    offer?: any,
+  ) => void;
   setCallOffer: (offer: any) => void;
   acceptCall: (meetingInfo?: any) => void;
   hangupCall: () => void;
   rejectCall: () => void;
   resetCall: () => void;
-  setCallType: (type: 'audio' | 'video') => void;
+  setCallType: (type: "audio" | "video") => void;
   setCameraOn: (on: boolean) => void;
   setRemoteCameraOn: (on: boolean) => void;
   setMicOn: (on: boolean) => void;
+  setConnected: () => void;
   setUpgradeRequestPending: (pending: boolean) => void;
   setIncomingUpgradeRequest: (incoming: boolean) => void;
   setUpgradeRequesterEmail: (email: string | null) => void;
   setRemoteTiles: (tiles: any[]) => void;
+  setPendingMeetingData: (
+    meeting: any,
+    attendee: any,
+    type?: "audio" | "video",
+  ) => void; // ✅ THÊM
   isPeerJoined: boolean;
   setPeerJoined: (joined: boolean) => void;
   isMinimized: boolean;
@@ -70,15 +106,16 @@ interface CallStore {
 }
 
 export const useCallStore = create<CallStore>((set, get) => ({
-  callState: 'IDLE',
+  callState: "IDLE",
   conversationId: null,
   activeCallId: null,
   meetingData: null,
   attendeeData: null,
   peerProfile: null,
   isIncoming: false,
-  callType: 'audio',
+  callType: "audio",
   toEmail: null,
+  toEmails: [],
   startTime: null,
   isCameraOn: true,
   isRemoteCameraOn: false,
@@ -93,7 +130,9 @@ export const useCallStore = create<CallStore>((set, get) => ({
   callOffer: null,
   isPeerJoined: false,
   isMinimized: false,
-  
+  pendingMeetingData: null,
+  pendingAttendeeData: null,
+
   setMinimized: (isMinimized) => set({ isMinimized }),
 
   setCallState: (callState) => set({ callState }),
@@ -109,62 +148,103 @@ export const useCallStore = create<CallStore>((set, get) => ({
     });
   },
 
+  setPendingMeetingData: (pendingMeetingData, pendingAttendeeData, type) => {
+    const currentType = get().callType;
+    set({
+      pendingMeetingData,
+      pendingAttendeeData,
+      callType: type || currentType,
+    });
+  },
+
   setCallType: (callType) => set({ callType }),
 
-  initiateCall: (conversationId, activeCallId, callType, toEmail, profile, engine) => {
+  initiateCall: (
+    conversationId,
+    activeCallId,
+    callType,
+    toEmail,
+    profile,
+    engine,
+    targetEmails,
+  ) => {
     clearInternalTimeout();
+    const initialTargets =
+      Array.isArray(targetEmails) && targetEmails.length > 0
+        ? targetEmails
+        : toEmail
+          ? [toEmail]
+          : [];
     set({
       conversationId,
       activeCallId,
       callType,
-      callState: 'CALLING',
+      callState: "CALLING",
       isIncoming: false,
       toEmail,
+      toEmails: initialTargets,
       peerProfile: profile,
-      isCameraOn: callType === 'video',
+      isCameraOn: callType === "video",
       isMicOn: true,
       isConnecting: true,
       connectionError: null,
       upgradeRequestPending: false,
       incomingUpgradeRequest: false,
-      engine: engine || 'chime',
+      engine: engine || "chime",
       callOffer: null,
       startTime: null,
     });
 
     // [SENIOR] Auto-timeout after 60s if not connected
     callTimeout = setTimeout(() => {
-      console.log('[Store] Call timed out after 60s (Caller Side)');
+      console.log("[Store] Call timed out after 60s (Caller Side)");
       const socket = (window as any).socket;
-      if (socket && toEmail && activeCallId) {
-        socket.emit('call:timeout', { convId: conversationId, callId: activeCallId, toEmail });
+      if (socket && activeCallId) {
+        const targets =
+          get().toEmails.length > 0 ? get().toEmails : initialTargets;
+        targets.forEach((targetEmail) => {
+          socket.emit("call:timeout", {
+            convId: conversationId,
+            callId: activeCallId,
+            toEmail: targetEmail,
+          });
+        });
       }
       get().hangupCall();
     }, 60000);
   },
 
-  setIncomingCall: (conversationId, activeCallId, peerProfile, callType, fromEmail, engine, offer) => {
+  setIncomingCall: (
+    conversationId,
+    activeCallId,
+    peerProfile,
+    callType,
+    fromEmail,
+    engine,
+    offer,
+  ) => {
     clearInternalTimeout();
     set({
       conversationId,
       activeCallId,
       peerProfile,
       callType,
-      callState: 'RINGING',
+      callState: "RINGING",
       isIncoming: true,
       toEmail: fromEmail,
-      isCameraOn: callType === 'video',
+      toEmails: [fromEmail],
+      isCameraOn: callType === "video",
       isMicOn: true,
       isConnecting: false,
       connectionError: null,
-      engine: engine || 'chime',
+      engine: engine || "chime",
       callOffer: offer || null,
       startTime: null,
     });
 
     // [SENIOR] Auto-timeout after 60s if not answered
     callTimeout = setTimeout(() => {
-      console.log('[Store] Call timed out after 60s (Receiver Side)');
+      console.log("[Store] Call timed out after 60s (Receiver Side)");
       get().rejectCall();
     }, 60000);
   },
@@ -174,27 +254,70 @@ export const useCallStore = create<CallStore>((set, get) => ({
   acceptCall: (meetingInfo) => {
     clearInternalTimeout();
     const current = get();
-    set({ 
-      callState: 'CONNECTED', 
-      isConnecting: false, 
+
+    // [CRITICAL FIX] Caller MUST use its own pending data.
+    // If it uses meetingInfo.attendee sent by the Callee via socket,
+    // both will join with the SAME AttendeeId -> statusCode: 4!
+    const meeting =
+      current.pendingMeetingData ||
+      meetingInfo?.Meeting ||
+      meetingInfo?.meeting ||
+      current.meetingData;
+    const attendee =
+      current.pendingAttendeeData ||
+      meetingInfo?.Attendee ||
+      meetingInfo?.attendee ||
+      current.attendeeData;
+
+    set({
+      callState: "JOINING",
+      isConnecting: true,
       connectionError: null,
-      // [CRITICAL FIX] Only update meetingData if new info is provided.
-      // The Web caller already has meetingData from /call/create — don't overwrite with undefined.
-      meetingData: meetingInfo?.Meeting || meetingInfo?.meeting || current.meetingData,
-      attendeeData: meetingInfo?.Attendee || meetingInfo?.attendee || current.attendeeData,
-      startTime: current.startTime || Date.now(),
+      meetingData: meeting, // ✅ Kích hoạt useEffect trong useChime
+      attendeeData: attendee,
+      pendingMeetingData: null, // ✅ Dọn dẹp
+      pendingAttendeeData: null,
+      startTime: null,
     });
+  },
+
+  setConnected: () => {
+    const state = get();
+    set({
+      callState: "CONNECTED",
+      isConnecting: false,
+      startTime: Date.now(),
+    });
+
+    // Clear backend ghost hangup timer
+    const socket = (window as any).socket;
+    if (socket && state.conversationId && state.activeCallId) {
+      const targets =
+        state.toEmails.length > 0
+          ? state.toEmails
+          : state.toEmail
+            ? [state.toEmail]
+            : [];
+      targets.forEach((targetEmail) => {
+        socket.emit("call:peer_joined", {
+          convId: state.conversationId,
+          toEmail: targetEmail,
+          callId: state.activeCallId,
+        });
+      });
+    }
   },
 
   hangupCall: () => {
     clearInternalTimeout();
     // [SYSTEM] Nullify session IDs immediately to free up backend/signaling
-    set({ 
-      callState: 'ENDED', 
-      activeCallId: null, 
-      meetingData: null, 
+    set({
+      callState: "ENDED",
+      activeCallId: null,
+      meetingData: null,
       attendeeData: null,
-      isConnecting: false
+      isConnecting: false,
+      toEmails: [],
     });
 
     // [UI] Keep the ENDED screen for 1 second before total reset
@@ -206,12 +329,13 @@ export const useCallStore = create<CallStore>((set, get) => ({
 
   rejectCall: () => {
     clearInternalTimeout();
-    set({ 
-      callState: 'ENDED',
+    set({
+      callState: "ENDED",
       activeCallId: null,
       meetingData: null,
       attendeeData: null,
-      isConnecting: false
+      isConnecting: false,
+      toEmails: [],
     });
     resetTimeout = setTimeout(() => {
       get().resetCall();
@@ -222,23 +346,27 @@ export const useCallStore = create<CallStore>((set, get) => ({
   setCameraOn: (isCameraOn: boolean) => set({ isCameraOn }),
   setRemoteCameraOn: (isRemoteCameraOn: boolean) => set({ isRemoteCameraOn }),
   setMicOn: (isMicOn: boolean) => set({ isMicOn }),
-  setUpgradeRequestPending: (upgradeRequestPending: boolean) => set({ upgradeRequestPending }),
-  setIncomingUpgradeRequest: (incomingUpgradeRequest: boolean) => set({ incomingUpgradeRequest }),
-  setUpgradeRequesterEmail: (upgradeRequesterEmail: string | null) => set({ upgradeRequesterEmail }),
+  setUpgradeRequestPending: (upgradeRequestPending: boolean) =>
+    set({ upgradeRequestPending }),
+  setIncomingUpgradeRequest: (incomingUpgradeRequest: boolean) =>
+    set({ incomingUpgradeRequest }),
+  setUpgradeRequesterEmail: (upgradeRequesterEmail: string | null) =>
+    set({ upgradeRequesterEmail }),
   setRemoteTiles: (remoteTiles: any[]) => set({ remoteTiles }),
   setPeerJoined: (isPeerJoined: boolean) => set({ isPeerJoined }),
 
   resetCall: () => {
     clearInternalTimeout();
     set({
-      callState: 'IDLE',
+      callState: "IDLE",
       conversationId: null,
       activeCallId: null,
       meetingData: null,
       attendeeData: null,
       peerProfile: null,
       isIncoming: false,
-      callType: 'audio',
+      callType: "audio",
+      toEmails: [],
       startTime: null,
       isCameraOn: true,
       isRemoteCameraOn: false,

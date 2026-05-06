@@ -100,6 +100,16 @@ export default StyleSheet.create({
     fontSize: 10,
     fontWeight: "900",
   },
+  unreadBadgeStatic: {
+    backgroundColor: "#ff3b30",
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+    marginTop: 4,
+  },
   chatInfo: { flex: 1 },
   chatHeader: {
     flexDirection: "row",
@@ -114,7 +124,12 @@ export default StyleSheet.create({
     marginRight: 8,
   },
   chatTime: { ...Typography.body, fontSize: 12, color: "#727784" },
-  lastMsg: { ...Typography.body, fontSize: 13, color: "#727784" },
+  chatRight: {
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
+    minWidth: 50,
+  },
+  lastMsg: { ...Typography.body, fontSize: 13, color: "#727784", flex: 1 },
 
   chatPane: { flex: 1, backgroundColor: "#f7f9fb" },
   chatPaneHeader: {
