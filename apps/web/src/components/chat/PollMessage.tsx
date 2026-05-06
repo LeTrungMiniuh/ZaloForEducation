@@ -21,7 +21,6 @@ interface PollMessageProps {
 }
 
 const PollMessage: React.FC<PollMessageProps> = ({
-  messageId,
   topic,
   options,
   votes = {},
@@ -110,30 +109,35 @@ const PollMessage: React.FC<PollMessageProps> = ({
       .trim()
       .toLowerCase() === normalizedUserEmail;
 
+
   return (
-    <div className="w-full max-w-md space-y-3 rounded-2xl border border-[#d5d9e2] bg-white p-4 shadow-sm">
-      <div className="flex items-start gap-2.5">
-        <ListChecks size={18} className="mt-0.5 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1">
-          <p className="mb-1 text-[12px] font-extrabold uppercase tracking-wider text-[#53627f]">
-            Chọn một phương án
-          </p>
-          <p className="text-[14px] leading-tight font-extrabold text-[#1f2f4a] md:text-[15px]">
+    <div className="w-full max-w-md space-y-5 rounded-[32px] border border-outline-variant/5 bg-white/80 dark:bg-surface-container-high/80 backdrop-blur-xl p-6 shadow-[0_8px_32px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_48px_rgba(0,0,0,0.08)] transition-all duration-500 group">
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-[20px] bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center shrink-0 shadow-inner">
+          <ListChecks size={24} className="text-primary" strokeWidth={2.5} />
+        </div>
+        <div className="min-w-0 flex-1 pt-1">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-[10px] font-black uppercase tracking-[0.25em] text-primary/50">
+              Bình chọn
+            </span>
+            {isClosed && (
+              <span className="flex items-center gap-1 bg-error/10 text-error px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider">
+                <Lock size={10} strokeWidth={3} /> Đã đóng
+              </span>
+            )}
+          </div>
+          <p className="text-[18px] leading-snug font-black text-on-surface tracking-tight">
             {topic}
           </p>
         </div>
-        {isClosed && (
-          <div className="flex items-center gap-1 bg-red-100 text-red-700 px-2 py-1 rounded-full text-[11px] font-bold shrink-0">
-            <Lock size={12} />
-            Đã đóng
-          </div>
-        )}
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         {pollOptions.map((option, index) => {
           const isSelected = selectedOptionIndex === index;
           const userVoted = option.voters.includes(user?.email || "");
+          const percentage = totalVotes > 0 ? (option.votes / totalVotes) * 100 : 0;
 
           return (
             <button
@@ -144,36 +148,42 @@ const PollMessage: React.FC<PollMessageProps> = ({
                 setDraftOption(index);
               }}
               disabled={isVoting || isClosed}
-              className={`w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${
+              className={`w-full rounded-2xl border px-4 py-3.5 text-left transition-all relative overflow-hidden group ${
                 isSelected
-                  ? "border-primary bg-primary/10"
-                  : "border-[#dde1ea] bg-[#f4f6fa] hover:border-primary/40"
-              } ${isClosed || isVoting ? "cursor-default opacity-75" : "cursor-pointer"}`}
+                  ? "border-primary bg-primary/5"
+                  : "border-outline-variant/10 bg-surface-container-low/30 hover:border-primary/30"
+              } ${isClosed || isVoting ? "cursor-default opacity-85" : "cursor-pointer active:scale-[0.98]"}`}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              {/* Progress Background */}
+              <div 
+                className={`absolute left-0 top-0 bottom-0 transition-all duration-1000 ease-out ${isSelected ? 'bg-primary/10' : 'bg-primary/5'}`}
+                style={{ width: `${percentage}%` }}
+              />
+
+              <div className="flex items-center justify-between relative z-10">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
                   <div
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all ${
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all ${
                       isSelected
-                        ? "bg-primary border-primary"
-                        : "border-[#9ba6bb]"
+                        ? "bg-primary border-primary scale-110 shadow-lg shadow-primary/20"
+                        : "border-outline-variant"
                     }`}
                   >
                     {isSelected ? (
-                      <Check size={13} className="text-white" />
+                      <Check size={14} strokeWidth={4} className="text-white" />
                     ) : null}
                   </div>
-                  <span className="truncate text-[14px] font-medium text-[#2b3445]">
+                  <span className={`truncate text-[15px] font-bold ${isSelected ? 'text-primary' : 'text-on-surface'}`}>
                     {option.text}
                   </span>
                 </div>
 
-                <div className="ml-2 flex shrink-0 items-center gap-1.5">
-                  <span className="text-[14px] font-medium leading-none text-[#31343a]">
+                <div className="ml-3 flex shrink-0 items-center gap-2">
+                  <span className={`text-[15px] font-black ${isSelected ? 'text-primary' : 'text-on-surface-variant'}`}>
                     {option.votes}
                   </span>
                   {userVoted && (
-                    <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-white">
+                    <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-black text-primary uppercase tracking-wider">
                       Bạn
                     </span>
                   )}
@@ -184,22 +194,22 @@ const PollMessage: React.FC<PollMessageProps> = ({
         })}
       </div>
 
-      <div className="space-y-2 border-t border-[#e4e8f0] pt-3">
-        <div className="flex items-center justify-between text-[12px] text-[#5f6d84]">
+      <div className="space-y-3 pt-2">
+        <div className="flex items-center justify-between text-[12px]">
           <button 
             type="button" 
             onClick={() => setShowVotersModal(true)}
-            className="hover:text-primary hover:underline cursor-pointer transition-colors"
+            className="text-on-surface-variant/60 hover:text-primary font-black uppercase tracking-widest transition-colors cursor-pointer"
           >
-            {totalVotes} phiếu • Xem chi tiết
+            {totalVotes} phiếu • Chi tiết
           </button>
           {hasVoted && !isClosed ? (
-            <p className="font-semibold text-primary">Đã bình chọn</p>
+            <p className="font-black text-primary uppercase tracking-widest">Đã bình chọn</p>
           ) : null}
         </div>
 
         {!isClosed && (
-          <div className="flex gap-2">
+          <div className="flex gap-3">
             {hasVoted ? (
               <button
                 type="button"
@@ -216,7 +226,7 @@ const PollMessage: React.FC<PollMessageProps> = ({
                   isVoting ||
                   draftOption === votedOptionByCurrentUser
                 }
-                className="flex-1 rounded-lg border border-primary bg-white px-4 py-2.5 text-[16px] font-bold text-primary transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex-1 h-12 rounded-2xl bg-primary text-white text-[14px] font-black uppercase tracking-widest transition-all hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 shadow-lg shadow-primary/20"
               >
                 {isVoting ? "Đang gửi..." : "Đổi lựa chọn"}
               </button>
@@ -229,7 +239,7 @@ const PollMessage: React.FC<PollMessageProps> = ({
                   }
                 }}
                 disabled={!canSubmit || isVoting}
-                className="flex-1 rounded-lg border border-primary bg-white px-4 py-2.5 text-[16px] font-bold text-primary transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex-1 h-12 rounded-2xl bg-primary text-white text-[14px] font-black uppercase tracking-widest transition-all hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 shadow-lg shadow-primary/20"
               >
                 {isVoting ? "Đang gửi..." : "Bình chọn"}
               </button>
@@ -240,13 +250,13 @@ const PollMessage: React.FC<PollMessageProps> = ({
                 type="button"
                 onClick={() => void handleClosePoll()}
                 disabled={isClosing}
-                className="shrink-0 w-10 h-10 rounded-lg border border-red-200 bg-red-50 text-red-600 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center"
+                className="shrink-0 w-12 h-12 rounded-2xl border border-error/20 bg-error/5 text-error transition-all hover:bg-error/10 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center"
                 title="Đóng bình chọn"
               >
                 {isClosing ? (
-                  <span className="text-[10px]">...</span>
+                  <span className="animate-pulse font-black">...</span>
                 ) : (
-                  <X size={16} />
+                  <X size={20} strokeWidth={3} />
                 )}
               </button>
             )}

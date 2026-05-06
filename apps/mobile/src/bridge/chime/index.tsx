@@ -1,18 +1,23 @@
 import React from 'react';
-import { NativeModules, DeviceEventEmitter, Platform } from 'react-native';
+declare global {
+  var __NativeChimeView: any;
+}
+import { NativeModules, DeviceEventEmitter, Platform, View } from 'react-native';
 
 const { ChimeModule } = NativeModules;
 // [SENIOR] Switching to DeviceEventEmitter for maximum reliability with custom native bridges
 const eventEmitter = DeviceEventEmitter;
 
-// [SENIOR] Tránh đăng ký trùng lặp khi Hot Reload
-let NativeChimeView: any;
-if (Platform.OS !== 'web') {
+// [SENIOR] Tránh đăng ký trùng lặp khi Hot Reload bằng cơ chế Singleton
+if (Platform.OS !== 'web' && !global.__NativeChimeView) {
   const { requireNativeComponent } = require('react-native');
-  NativeChimeView = requireNativeComponent('RNChimeVideoView');
-} else {
-  NativeChimeView = require('react-native').View;
+  try {
+    global.__NativeChimeView = requireNativeComponent('RNChimeVideoView');
+  } catch (e) {
+    console.error('Failed to register RNChimeVideoView', e);
+  }
 }
+const NativeChimeView = global.__NativeChimeView || View;
 
 /**
  * [SENIOR] RNChimeVideoView

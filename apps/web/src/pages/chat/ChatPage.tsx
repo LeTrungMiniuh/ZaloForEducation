@@ -13,8 +13,11 @@ import TagManagerModal from "../../components/chat/TagManagerModal";
 import PollModal from "../../components/chat/PollModal";
 import ReminderModal from "../../components/chat/ReminderModal";
 import SecurityAlertsView from "../../components/chat/SecurityAlertsView";
+import GroupCallOverlay from "../../components/call/GroupCallOverlay";
+import IncomingGroupCallModal from "../../components/call/IncomingGroupCallModal";
 import { getMessageTimeContext, getDisplayName } from "../../utils/chatUtils";
 import type { Attachment } from "../../utils/chatUtils";
+import { useGroupSocketListeners } from "../../hooks/useGroupSocketListeners";
 import type { Message } from "@zalo-edu/shared";
 
 import {
@@ -33,6 +36,7 @@ import Swal from "sweetalert2";
 
 const ChatPage: React.FC = () => {
   const { user, socket } = useAuth();
+  useGroupSocketListeners();
   const {
     activeConvId,
     conversations,
@@ -577,9 +581,19 @@ const ChatPage: React.FC = () => {
 
             <div
               ref={scrollRef}
-              className="flex-1 overflow-y-auto p-4 hide-scrollbar flex flex-col"
+              className="flex-1 overflow-y-auto p-4 hide-scrollbar flex flex-col relative"
               onScroll={handleScroll}
+              style={{ 
+                backgroundImage: "url('/background/background1.png')", 
+                backgroundSize: 'cover', 
+                backgroundPosition: 'center',
+                backgroundAttachment: 'fixed'
+              }}
             >
+              {/* Optional overlay for readability */}
+              <div className="absolute inset-0 bg-white/40 dark:bg-black/20 pointer-events-none" />
+              
+              <div className="relative z-10 flex flex-col flex-1">
               {/* Infinite Load Indicator */}
               {isLoadingMessages && nextCursor && (
                 <div className="flex justify-center py-4">
@@ -706,6 +720,7 @@ const ChatPage: React.FC = () => {
               )}
 
               <div ref={messagesEndRef} className="h-4" />
+              </div>
             </div>
 
             <ChatInput
@@ -955,6 +970,10 @@ const ChatPage: React.FC = () => {
         isOpen={isTagManagerOpen}
         onClose={() => setIsTagManagerOpen(false)}
       />
+      
+      {/* Group Call Components */}
+      <GroupCallOverlay />
+      <IncomingGroupCallModal />
     </div>
   );
 };

@@ -22,9 +22,9 @@ import SearchScreen from '../screens/main/SearchScreen';
 import ChatDetailsScreen from '../screens/main/ChatDetailsScreen';
 import MediaDetailScreen from '../screens/main/MediaDetailScreen';
 import ChatGalleryScreen from '../screens/main/ChatGalleryScreen';
+import InChatSearchScreen from '../screens/main/InChatSearchScreen';
 import CreateGroupComponent from '../screens/main/CreateGroup';
 import SecurityAlertsScreen from '../screens/main/SecurityAlertsScreen';
-import InChatSearchScreen from '../screens/main/InChatSearchScreen';
 
 // Profile Screens
 import ProfileScreen from '../screens/profile/ProfileScreen';
@@ -34,21 +34,8 @@ import ProfileMoreScreen from '../screens/profile/ProfileMoreScreen';
 import SettingsScreen from '../screens/profile/SettingsScreen';
 import ChangePasswordScreen from '../screens/profile/ChangePasswordScreen';
 
-
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
-
-function wrapModularScreen(Component: any, extraProps: any = {}) {
-  return (props: any) => (
-    <Component
-      {...extraProps}
-      onNavigate={(screen: string, params: any) => props.navigation.navigate(screen, params)}
-      goBack={() => props.navigation.goBack()}
-      params={props.route?.params}
-      {...props}
-    />
-  );
-}
 
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   return (
@@ -103,29 +90,17 @@ function TabNavigator({ onLogout }: { onLogout: any }) {
         },
       })}
     >
-      <Tab.Screen
-        name="Messages"
-        options={{ tabBarLabel: 'Tin nhắn' }}
-      >
-        {(props) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'messages' }} />}
+      <Tab.Screen name="Messages" options={{ tabBarLabel: 'Tin nhắn' }}>
+        {(props: any) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'messages' }} />}
       </Tab.Screen>
-      <Tab.Screen
-        name="Contacts"
-        options={{ tabBarLabel: 'Danh bạ' }}
-      >
-        {(props) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'contacts' }} />}
+      <Tab.Screen name="Contacts" options={{ tabBarLabel: 'Danh bạ' }}>
+        {(props: any) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'contacts' }} />}
       </Tab.Screen>
-      <Tab.Screen
-        name="AI"
-        options={{ tabBarLabel: 'AI Assistant' }}
-      >
-        {(props) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'ai' }} />}
+      <Tab.Screen name="AI" options={{ tabBarLabel: 'AI Assistant' }}>
+        {(props: any) => <HomeScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} params={{ tab: 'ai' }} />}
       </Tab.Screen>
-      <Tab.Screen
-        name="ProfileTab"
-        options={{ tabBarLabel: 'Cá nhân' }}
-      >
-        {(props) => <ProfileScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} onLogout={onLogout} params={props.route.params} />}
+      <Tab.Screen name="ProfileTab" options={{ tabBarLabel: 'Cá nhân' }}>
+        {(props: any) => <ProfileScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} onLogout={onLogout} params={props.route.params} />}
       </Tab.Screen>
     </Tab.Navigator>
   );
@@ -136,33 +111,75 @@ export function RootNavigator({ user, onLogout }: { user: any; onLogout: any }) 
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {!user ? (
         <Stack.Group>
-          <Stack.Screen name="Login" component={wrapModularScreen(LoginScreen)} />
-          <Stack.Screen name="Register" component={wrapModularScreen(RegisterScreen)} />
-          <Stack.Screen name="Forgot" component={wrapModularScreen(ForgotPasswordScreen)} />
-          <Stack.Screen name="ResetPassword" component={wrapModularScreen(ResetPasswordScreen)} />
-          <Stack.Screen name="LoginOtp" component={wrapModularScreen(LoginOtpScreen)} />
+          <Stack.Screen name="Login">
+            {(props: any) => <LoginScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="Register">
+            {(props: any) => <RegisterScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="Forgot">
+            {(props: any) => <ForgotPasswordScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="ResetPassword">
+            {(props: any) => <ResetPasswordScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="LoginOtp">
+            {(props: any) => <LoginOtpScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
         </Stack.Group>
       ) : (
         <Stack.Group>
           <Stack.Screen name="Main">
             {(props) => <TabNavigator {...props} onLogout={onLogout} />}
           </Stack.Screen>
-          <Stack.Screen name="Chat" component={wrapModularScreen(ChatScreen)} />
-          <Stack.Screen name="Sessions" component={wrapModularScreen(SessionsScreen)} />
-          <Stack.Screen name="SecurityAlerts" component={wrapModularScreen(SecurityAlertsScreen)} />
-          <Stack.Screen name="Notifications" component={wrapModularScreen(NotificationScreen)} />
-          <Stack.Screen name="Search" component={wrapModularScreen(SearchScreen)} />
-          <Stack.Screen name="Profile" component={wrapModularScreen(ProfileScreen, { onLogout })} />
-          <Stack.Screen name="QRScanner" component={wrapModularScreen(QRScannerScreen)} />
-          <Stack.Screen name="StatusPicker" component={wrapModularScreen(StatusPickerScreen)} />
-          <Stack.Screen name="ProfileMore" component={wrapModularScreen(ProfileMoreScreen)} />
-          <Stack.Screen name="Settings" component={wrapModularScreen(SettingsScreen, { onLogout })} />
-          <Stack.Screen name="ChangePassword" component={wrapModularScreen(ChangePasswordScreen)} />
-          <Stack.Screen name="ChatDetails" component={wrapModularScreen(ChatDetailsScreen)} />
-          <Stack.Screen name="ChatGallery" component={wrapModularScreen(ChatGalleryScreen)} />
-          <Stack.Screen name="CreateGroup" component={wrapModularScreen(CreateGroupComponent)} />
-          <Stack.Screen name="InChatSearch" component={wrapModularScreen(InChatSearchScreen)} />
-          <Stack.Screen name="MediaDetail" component={wrapModularScreen(MediaDetailScreen)} options={{ animation: 'fade' }} />
+          <Stack.Screen name="Chat">
+            {(props: any) => <ChatScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="Sessions">
+            {(props: any) => <SessionsScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="SecurityAlerts">
+            {(props: any) => <SecurityAlertsScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="Notifications">
+            {(props: any) => <NotificationScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="Search">
+            {(props: any) => <SearchScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="Profile">
+            {(props: any) => <ProfileScreen {...props} onLogout={onLogout} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="QRScanner">
+            {(props: any) => <QRScannerScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="StatusPicker">
+            {(props: any) => <StatusPickerScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="ProfileMore">
+            {(props: any) => <ProfileMoreScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="Settings">
+            {(props: any) => <SettingsScreen {...props} onLogout={onLogout} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="ChangePassword">
+            {(props: any) => <ChangePasswordScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="ChatDetails">
+            {(props: any) => <ChatDetailsScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="ChatGallery">
+            {(props: any) => <ChatGalleryScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="InChatSearch">
+            {(props: any) => <InChatSearchScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="CreateGroup">
+            {(props: any) => <CreateGroupComponent {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
+          <Stack.Screen name="MediaDetail" options={{ animation: 'fade' }}>
+            {(props: any) => <MediaDetailScreen {...props} onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)} goBack={() => props.navigation.goBack()} params={props.route?.params} />}
+          </Stack.Screen>
         </Stack.Group>
       )}
     </Stack.Navigator>

@@ -18,7 +18,9 @@ import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useChatStore } from '../../store/chatStore';
 import { useCallStore } from "../../store/callStore";
+import { useGroupCallStore } from "../../store/groupCallStore";
 import { useAuth } from '../../context/AuthContext';
+import { ImageBackground } from "react-native";
 import { chatGet, chatPost, chatPatch, apiPost, chatUpload } from '../../utils/api';
 import SocketService from '../../utils/socket';
 import MessageBubble from '../../components/chat/MessageBubble';
@@ -791,7 +793,14 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
 
       {/* 2. CHAT AREA (Logic cũ của bạn) */}
       <View style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+        <ImageBackground 
+          source={require('../../../assets/background/background1.png')}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+        >
+          {/* Subtle overlay for mobile too */}
+          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ChatHeader 
           insets={insets} goBack={goBack} selectedChat={selectedChat}
           displayName={selectedChat.type === 'direct' ? getDisplayName(partner) : selectedChat.name}
@@ -960,7 +969,6 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
           onOpenPollModal={() => setIsPollModalOpen(true)}
           onOpenReminderModal={() => setIsReminderModalOpen(true)}
         />
-      </KeyboardAvoidingView>
 
         {/* TARGETING MESSAGE OVERLAY */}
         {isLoadingMessages && targetMessageId && (
@@ -1024,7 +1032,9 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
           />
         </View>
       </Modal>
-      </View>
+      </KeyboardAvoidingView>
+      </ImageBackground>
     </View>
+  </View>
   );
 }

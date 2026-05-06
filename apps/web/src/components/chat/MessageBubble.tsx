@@ -27,6 +27,7 @@ import {
   normalizeAttachment,
   truncateFileName,
 } from "../../utils/chatUtils";
+import { useCallActions } from "../../hooks/useCallActions";
 import SystemCallMessageItem from "./SystemCallMessageItem";
 import PollMessage from "./PollMessage";
 import ReminderMessage from "./ReminderMessage";
@@ -166,6 +167,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     startDirectChat,
     tags,
   } = useChatStore();
+  const { startCall, joinGroupCall } = useCallActions();
   const [isReactionDockOpen, setIsReactionDockOpen] = useState(false);
   const reactionDockRef = useRef<HTMLDivElement | null>(null);
 
@@ -295,8 +297,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   );
 
   const bubbleClass = isMe
-    ? "bg-primary/10 text-on-surface rounded-2xl rounded-tr-none"
-    : "bg-white dark:bg-surface-container-high text-on-surface rounded-2xl rounded-tl-none";
+    ? "bg-primary/15 text-on-surface shadow-[0_2px_12px_rgba(var(--color-primary-rgb),0.08)] rounded-[22px] rounded-tr-[4px] border border-primary/20"
+    : "bg-white dark:bg-surface-container-high text-on-surface shadow-[0_2px_12px_rgba(0,0,0,0.03)] rounded-[22px] rounded-tl-[4px] border border-outline-variant/10";
 
   const handleReact = (emoji: string, action: "add" | "remove" = "add") => {
     if (isCallOverlayActive) return;
@@ -338,22 +340,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           message={message}
           currentUserEmail={user?.email || ""}
           onCallBack={(type) => {
-            const partnerEmail =
-              message.metadata?.callerId === user?.email
-                ? message.metadata?.receiverId
-                : message.metadata?.callerId;
-            if (partnerEmail) {
-              const callStore = useCallStore.getState();
-              const partnerProfile = userProfiles[partnerEmail] || {
-                email: partnerEmail,
-                fullName: partnerEmail,
-              };
-              (callStore as any).startOutgoingCall(
-                partnerProfile,
-                type,
-                activeConvId,
-              );
-            }
+            startCall(type);
+          }}
+          onJoinCall={(callId, type) => {
+            joinGroupCall(activeConvId!, callId, type);
           }}
         />
       );
@@ -446,14 +436,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     }
 
     return (
-      <div className="flex justify-center my-6 animate-in fade-in zoom-in-95 duration-500 w-full">
-        <div className="flex flex-col items-center gap-1">
-          <div className="bg-surface-container-high/40 px-4 py-1.5 rounded-full backdrop-blur-sm border border-outline-variant/5 shadow-sm">
-            <p className="text-[11px] font-bold text-on-surface-variant/70 tracking-tight text-center">
+      <div className="flex justify-center my-8 animate-in fade-in zoom-in-95 duration-700 w-full">
+        <div className="flex flex-col items-center gap-2">
+          <div className="bg-black/5 dark:bg-white/5 px-5 py-2 rounded-2xl backdrop-blur-md border border-white/10 shadow-sm">
+            <p className="text-[12px] font-bold text-on-surface-variant/80 tracking-wide text-center">
               {displayContent}
             </p>
           </div>
-          <p className="text-[11px] font-bold text-on-surface-variant/70 tracking-tight text-center opacity-40">
+          <p className="text-[10px] font-black text-on-surface-variant/40 tracking-widest text-center uppercase">
             {new Date(message.createdAt).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
@@ -583,12 +573,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             } ${isHighlighted ? "message-flash-active" : ""}`}
           >
             {message.replyTo && (
-              <div className="mb-2 rounded-xl bg-black/5 p-2.5 text-[12px] border-l-4 border-primary/50 flex items-center gap-2">
+              <div className={`mb-3 rounded-xl ${isMe ? 'bg-primary/10' : 'bg-black/5'} p-3 text-[12px] border-l-4 border-primary/50 flex items-center gap-3 transition-colors hover:bg-black/5`}>
                 <div className="flex-1 min-w-0">
-                  <p className="font-extrabold opacity-60 text-[10px] uppercase tracking-wider">
+                  <p className={`font-black opacity-50 text-[10px] uppercase tracking-[0.1em] mb-1`}>
                     Phản hồi
                   </p>
-                  <p className="truncate italic text-on-surface/80">
+                  <p className={`truncate italic ${isMe ? 'text-white/90' : 'text-on-surface/80'} font-medium`}>
                     {message.replyTo.content}
                   </p>
                 </div>
@@ -597,7 +587,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
             {message.content && !isMediaOnly && (
               <p
-                className={`text-[15px] leading-relaxed whitespace-pre-wrap ${isRecalled ? "italic opacity-50 font-medium" : "text-on-surface"}`}
+                className={`text-[15px] leading-[1.6] whitespace-pre-wrap font-medium ${isRecalled ? "italic opacity-50" : "text-on-surface"}`}
               >
                 {isRecalled ? "Tin nhắn đã được thu hồi" : message.content}
               </p>
@@ -962,7 +952,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
               </button>
 
               <div
-                className={`absolute bottom-full mb-2 transition-all duration-200 bg-white/95 dark:bg-surface-container/95 backdrop-blur-md border border-outline-variant/20 dark:border-outline-variant/40 rounded-full flex items-center p-1.5 gap-1 shadow-[0_8px_30px_rgba(0,0,0,0.15)] z-[40] ${isMe ? "right-0" : "left-0"} ${isReactionDockOpen ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-2 pointer-events-none"}`}
+                className={`absolute bottom-full mb-3 transition-all duration-300 bg-white/90 dark:bg-surface-container/90 backdrop-blur-xl border border-outline-variant/10 rounded-[32px] flex items-center p-2 gap-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.2)] z-[40] ${isMe ? "right-0" : "left-0"} ${isReactionDockOpen ? "opacity-100 translate-y-0 scale-100" : "opacity-0 translate-y-4 scale-90 pointer-events-none"}`}
               >
                 {[
                   { e: "👍", label: "Thích" },
@@ -975,10 +965,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                   <button
                     key={e}
                     onClick={() => handleReact(e)}
-                    className="w-10 h-10 flex items-center justify-center hover:bg-primary/5 rounded-full transition-all hover:scale-150 active:scale-110"
+                    className="w-11 h-11 flex items-center justify-center hover:bg-primary/10 rounded-full transition-all hover:scale-150 active:scale-95 duration-200"
                     title={label}
                   >
-                    <FluentEmoji emoji={e} className="w-7 h-7" alt={label} />
+                    <FluentEmoji emoji={e} className="w-8 h-8 drop-shadow-md" alt={label} />
                   </button>
                 ))}
               </div>
@@ -987,14 +977,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
           {hasReactions && (
             <div
-              className={`absolute -bottom-3 flex flex-wrap gap-1 ${isMe ? "right-0" : "left-0"} z-[5] ${isCallOverlayActive ? "pointer-events-none" : ""}`}
+              className={`absolute -bottom-3.5 flex flex-wrap gap-1 ${isMe ? "right-2" : "left-2"} z-[5] ${isCallOverlayActive ? "pointer-events-none" : ""}`}
             >
-              <div className="flex items-center bg-white dark:bg-surface-container-high shadow-md rounded-full px-1.5 py-0.5 border border-outline-variant/10 dark:border-outline-variant/40 gap-1 animate-in zoom-in-50 duration-200">
+              <div className="flex items-center bg-white dark:bg-surface-container-high shadow-lg rounded-full px-2 py-1 border border-outline-variant/20 gap-1.5 animate-in zoom-in-50 duration-300">
                 {Object.entries(message.reactions).map(
                   ([emoji, users]: [string, any]) => (
                     <div
                       key={emoji}
-                      className="flex items-center gap-0.5 group/emoji relative cursor-pointer hover:scale-110 active:scale-95 transition-transform"
+                      className="flex items-center gap-1 group/emoji relative cursor-pointer hover:scale-110 active:scale-95 transition-all"
                       title={users.join(", ")}
                       onClick={() => handleReact(emoji, "add")}
                       onContextMenu={(e) => {
@@ -1002,8 +992,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                         handleReact(emoji, "remove");
                       }}
                     >
-                      <FluentEmoji emoji={emoji} className="w-4 h-4" />
-                      <span className="text-[10px] font-extrabold text-on-surface-variant/60">
+                      <FluentEmoji emoji={emoji} className="w-4.5 h-4.5 drop-shadow-sm" />
+                      <span className="text-[11px] font-black text-on-surface-variant/80">
                         {users.length}
                       </span>
                     </div>

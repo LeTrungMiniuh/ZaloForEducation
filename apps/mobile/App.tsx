@@ -1,59 +1,59 @@
-import React, { useState, useEffect } from "react";
-import { Platform, View, Text, ActivityIndicator } from "react-native";
-import { Audio } from "expo-av";
-import * as Font from "expo-font";
-import {
-  PlusJakartaSans_300Light,
-  PlusJakartaSans_400Regular,
-  PlusJakartaSans_500Medium,
-  PlusJakartaSans_600SemiBold,
-  PlusJakartaSans_700Bold,
-  PlusJakartaSans_800ExtraBold,
-} from "@expo-google-fonts/plus-jakarta-sans";
+import React, { useState, useEffect } from 'react';
+import { Platform, View, Text, ActivityIndicator } from 'react-native';
+import { Audio } from 'expo-av';
+import * as Font from 'expo-font';
+import { 
+  PlusJakartaSans_300Light, 
+  PlusJakartaSans_400Regular, 
+  PlusJakartaSans_500Medium, 
+  PlusJakartaSans_600SemiBold, 
+  PlusJakartaSans_700Bold, 
+  PlusJakartaSans_800ExtraBold 
+} from '@expo-google-fonts/plus-jakarta-sans';
 
-import { NavigationContainer } from "@react-navigation/native";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RootNavigator } from "./src/navigation";
-import * as Notifications from "expo-notifications";
+import { NavigationContainer } from '@react-navigation/native';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { RootNavigator } from './src/navigation';
+import * as Notifications from 'expo-notifications';
 
-// Only set notifications on native platforms, not on web
-if (Platform.OS !== "web") {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }),
-  });
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
-  Notifications.setNotificationCategoryAsync("incoming_call", [
-    {
-      identifier: "ACCEPT",
-      buttonTitle: "Nghe",
-      options: {
-        opensAppToForeground: true,
-      },
+Notifications.setNotificationCategoryAsync('incoming_call', [
+  {
+    identifier: 'ACCEPT',
+    buttonTitle: 'Nghe',
+    options: {
+      opensAppToForeground: true,
     },
-    {
-      identifier: "REJECT",
-      buttonTitle: "Từ chối",
-      options: {
-        isDestructive: true,
-        opensAppToForeground: false,
-      },
+  },
+  {
+    identifier: 'REJECT',
+    buttonTitle: 'Từ chối',
+    options: {
+      isDestructive: true,
+      opensAppToForeground: false,
     },
-  ]);
-}
+  },
+]);
 
-import SplashScreen from "./src/components/SplashScreen";
-import CallOverlay from "./src/components/chat/CallOverlay";
+import SplashScreen from './src/components/SplashScreen';
+import CallOverlay from './src/components/chat/CallOverlay';
+import GroupCallOverlay from './src/components/chat/GroupCallOverlay';
+import { useGroupSocketListeners } from './src/hooks/useGroupSocketListeners';
 
-import { AuthProvider, useAuth } from "./src/context/AuthContext";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 function MainApp() {
+  useGroupSocketListeners();
   const { user, loading: authLoading, logout, isDataLoaded } = useAuth();
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [isSplashTimeout, setIsSplashTimeout] = useState(false);
@@ -62,26 +62,25 @@ function MainApp() {
     const timer = setTimeout(() => {
       setIsSplashTimeout(true);
     }, 1500); // Minimum splash time
-
+    
     Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
       playsInSilentModeIOS: true,
       shouldDuckAndroid: true,
       playThroughEarpieceAndroid: false,
       staysActiveInBackground: true,
-    }).catch((err) => console.warn("Audio mode set failed", err));
+    }).catch(err => console.warn('Audio mode set failed', err));
 
     // Yêu cầu quyền thông báo
     const requestPushPermissions = async () => {
-      const { status: existingStatus } =
-        await Notifications.getPermissionsAsync();
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
-      if (existingStatus !== "granted") {
+      if (existingStatus !== 'granted') {
         const { status } = await Notifications.requestPermissionsAsync();
         finalStatus = status;
       }
-      if (finalStatus !== "granted") {
-        console.log("Failed to get push token for push notification!");
+      if (finalStatus !== 'granted') {
+        console.log('Failed to get push token for push notification!');
         return;
       }
     };
@@ -100,7 +99,7 @@ function MainApp() {
           PlusJakartaSans_600SemiBold,
           PlusJakartaSans_700Bold,
           PlusJakartaSans_800ExtraBold,
-          "Material Symbols Outlined": require("./assets/fonts/MaterialSymbolsOutlined-Regular.ttf"),
+          'Material Symbols Outlined': require('./assets/fonts/MaterialSymbolsOutlined-Regular.ttf')
         });
         setFontsLoaded(true);
       } catch (e) {
@@ -111,18 +110,20 @@ function MainApp() {
     loadFonts();
   }, []);
 
-  const isEverythingLoaded =
-    fontsLoaded && !authLoading && isSplashTimeout && isDataLoaded;
+  const isEverythingLoaded = fontsLoaded && !authLoading && isSplashTimeout && isDataLoaded;
 
   return (
-    <NavigationContainer>
-      {!isEverythingLoaded ? (
-        <SplashScreen />
+    <View style={{ flex: 1 }}>
+      {isEverythingLoaded ? (
+        <NavigationContainer>
+          <RootNavigator user={user} onLogout={logout} />
+          <CallOverlay />
+          <GroupCallOverlay />
+        </NavigationContainer>
       ) : (
-        <RootNavigator user={user} onLogout={logout} />
+        <SplashScreen />
       )}
-      <CallOverlay />
-    </NavigationContainer>
+    </View>
   );
 }
 
@@ -139,15 +140,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
-        <AuthProvider
-          onForceLogoutNavigate={(target) => {
-            console.log(
-              "🚨 [APP] Global Force Logout trigger received. Target:",
-              target,
-            );
-            // Note: With React Navigation, we'll need a navigation ref to handle this globally
-          }}
-        >
+        <AuthProvider onForceLogoutNavigate={(target) => {
+          console.log('🚨 [APP] Global Force Logout trigger received. Target:', target);
+        }}>
           <MainApp />
         </AuthProvider>
       </SafeAreaProvider>

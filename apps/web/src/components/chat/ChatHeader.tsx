@@ -8,7 +8,8 @@ import {
   DEFAULT_GROUP_AVATAR,
 } from "../../utils/chatUtils";
 import { useCallActions } from "../../hooks/useCallActions";
-import { Search, Video, Phone, PanelRightOpen, X, Loader2 } from "lucide-react";
+import { Search, Video, Phone, PanelRightOpen, X, Loader2, VideoIcon } from "lucide-react";
+import { useGroupCallStore } from "../../store/groupCallStore";
 
 import PinnedHeader from "./PinnedHeader";
 
@@ -38,6 +39,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
 
   const [isSearchBarOpen, setIsSearchBarOpen] = React.useState(false);
   const [localSearchQuery, setLocalSearchQuery] = React.useState("");
+  const { activeCallForConv, checkActiveCall, callState, joinMeeting } = useGroupCallStore();
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   // Keep focus on input even when store updates
@@ -93,7 +95,10 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
 
   React.useEffect(() => {
     handleCloseSearch();
-  }, [activeConvId, handleCloseSearch]);
+    if (activeConvId && activeChat?.type === 'group') {
+      checkActiveCall(activeConvId);
+    }
+  }, [activeConvId, handleCloseSearch, checkActiveCall, activeChat?.type]);
 
   // [FIX] Now we can return early after all hooks are declared
   if (activeConvId && !activeChat) {
@@ -227,6 +232,24 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
           >
             <Phone size={20} />
           </button>
+
+
+          {/* Active Call Indicator */}
+          {activeChat.type === "group" && activeCallForConv && callState === 'IDLE' && (
+            <button
+              onClick={() => joinMeeting(activeConvId!, activeCallForConv.callId, activeCallForConv.callType || 'video', {
+                email: user?.email || '',
+                fullName: user?.fullName || user?.email || '',
+                avatarUrl: user?.avatarUrl || ''
+              })}
+              className="ml-2 px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-500 rounded-full flex items-center gap-2 transition-all border border-green-500/30 animate-pulse"
+            >
+              <VideoIcon size={14} className="fill-current" />
+              <span className="text-[12px] font-extrabold uppercase tracking-tight">
+                Cuộc gọi đang diễn ra ({activeCallForConv.participantCount})
+              </span>
+            </button>
+          )}
 
           <div className="w-px h-6 bg-outline-variant/20 mx-1" />
           <button

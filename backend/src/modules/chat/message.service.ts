@@ -255,6 +255,12 @@ export class MessageService {
               if (type === "system") return content;
               if (type === "SYSTEM_CALL") {
                 const callType = extraFields?.callType || "audio";
+                const isGroup = !!extraFields?.isGroup;
+                if (isGroup) {
+                  return callType === "video"
+                    ? "[Cuộc gọi video nhóm]"
+                    : "[Cuộc gọi thoại nhóm]";
+                }
                 return callType === "video"
                   ? "[Cuộc gọi video]"
                   : "[Cuộc gọi thoại]";

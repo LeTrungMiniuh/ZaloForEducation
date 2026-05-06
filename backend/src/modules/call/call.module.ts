@@ -1,15 +1,20 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { UserModule } from '../user/user.module';
 import { ChimeSDKMeetingsClient } from '@aws-sdk/client-chime-sdk-meetings';
 import { CallService } from './call.service';
 import { CallController } from './call.controller';
 import { CallGateway } from './call.gateway';
+import { GroupCallService } from './group-call.service';
+import { GroupCallController } from './group-call.controller';
+import { GroupCallGateway } from './group-call.gateway';
 import { AuthModule } from '../auth/auth.module';
 import { ChatModule } from '../chat/chat.module';
 
 @Module({
   imports: [
-    forwardRef(() => AuthModule), // Dùng JwtAuthGuard trong CallController
-    forwardRef(() => ChatModule), // Để dùng MessageService
+    forwardRef(() => AuthModule), 
+    forwardRef(() => ChatModule), 
+    forwardRef(() => UserModule),
   ],
   providers: [
     {
@@ -38,8 +43,10 @@ import { ChatModule } from '../chat/chat.module';
     },
     CallService,
     CallGateway,
+    GroupCallService,
+    GroupCallGateway,
   ],
-  controllers: [CallController],
-  exports: [CallService],
+  controllers: [CallController, GroupCallController],
+  exports: [CallService, GroupCallService],
 })
 export class CallModule {}

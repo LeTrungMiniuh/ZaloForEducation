@@ -541,8 +541,8 @@ export const AuthProvider = ({ children, onForceLogoutNavigate }: AuthProviderPr
           setToken(savedToken);
           try {
             const res = await apiRequest('/users/profile');
-            if (res.ok && res.data) {
-              const profile = res.data;
+            if (res.ok && res.data?.profile) {
+              const profile = res.data.profile;
               await login(profile, savedToken, savedDeviceId || await getDeviceId());
               await preloadAppData(profile);
             } else {
