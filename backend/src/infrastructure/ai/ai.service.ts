@@ -40,7 +40,7 @@ export class AiService {
 
   constructor(private readonly configService: ConfigService) {
     this.apiKey = this.configService.get<string>('OPENROUTER_API_KEY') || '';
-    this.model = this.configService.get<string>('AI_MODEL') || 'google/gemini-2.5-flash-lite';
+    this.model = this.configService.get<string>('AI_MODEL') || 'google/gemini-flash-1.5';
   }
 
   async chat(messages: ChatMessage[]): Promise<AiResponse> {
@@ -68,6 +68,7 @@ export class AiService {
       if (!response.ok) {
         const errorBody = await response.text();
         this.logger.error(`OpenRouter API error (${response.status}): ${errorBody}`);
+        console.error('[AiService] Full error response:', errorBody);
         throw new Error(`AI API returned ${response.status}: ${errorBody}`);
       }
 

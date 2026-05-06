@@ -555,15 +555,17 @@ export const useSocketListeners = () => {
         hangupCall,
         conversationId: currentConvId,
       } = useCallStore.getState();
-      // Handle both callId based (Chime) and convId based (generic) hangup
-      if (
-        (data.callId && data.callId === activeCallId) ||
-        (data.convId && data.convId === currentConvId) ||
-        (!data.callId && !data.convId)
-      ) {
-        console.log("[Socket] call:hangup — cleaning up");
+      // [SENIOR] Refined hangup condition: Must have EITHER callId OR convId.
+      // Total catch-all (!data.callId && !data.convId) is too dangerous for production.
+      const isMatch = (data.callId && data.callId === activeCallId) || 
+                      (data.convId && data.convId === currentConvId);
+      
+      if (isMatch) {
+        console.log(`[Socket] call:hangup — cleaning up. Reason: ${data.reason || "NORMAL"}`);
         await leaveCurrentSession("Socket-hangup");
         hangupCall();
+      } else if (!data.callId && !data.convId) {
+        console.warn("[Socket] call:hangup received with NO IDs. Ignoring to avoid global crash.");
       }
     };
 

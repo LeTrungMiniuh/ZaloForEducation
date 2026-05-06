@@ -485,6 +485,8 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
   const isPinned = !!chat?.pinned;
   const isHidden = !!chat?.hidden;
 
+  const isBot = partnerEmail === 'bot@zaloedu.system';
+
   const allAttachments = messages.flatMap((m: any) => {
     const arr = [...(m.media || []), ...(m.files || [])];
     return arr.map(a => ({ ...a, createdAt: m.createdAt }));
@@ -1110,10 +1112,12 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
               <View style={styles.actionCircle}><Text style={styles.actionIcon}>search</Text></View>
               <Text style={styles.actionLabel}>Tìm{"\n"}tin nhắn</Text>
             </TouchableOpacity>
+            {!isBot && (
               <TouchableOpacity style={styles.actionItem} onPress={handleOpenProfile} disabled={!partnerEmail} activeOpacity={partnerEmail ? 0.85 : 1}>
-              <View style={styles.actionCircle}><Text style={styles.actionIcon}>person</Text></View>
-              <Text style={styles.actionLabel}>Trang{"\n"}cá nhân</Text>
-            </TouchableOpacity>
+                <View style={styles.actionCircle}><Text style={styles.actionIcon}>person</Text></View>
+                <Text style={styles.actionLabel}>Trang{"\n"}cá nhân</Text>
+              </TouchableOpacity>
+            )}
               <TouchableOpacity style={styles.actionItem} onPress={handleChangeWallpaper}>
               <View style={styles.actionCircle}><Text style={styles.actionIcon}>palette</Text></View>
               <Text style={styles.actionLabel}>Đổi{"\n"}hình nền</Text>
@@ -1128,11 +1132,15 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
         <View style={styles.divider} />
 
         {/* Settings List */}
-        {renderMenuItem("edit", "Đổi tên gợi nhớ", <Text style={styles.subText}>{chat.alias ? 'Đã đặt' : 'Chưa đặt'}</Text>, () => setShowAliasModal(true))}
-        {renderMenuItem("star_outline", "Đánh dấu bạn thân", 
-          <Switch value={isFavorite} onValueChange={setIsFavorite} />
+        {!isBot && (
+          <>
+            {renderMenuItem("edit", "Đổi tên gợi nhớ", <Text style={styles.subText}>{chat.alias ? 'Đã đặt' : 'Chưa đặt'}</Text>, () => setShowAliasModal(true))}
+            {renderMenuItem("star_outline", "Đánh dấu bạn thân", 
+              <Switch value={isFavorite} onValueChange={setIsFavorite} />
+            )}
+            {renderMenuItem("schedule", "Nhật ký chung")}
+          </>
         )}
-        {renderMenuItem("schedule", "Nhật ký chung")}
 
         <View style={styles.divider} />
 
@@ -1166,9 +1174,14 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
 
         <View style={styles.divider} />
 
-        {renderMenuItem("group_add", `Tạo nhóm với ${chatName}`, undefined, handleCreateGroup)}
-        {renderMenuItem("person_add", `Thêm ${chatName} vào nhóm`, undefined, handleAddToGroup)}
-        {renderMenuItem("groups", `Xem nhóm chung (${commonGroups.length})`, undefined, handleViewCommonGroups)}
+        {!isBot && (
+          <>
+            <View style={styles.divider} />
+            {renderMenuItem("group_add", `Tạo nhóm với ${chatName}`, undefined, handleCreateGroup)}
+            {renderMenuItem("person_add", `Thêm ${chatName} vào nhóm`, undefined, handleAddToGroup)}
+            {renderMenuItem("groups", `Xem nhóm chung (${commonGroups.length})`, undefined, handleViewCommonGroups)}
+          </>
+        )}
 
         <View style={styles.divider} />
 
@@ -1188,7 +1201,7 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
           <Text style={styles.subText}>{isMuted ? 'Đang tắt' : 'Đang bật'}</Text>,
           handleToggleMute
         )}
-        {renderMenuItem("person_outline", "Cài đặt cá nhân", undefined, handleOpenPersonalSettings)}
+        {!isBot && renderMenuItem("person_outline", "Cài đặt cá nhân", undefined, handleOpenPersonalSettings)}
         {renderMenuItem(
           "history", 
           "Tin nhắn tự xóa", 
@@ -1199,7 +1212,7 @@ const ChatDetailsScreen = ({ route, navigation }: any) => {
         <View style={styles.divider} />
 
         {renderMenuItem("report", "Báo xấu", undefined, handleReportConversation, '#ef4444')}
-        {renderMenuItem("block", "Quản lý chặn", undefined, handleBlockUser)}
+        {!isBot && renderMenuItem("block", "Quản lý chặn", undefined, handleBlockUser)}
         {renderMenuItem("storage", "Dung lượng trò chuyện", undefined, handleConversationStorage)}
         {renderMenuItem("delete_outline", "Xóa lịch sử trò chuyện", undefined, handleClearChat, '#ef4444')}
 

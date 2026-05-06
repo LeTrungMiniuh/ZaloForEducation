@@ -1,6 +1,7 @@
-import type {
-  Conversation as SharedConversation,
-  Message as SharedMessage,
+import {
+  type Conversation as SharedConversation,
+  type Message as SharedMessage,
+  BOT_EMAIL,
 } from "@zalo-edu/shared";
 import Swal from "sweetalert2";
 import { create } from "zustand";
@@ -1599,7 +1600,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     try {
       const res = await api.get(`/chat/search?q=${encodeURIComponent(q)}`);
-      set({ searchResultsList: res.data });
+      const data = res.data || { contacts: [], messages: [], files: [] };
+      
+      // Filter out bot from search results
+      const filteredContacts = (data.contacts || []).filter((c: any) => {
+        const email = String(c.email || "").toLowerCase();
+        return email !== BOT_EMAIL && !email.includes('bot@zaloedu.system');
+      });
+      const filteredMessages = (data.messages || []).filter((m: any) => {
+        const senderId = String(m.senderId || "").toLowerCase();
+        return senderId !== BOT_EMAIL && !senderId.includes('bot@zaloedu.system');
+      });
+
+      set({ searchResultsList: { ...data, contacts: filteredContacts, messages: filteredMessages } });
     } catch (err) {
       console.error("Search failed", err);
     }

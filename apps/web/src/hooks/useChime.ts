@@ -7,16 +7,22 @@ import {
   LogLevel,
 } from "amazon-chime-sdk-js";
 import { useCallStore } from "../store/callStore";
+import { useAuth } from "../context/AuthContext";
 
 // Module-level singletons: survive React re-renders and component unmounts
 let globalSession: DefaultMeetingSession | null = null;
-let globalTiles: { local?: number; remote?: number } = {};
-let globalVideoStarted = false;
 let globalLocalVideo: HTMLVideoElement | null = null;
 let globalRemoteVideo: HTMLVideoElement | null = null;
+let globalContentVideo: HTMLVideoElement | null = null;
+let globalTiles: { local?: number; remote?: number; content?: number } = {};
+let globalVideoStarted = false;
 
 const isValidTileId = (tileId: unknown): tileId is number =>
   typeof tileId === "number" && Number.isFinite(tileId);
+
+const requestNextTick = (callback: () => void) => {
+  requestAnimationFrame(() => requestAnimationFrame(callback));
+};
 
 /**
  * [Web-Chime] Normalize Chime attendee IDs (strips modality suffix like #1, #2)
@@ -30,31 +36,47 @@ const normalizeAttendeeId = (id?: string | null): string | null => {
  * Cập nhật video element refs từ CallOverlay.
  * Truyền `undefined` để giữ nguyên phía đó.
  */
-export const setGlobalVideoRefs = (
-  local: HTMLVideoElement | null | undefined,
-  remote: HTMLVideoElement | null | undefined,
-  localTileId?: number,
-  remoteTileId?: number,
-) => {
-  if (local !== undefined) {
-    globalLocalVideo = local;
-    const tId = localTileId ?? globalTiles.local;
-    // CRITICAL: Bind IMMEDIATELY when the local DOM node arrives!
-    if (globalLocalVideo && tId !== undefined && globalSession) {
-      console.log(`[Web-Chime] 🔗 DOM Node Arrived! Binding LOCAL tile ${tId}`);
-      globalSession.audioVideo.bindVideoElement(tId, globalLocalVideo);
-    }
+export const setLocalVideoRef = (node: HTMLVideoElement | null) => {
+  globalLocalVideo = node;
+  const tId = globalTiles.local;
+  if (globalLocalVideo && tId !== undefined && globalSession) {
+    console.log(`[Web-Chime] 🔗 Binding LOCAL tile ${tId}`);
+    globalSession.audioVideo.bindVideoElement(tId, globalLocalVideo);
   }
-  if (remote !== undefined) {
-    globalRemoteVideo = remote;
-    const tId = remoteTileId ?? globalTiles.remote;
-    // CRITICAL: Bind IMMEDIATELY when the remote DOM node arrives!
-    if (globalRemoteVideo && tId !== undefined && globalSession) {
-      console.log(
-        `[Web-Chime] 🔗 DOM Node Arrived! Binding remote tile ${tId}`,
-      );
-      globalSession.audioVideo.bindVideoElement(tId, globalRemoteVideo);
-    }
+};
+
+export const setRemoteVideoRef = (node: HTMLVideoElement | null) => {
+  globalRemoteVideo = node;
+  const tId = globalTiles.remote;
+  if (globalRemoteVideo && tId !== undefined && globalSession) {
+    console.log(`[Web-Chime] 🔗 Binding REMOTE tile ${tId}`);
+    globalSession.audioVideo.bindVideoElement(tId, globalRemoteVideo);
+  }
+};
+
+export const setContentVideoRef = (node: HTMLVideoElement | null) => {
+  globalContentVideo = node;
+  const tId = globalTiles.content;
+  if (node && tId !== undefined && globalSession) {
+    globalSession.audioVideo.bindVideoElement(tId, node);
+  }
+};
+
+const tryBindTile = (tileId: number, type: "local" | "remote" | "content", attempt = 0) => {
+  if (!globalSession) return;
+  
+  let el: HTMLVideoElement | null = null;
+  if (type === "local") el = globalLocalVideo;
+  else if (type === "remote") el = globalRemoteVideo;
+  else if (type === "content") el = globalContentVideo;
+
+  if (el) {
+    globalSession.audioVideo.bindVideoElement(tileId, el);
+    console.log(`[Chime] ✅ ${type.toUpperCase()} tile=${tileId} bound on attempt ${attempt}`);
+  } else if (attempt < 5) {
+    setTimeout(() => tryBindTile(tileId, type, attempt + 1), 100 * (attempt + 1));
+  } else {
+    console.warn(`[Chime] ❌ FAILED BINDING tile=${tileId}: ${type.toUpperCase()} element is NULL after 5 attempts`);
   }
 };
 
@@ -64,32 +86,81 @@ export const setGlobalVideoRefs = (
 export const leaveCurrentSession = async (reason: string = "unknown") => {
   if (globalSession) {
     console.log(`[Chime] Cleaning up global session. Reason: ${reason}`);
+    const sessionToStop = globalSession;
+    globalSession = null;
+    
     try {
-      const cleanupPromises: Promise<void>[] = [];
-      if (globalVideoStarted)
-        cleanupPromises.push(globalSession.audioVideo.stopVideoInput());
-      cleanupPromises.push(globalSession.audioVideo.stopAudioInput());
-
-      await Promise.all(cleanupPromises);
-
-      globalSession.audioVideo.stopLocalVideoTile();
-      globalSession.audioVideo.stop();
-      if (globalLocalVideo?.srcObject) {
-        (globalLocalVideo.srcObject as MediaStream)
-          .getTracks()
-          .forEach((t) => t.stop());
-        globalLocalVideo.srcObject = null;
+      const store = useCallStore.getState();
+      if (store.isLocalScreenSharing) {
+        sessionToStop.audioVideo.stopContentShare();
+        await new Promise(res => setTimeout(res, 200));
+        cleanupScreenShareStream();
       }
+
+      const cleanupPromises: Promise<any>[] = [
+        sessionToStop.audioVideo.stopAudioInput()
+      ];
+      
+      if (globalVideoStarted) {
+        cleanupPromises.push(sessionToStop.audioVideo.stopVideoInput());
+      }
+
+      await Promise.allSettled(cleanupPromises);
+
+      sessionToStop.audioVideo.stop();
     } catch (e) {
       console.warn("[Chime] Cleanup error:", e);
     }
-    globalSession = null;
+    
     globalTiles = {};
     globalVideoStarted = false;
     globalLocalVideo = null;
     globalRemoteVideo = null;
+    globalContentVideo = null;
     console.log("[Chime] Session cleaned up.");
   }
+};
+
+const cleanupScreenShareStream = () => {
+  const store = useCallStore.getState();
+  if (store.localScreenShareStream) {
+    store.localScreenShareStream.getTracks().forEach(t => t.stop());
+  }
+  store.setLocalScreenSharing(false, null);
+  
+  // SSOT cleanup
+  const myId = normalizeAttendeeId(store.attendeeData?.AttendeeId)?.toLowerCase();
+  if (myId) {
+    store.setScreenShare(myId, { stream: null, isSharing: false });
+  }
+};
+
+/**
+ * Gán tile vào video element tương ứng.
+ */
+export const bindTile = (tileId: number, type: "local" | "remote" | "content") => {
+  if (!globalSession || !isValidTileId(tileId)) return;
+
+  let el: HTMLVideoElement | null = null;
+  if (type === "local") el = globalLocalVideo;
+  else if (type === "remote") el = globalRemoteVideo;
+  else if (type === "content") el = globalContentVideo;
+
+  if (el) {
+    console.log(`[Chime] 🔗 BINDING tile=${tileId} to ${type.toUpperCase()} elementId=${el.id || "no-id"}`);
+    globalSession.audioVideo.bindVideoElement(tileId, el);
+  } else {
+    console.warn(`[Chime] ⚠️ FAILED BINDING tile=${tileId}: ${type.toUpperCase()} element is NULL`);
+  }
+};
+
+/**
+ * Gán lại toàn bộ các tile hiện có vào DOM nodes.
+ */
+export const rebindAllTiles = () => {
+  if (isValidTileId(globalTiles.local)) bindTile(globalTiles.local, "local");
+  if (isValidTileId(globalTiles.remote)) bindTile(globalTiles.remote, "remote");
+  if (isValidTileId(globalTiles.content)) bindTile(globalTiles.content, "content");
 };
 
 /**
@@ -154,6 +225,76 @@ export const toggleMic = async (turnOn: boolean) => {
     console.log("[Chime] Microphone MUTED");
   }
 };
+ 
+/**
+ * Bật chia sẻ màn hình (Screen Share)
+ */
+let stopScreenShareProxy = async () => {};
+
+export const startScreenShare = async () => {
+  if (!globalSession) return;
+ 
+  const store = useCallStore.getState();
+  
+  // Toggle behavior
+  if (store.isLocalScreenSharing) {
+    await stopScreenShare();
+    return;
+  }
+ 
+  // Guard: Someone else is sharing
+  const isSomeoneSharing = Object.values(store.screenShares).some(s => s.isSharing);
+  if (isSomeoneSharing) {
+    alert("Đang có người khác chia sẻ màn hình. Bạn không thể chia sẻ lúc này.");
+    return;
+  }
+ 
+  try {
+    console.log("[Chime] Starting Screen Capture...");
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 15 }
+      },
+      audio: false
+    });
+ 
+    const track = stream.getVideoTracks()[0];
+    track.onended = () => {
+      stopScreenShareProxy();
+    };
+ 
+    store.setLocalScreenSharing(true, stream);
+    
+    requestNextTick(() => {
+      if (globalSession) {
+        globalSession.audioVideo.startContentShare(stream).catch(e => {
+          console.error("[Chime] startContentShare failed:", e);
+          cleanupScreenShareStream();
+        });
+      }
+    });
+  } catch (e: any) {
+    console.error("[Chime] startScreenShare failed:", e);
+    if (e.name === "NotAllowedError") {
+      alert("Bạn đã từ chối quyền chia sẻ màn hình.");
+    }
+    store.setLocalScreenSharing(false, null);
+  }
+};
+ 
+export const stopScreenShare = async () => {
+  try {
+    globalSession?.audioVideo.stopContentShare();
+  } catch (e) {
+    console.error("[Chime] stopScreenShare error:", e);
+  } finally {
+    cleanupScreenShareStream();
+  }
+};
+
+stopScreenShareProxy = stopScreenShare;
 
 export const useChime = () => {
   const {
@@ -165,29 +306,10 @@ export const useChime = () => {
     setConnecting,
     setConnectionError,
     setRemoteCameraOn,
+    setRemoteTiles,
+    remoteTiles,
   } = useCallStore();
-
-  const bindTile = useCallback((tileId: number, isLocal: boolean) => {
-    if (!globalSession) return;
-    if (!isValidTileId(tileId)) return;
-
-    const el = isLocal ? globalLocalVideo : globalRemoteVideo;
-    if (el) {
-      console.log(
-        `[Chime] Binding tile ${tileId} to ${isLocal ? "LOCAL" : "REMOTE"} video element`,
-      );
-      globalSession.audioVideo.bindVideoElement(tileId, el);
-    } else {
-      console.warn(
-        `[Chime] Cannot bind tile ${tileId}: ${isLocal ? "LOCAL" : "REMOTE"} video element is currently NULL`,
-      );
-    }
-  }, []);
-
-  const rebindAllTiles = useCallback(() => {
-    if (isValidTileId(globalTiles.local)) bindTile(globalTiles.local, true);
-    if (isValidTileId(globalTiles.remote)) bindTile(globalTiles.remote, false);
-  }, [bindTile]);
+  const { socket } = useAuth();
 
   const setupSession = useCallback(
     async (type: "audio" | "video") => {
@@ -227,31 +349,6 @@ export const useChime = () => {
       globalSession = session;
       globalTiles = {};
       globalVideoStarted = false;
-
-      // [SENIOR] Listen for remote video element mount to bind tiles immediately
-      const remoteVideoObserver = new MutationObserver(() => {
-        const remoteEl = document.getElementById(
-          "remote-video",
-        ) as HTMLVideoElement;
-        if (remoteEl) {
-          const { remoteTiles } = useCallStore.getState();
-          if (remoteTiles.length > 0 && globalSession) {
-            console.log(
-              `[Web-Chime] 🔗 DOM Node Arrived! Binding remote tile ${remoteTiles[0].tileId}`,
-            );
-            globalSession.audioVideo.bindVideoElement(
-              remoteTiles[0].tileId,
-              remoteEl,
-            );
-          }
-        }
-      });
-      if (document.body) {
-        remoteVideoObserver.observe(document.body, {
-          childList: true,
-          subtree: true,
-        });
-      }
 
       try {
         console.log("[Chime] Step 1: Initializing audio...");
@@ -325,46 +422,58 @@ export const useChime = () => {
             );
 
             console.log(
-              `[Web-Chime] 🎥 Tile Update: id=${tileId} isLocal=${isLocal} attendee=${attendeeId} active=${tileState.active}`,
+              `[Web-Chime] 🎥 Tile Update: id=${tileId} isLocal=${isLocal} attendee=${attendeeId} active=${tileState.active} isContent=${tileState.isContent}`,
             );
+
+            if (!attendeeId) {
+              console.log(`[Web-Chime] ⏳ Tile ${tileId} has no attendeeId yet. Skipping bind...`);
+              return;
+            }
+
+            if (tileState.isContent) {
+              globalTiles.content = tileId;
+              const store = useCallStore.getState();
+
+              if (!tileState.active) {
+                globalTiles.content = undefined;
+                store.clearAllScreenShares();
+                rebindAllTiles();
+                return;
+              }
+
+              if (!store.screenShares[attendeeId]) {
+                store.setScreenShare(attendeeId, { stream: null, isSharing: true });
+              }
+              tryBindTile(tileId, "content");
+              return;
+            }
 
             if (isLocal) {
               globalTiles.local = tileId;
+              tryBindTile(tileId, "local");
             } else {
-              // [SENIOR] Handle Remote Tile
               globalTiles.remote = tileId;
-
-              const store = useCallStore.getState();
-              store.setRemoteCameraOn(true);
-
-              const exists = store.remoteTiles.find((t) => t.tileId === tileId);
-              if (!exists) {
-                store.setRemoteTiles([{ tileId, attendeeId }]);
+              setRemoteCameraOn(true);
+              if (!remoteTiles.find((t) => t.tileId === tileId)) {
+                setRemoteTiles([{ tileId, attendeeId }]);
               }
-
-              // Bind immediately if DOM is already there
-              const remoteEl = document.getElementById(
-                "remote-video",
-              ) as HTMLVideoElement;
-              if (remoteEl) {
-                console.log(
-                  `[Web-Chime] 🔗 Direct binding tile ${tileId} to existing remote video`,
-                );
-                session.audioVideo.bindVideoElement(tileId, remoteEl);
-              } else {
-                console.warn(
-                  `[Web-Chime] ⏳ Remote tile ${tileId} arrived but DOM not ready. MutationObserver will handle it.`,
-                );
-              }
+              tryBindTile(tileId, "remote");
             }
-            bindTile(tileId, isLocal);
           },
           videoTileWasRemoved: (tileId: number) => {
             console.log(`[Web-Chime] ❌ Tile Removed: ${tileId}`);
             if (!isValidTileId(tileId)) return;
 
+            const store = useCallStore.getState();
             if (globalTiles.local === tileId) {
               globalTiles.local = undefined;
+            }
+            if (globalTiles.content === tileId) {
+              console.log("[Web-Chime] 🖥️ Screen share tile removed. Cleaning up...");
+              globalTiles.content = undefined;
+              store.clearAllScreenShares();
+              // Force re-bind others to ensure camera restoration
+              rebindAllTiles();
             }
             if (globalTiles.remote === tileId) {
               globalTiles.remote = undefined;
@@ -397,12 +506,16 @@ export const useChime = () => {
             // [FIX] Notify backend that peer has successfully joined Chime meeting to clear Ghost Hangup timer
             const { conversationId, activeCallId, toEmail, toEmails } =
               useCallStore.getState();
+            console.log("[Web-Chime] 🧪 Debug Signaling Check:", {
+              conversationId,
+              activeCallId,
+              hasSocket: !!socket
+            });
             if (
               conversationId &&
               activeCallId &&
-              typeof (window as any).socket !== "undefined"
+              socket
             ) {
-              const socket = (window as any).socket;
               const recipients =
                 toEmails && toEmails.length > 0
                   ? toEmails
@@ -564,6 +677,9 @@ export const useChime = () => {
       setConnecting,
       setConnectionError,
       setRemoteCameraOn,
+      setRemoteTiles,
+      remoteTiles,
+      socket,
     ],
   );
 
@@ -590,6 +706,6 @@ export const useChime = () => {
   ]);
 
   return {
-    rebindAllTiles,
+    // rebindAllTiles, // Now exported standalone
   };
 };

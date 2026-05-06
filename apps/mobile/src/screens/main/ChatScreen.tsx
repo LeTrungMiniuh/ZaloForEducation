@@ -105,6 +105,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
   const { startOutgoingCall, resetCall, setMeetingInfo } = useCallStore();
 
   // LOCAL STATE
+  const [currentConvId, setCurrentConvId] = useState<string | null>(conversationId || null);
   const [localConversation, setLocalConversation] = useState<any>(null);
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
@@ -123,6 +124,10 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
   const [customMuteEndTime, setCustomMuteEndTime] = useState("07:00");
   const [isPollModalOpen, setIsPollModalOpen] = useState(false);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (conversationId) setCurrentConvId(conversationId);
+  }, [conversationId]);
 
   const typingTimeoutRef = useRef<any>(null);
   const messagesScrollRef = useRef<FlatList>(null);
@@ -262,8 +267,9 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
   }, [targetMessageId]);
 
   const selectedChat = useMemo(() => {
-    if (conversationId) {
-      return conversations.find(c => c.id === conversationId) || localConversation;
+    const targetId = currentConvId || conversationId;
+    if (targetId) {
+      return conversations.find(c => c.id === targetId) || localConversation;
     }
     if (targetEmail) {
       const target = normalizeEmail(targetEmail);
@@ -274,7 +280,12 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
       ) || localConversation;
     }
     return localConversation;
-  }, [conversations, conversationId, targetEmail, localConversation, normalizeEmail]);
+  }, [conversations, currentConvId, conversationId, targetEmail, localConversation, normalizeEmail]);
+
+  const isBot = useMemo(() => {
+    const pEmail = selectedChat?.partner || targetEmail || '';
+    return pEmail === 'bot@zaloedu.system';
+  }, [selectedChat, targetEmail]);
 
 
   const activePinnedMessages = useMemo(() => {
@@ -379,7 +390,12 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
       if (!activeId && targetEmail) {
         console.log("[ChatScreen] Starting direct chat with:", targetEmail);
         setIsLoadingMetadata(true);
-        activeId = await startDirectChat(targetEmail);
+        try {
+          activeId = await startDirectChat(targetEmail);
+          if (activeId) setCurrentConvId(activeId);
+        } catch (err) {
+          console.error('[ChatScreen] startDirectChat FAILED:', err);
+        }
         setIsLoadingMetadata(false);
         console.log("[ChatScreen] Got activeId from startDirectChat:", activeId);
       }
@@ -415,8 +431,9 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     initChat();
 
     return () => {
-      if (SocketService.socket && conversationId) {
-        SocketService.socket.emit("leave_room", { convId: conversationId });
+      const idToLeave = currentConvId || conversationId;
+      if (SocketService.socket && idToLeave) {
+        SocketService.socket.emit("leave_room", { convId: idToLeave });
       }
       setActiveConversation(null);
     };
@@ -437,7 +454,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     const socket = SocketService.socket;
     if (!socket) return;
     const handleTyping = (data: any) => {
-      if (data.convId !== conversationId || data.email === user?.email) return;
+      if (data.convId !== (currentConvId || conversationId) || data.email === user?.email) return;
       setTypingUsers(prev => {
         const next = new Set(prev);
         data.isTyping ? next.add(data.email) : next.delete(data.email);
@@ -446,13 +463,20 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     };
     const handleMessageReaction = (data: any) => { if (data.messageId) updateMessage(data.messageId, { reactions: data.reactions }); };
     const handleMessageUpdate = (data: any) => {
-      if (data.convId === conversationId || data.conversationId === conversationId) {
+      if (data.convId === (currentConvId || conversationId) || data.conversationId === (currentConvId || conversationId)) {
         updateMessage(data.messageId || data.id, data.updates || data);
       }
     };
     const handleMessageDelete = (data: any) => {
-      if (data.convId === conversationId || data.conversationId === conversationId) {
+      if (data.convId === (currentConvId || conversationId) || data.conversationId === (currentConvId || conversationId)) {
         useChatStore.getState().setMessages((prev: any[]) => prev.filter(m => m.id !== (data.messageId || data.id)));
+      }
+    };
+    const handleReceiveMessage = (data: any) => {
+      const convId = data.conversationId || data.convId;
+      if (convId === (currentConvId || conversationId)) {
+        console.log(`[ChatScreen] Received message in active chat:`, data.id);
+        useChatStore.getState().addMessage(data);
       }
     };
     const handlePinUpdate = (data: any) => {
@@ -464,7 +488,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
       }
     };
     const handleGroupUpdate = (data: any) => {
-      if (data.convId === conversationId || data.id === conversationId) {
+      if (data.convId === (currentConvId || conversationId) || data.id === (currentConvId || conversationId)) {
         setConversations((prev: any[]) => prev.map(c => c.id === data.id ? { ...c, ...data.updates } : c));
         if (data.updates) {
           setLocalConversation((prev: any) => prev ? { ...prev, ...data.updates } : null);
@@ -472,14 +496,14 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
       }
     };
     const handleGroupDissolve = (data: any) => {
-      if (data.convId === conversationId || data.id === conversationId) {
+      if (data.convId === (currentConvId || conversationId) || data.id === (currentConvId || conversationId)) {
         Alert.alert("Thông báo", "Nhóm đã bị giải tán bởi trưởng nhóm.");
         if (goBack) goBack();
       }
     };
     const handleConversationUpdated = (data: any) => {
       const convId = data.conversationId || data.convId || data.id;
-      if (convId === conversationId) {
+      if (convId === (currentConvId || conversationId)) {
         setConversations((prev: any[]) => prev.map(c => c.id === convId ? { ...c, ...data.updates } : c));
         if (data.updates) {
           setLocalConversation((prev: any) => prev ? { ...prev, ...data.updates } : null);
@@ -490,6 +514,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     socket.on("message_reaction", handleMessageReaction);
     socket.on("message_update", handleMessageUpdate);
     socket.on("message_delete", handleMessageDelete);
+    socket.on("receiveMessage", handleReceiveMessage);
     socket.on("PIN_UPDATE", handlePinUpdate);
     socket.on("group_updated", handleGroupUpdate);
     socket.on("conversation:updated", handleConversationUpdated);
@@ -499,12 +524,13 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
       socket.off("message_reaction", handleMessageReaction);
       socket.off("message_update", handleMessageUpdate);
       socket.off("message_delete", handleMessageDelete);
+      socket.off("receiveMessage", handleReceiveMessage);
       socket.off("PIN_UPDATE", handlePinUpdate);
       socket.off("group_updated", handleGroupUpdate);
       socket.off("conversation:updated", handleConversationUpdated);
       socket.off("group_dissolved", handleGroupDissolve);
     };
-  }, [conversationId, currentUserEmail, updateMessage, setConversations]);
+  }, [currentConvId, conversationId, currentUserEmail, updateMessage, setConversations]);
 
   const handleReply = useCallback((message: any) => {
     const senderEmail = normalizeEmail(message.senderId);
@@ -580,10 +606,47 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
   }, [messages, patchMessageOptimistic, selectedChat?.id, selectedMessageIds]);
 
   // HANDLERS
-  const handleChatSend = async (content: string, attachments: any[] = []) => {
-    const chatId = selectedChat?.id;
-    if (!chatId) return;
+  const isVideo = (a: any) => {
+    const mime = String(a.mimeType || a.fileType || "").toLowerCase();
+    const name = String(a.name || a.fileName || "").toLowerCase();
+    return mime.startsWith("video/") || /\.(mp4|mov|avi|wmv|webm|mkv|3gp|flv|m4v)(\?.*)?$/.test(name);
+  };
+  const isImage = (a: any) => {
+    const mime = String(a.mimeType || a.fileType || "").toLowerCase();
+    const name = String(a.name || a.fileName || "").toLowerCase();
+    return mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|heic|heif)(\?.*)?$/.test(name);
+  };
+
+  const handleChatSend = async (content: string, attachments: any[]) => {
+    const chatId = selectedChat?.id || conversationId;
+    if (!chatId || !user?.email) return;
+
+    // 1. PRE-CLASSIFY ATTACHMENTS FOR OPTIMISTIC UI
+    const optimisticMedia = attachments.filter(a => isImage(a) || isVideo(a)).map(a => ({
+      ...a,
+      url: a.dataUrl,
+      status: 'sending'
+    }));
+    const optimisticFiles = attachments.filter(a => !isImage(a) && !isVideo(a)).map(a => ({
+      ...a,
+      url: a.dataUrl,
+      status: 'sending'
+    }));
+
+    const isAudio = attachments.some(a => String(a.mimeType || "").toLowerCase().startsWith("audio/"));
     
+    let messageType: any = "text";
+    if (isAudio) messageType = "audio";
+    else if (optimisticMedia.length > 0) {
+      if (optimisticMedia.length === 1) {
+        messageType = isImage(optimisticMedia[0]) ? "image" : "video";
+      } else {
+        messageType = "media";
+      }
+    } else if (optimisticFiles.length > 0) {
+      messageType = "file";
+    }
+
     const replyToData = replyTarget ? {
       id: replyTarget.id,
       content: replyTarget.content,
@@ -592,66 +655,72 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
       files: replyTarget.files
     } : undefined;
 
-    const isAudio = attachments.some(a => String(a.mimeType || "").toLowerCase().startsWith("audio/"));
-
-    // 1. Send optimistic message immediately
     const tempId = await sendMessageOptimistic(chatId, { 
       content,
-      type: isAudio ? "audio" : (attachments.length > 0 ? "media" : "text"),
+      type: messageType,
       replyTo: replyToData,
-      files: attachments,
+      media: optimisticMedia,
+      files: optimisticFiles,
       skipApi: true
     });
-    
+
     setReplyTarget(null);
 
-    // 2. Background process
+    // 2. BACKGROUND UPLOAD AND SEND
     (async () => {
       try {
-        console.log(`[ChatScreen] Starting background send for ${tempId}`);
-        const uploaded = await Promise.all(attachments.map(async (item) => {
-          if (
-            item.isSticker || 
-            (item.dataUrl && item.dataUrl.startsWith('http')) || 
-            item.mimeType === 'application/location' || 
-            item.mimeType === 'application/contact'
-          ) return item;
+        const uploaded = [];
+        let uploadFailed = false;
 
+        for (const item of attachments) {
           const uploadUri = item.dataUrl || item.uri || (item.file?.uri);
-          if (!uploadUri) return item;
+          if (!uploadUri) continue;
 
+          console.log(`[ChatScreen] Uploading attachment: ${item.name}`);
           const res = await chatUpload(item.file || { uri: uploadUri, name: item.name, type: item.mimeType });
-          return res.ok ? { ...item, dataUrl: res.data.fileUrl || res.data.url } : item;
+          
+          if (res.ok && res.data) {
+            uploaded.push({ ...item, ...res.data });
+          } else {
+            console.error(`[ChatScreen] Upload failed for ${item.name}`, res.error);
+            uploadFailed = true;
+            break;
+          }
+        }
+
+        if (uploadFailed) {
+          updateMessage(tempId, { status: "error" });
+          return;
+        }
+
+        const media = uploaded.filter(a => isImage(a) || isVideo(a)).map(a => ({
+          url: a.fileUrl || a.url || a.dataUrl,
+          dataUrl: a.fileUrl || a.url || a.dataUrl,
+          name: a.name || a.fileName,
+          mimeType: a.mimeType || a.fileType,
+          size: a.size,
+          isSticker: a.isSticker === true,
+          isHD: a.isHD === true,
         }));
 
-        const isVideo = (a: any) => {
-          const mime = String(a.mimeType || "").toLowerCase();
-          const name = String(a.name || "").toLowerCase();
-          return mime.startsWith("video/") || /\.(mp4|mov|avi|wmv|webm|mkv|3gp|flv|m4v)(\?.*)?$/.test(name);
-        };
-        const isImage = (a: any) => {
-          const mime = String(a.mimeType || "").toLowerCase();
-          const name = String(a.name || "").toLowerCase();
-          return mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|heic|heif)(\?.*)?$/.test(name);
-        };
-
-        const media = uploaded.filter((a: any) => isImage(a) || isVideo(a)).map((a: any) => ({
-          url: a.dataUrl, dataUrl: a.dataUrl, name: a.name, mimeType: a.mimeType, size: a.size, isSticker: a.isSticker === true, isHD: a.isHD === true,
-        }));
-        const files = uploaded.filter((a: any) => !isImage(a) && !isVideo(a)).map((a: any) => ({
-          url: a.dataUrl, dataUrl: a.dataUrl, name: a.name, mimeType: a.mimeType, size: a.size,
+        const files = uploaded.filter(a => !isImage(a) && !isVideo(a)).map(a => ({
+          url: a.fileUrl || a.url || a.dataUrl,
+          dataUrl: a.fileUrl || a.url || a.dataUrl,
+          name: a.name || a.fileName,
+          mimeType: a.mimeType || a.fileType,
+          size: a.size,
         }));
 
-        const audioFile = files.find((f: any) => String(f.mimeType || "").toLowerCase().startsWith("audio/"));
-        const isAudio = !!audioFile;
+        const audioFile = uploaded.find(a => String(a.mimeType || a.fileType || "").toLowerCase().startsWith("audio/"));
+        const audioUrl = audioFile ? (audioFile.fileUrl || audioFile.url || audioFile.dataUrl) : undefined;
 
-        const payload = { 
-          content: content || (isAudio ? '[Tin nhắn thoại]' : media.length > 0 ? '[Hình ảnh]' : files.length > 0 ? '[Tệp tin]' : ''), 
-          type: isAudio ? 'audio' : (media.length > 0 || files.length > 0) ? 'media' : 'text',
-          media: media.length > 0 ? media : undefined, 
-          files: files.length > 0 ? files : undefined, 
-          audioUrl: audioFile ? audioFile.url : undefined,
-          replyTo: replyToData 
+        const payload: any = {
+          content: content || (audioUrl ? "[Tin nhắn thoại]" : (media.length > 0 ? "[Ảnh/Video]" : (files.length > 0 ? "[Tệp tin]" : ""))),
+          type: audioUrl ? 'audio' : (media.length > 0 && files.length === 0) ? (media.length === 1 ? (isImage(media[0]) ? 'image' : 'video') : 'media') : (files.length > 0 || media.length > 0) ? 'media' : 'text',
+          media: media.length > 0 ? media : undefined,
+          files: files.length > 0 ? files : undefined,
+          audioUrl,
+          replyToId: replyToData?.id
         };
 
         const res = await chatPost(`/conversations/${encodeURIComponent(chatId)}/messages`, payload);
@@ -659,11 +728,11 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
           console.log(`[ChatScreen] Background send success for ${tempId}`);
           updateMessage(tempId, { ...res.data, status: "sent" });
         } else {
-          console.error(`[ChatScreen] Background send failed for ${tempId}:`, res.message || 'Unknown error');
+          console.error(`[ChatScreen] Background send failed for ${tempId}`, res.error);
           updateMessage(tempId, { status: "error" });
         }
       } catch (err) {
-        console.error(`[ChatScreen] Background send exception for ${tempId}:`, err);
+        console.error(`[ChatScreen] Critical error in background send:`, err);
         updateMessage(tempId, { status: "error" });
       }
     })();
@@ -834,6 +903,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
           onOpenDetails={() => {
             if (onNavigate) onNavigate('ChatDetails', { conversationId: selectedChat.id });
           }}
+          isBot={isBot}
         />
 
         <PinBanner 
@@ -992,6 +1062,7 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
           onTyping={() => { if (SocketService.socket && selectedChat.id && !typingTimeoutRef.current) { SocketService.socket.emit("typing", { convId: selectedChat.id, isTyping: true }); typingTimeoutRef.current = setTimeout(() => { typingTimeoutRef.current = null; }, 2000); } }}
           onOpenPollModal={() => setIsPollModalOpen(true)}
           onOpenReminderModal={() => setIsReminderModalOpen(true)}
+          isBot={isBot}
         />
 
         {/* TARGETING MESSAGE OVERLAY */}

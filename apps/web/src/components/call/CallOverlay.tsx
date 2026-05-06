@@ -11,14 +11,20 @@ import {
   Calendar,
   Minimize2,
   Maximize2,
+  Monitor,
 } from "lucide-react";
-import { useCallStore } from "../../store/callStore";
+import { useCallStore, type CallState } from "../../store/callStore";
 import { useAuth } from "../../context/AuthContext";
 import {
-  setGlobalVideoRefs,
+  setLocalVideoRef,
+  setRemoteVideoRef,
+  setContentVideoRef,
   toggleCamera as toggleCameraChime,
   toggleMic as toggleMicChime,
   leaveCurrentSession,
+  startScreenShare,
+  stopScreenShare,
+  rebindAllTiles,
 } from "../../hooks/useChime";
 import api from "../../services/api";
 import { useChatStore } from "../../store/chatStore";
@@ -39,13 +45,16 @@ const CallOverlay: React.FC = () => {
     activeCallId,
     startTime,
     isRemoteCameraOn,
-    remoteTiles,
     upgradeRequestPending,
     setUpgradeRequestPending,
     incomingUpgradeRequest,
     setIncomingUpgradeRequest,
     isMinimized,
     setMinimized,
+    isLocalScreenSharing,
+    screenShares,
+    isPeerJoined,
+    hangupCall,
   } = useCallStore();
 
   const { socket, user } = useAuth();
@@ -67,7 +76,6 @@ const CallOverlay: React.FC = () => {
       attemptStartedAt?: number | null;
     }>
   >([]);
-  const [tick, setTick] = useState(0);
   const [hoveredParticipant, setHoveredParticipant] = useState<string | null>(
     null,
   );
@@ -86,24 +94,19 @@ const CallOverlay: React.FC = () => {
     (p) => p.status === "rejected" || p.status === "timeout",
   );
 
-  // [SENIOR] Synchronous LOCAL Video Binding via Ref Callback
+  // [SENIOR] Resilient LOCAL Video Binding
   const localVideoRef = useCallback((node: HTMLVideoElement | null) => {
-    if (node) {
-      console.log("[Web-Chime] 🎬 Local <video> element mounted in DOM!");
-      setGlobalVideoRefs(node, undefined);
-    } else {
-      setGlobalVideoRefs(null, undefined);
-    }
+    setLocalVideoRef(node);
   }, []);
 
-  // [SENIOR] Resilient REMOTE Video Binding via Ref Callback
+  // [SENIOR] Resilient REMOTE Video Binding
   const remoteVideoRef = useCallback((node: HTMLVideoElement | null) => {
-    if (node) {
-      console.log("[Web-Chime] 🎬 Remote <video> element mounted in DOM!");
-      setGlobalVideoRefs(undefined, node);
-    } else {
-      setGlobalVideoRefs(undefined, null);
-    }
+    setRemoteVideoRef(node);
+  }, []);
+
+  // [PRINCIPLE 6] Screen Share Ref Callback
+  const screenShareVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    setContentVideoRef(node);
   }, []);
 
   const [duration, setDuration] = useState(0);
@@ -122,10 +125,26 @@ const CallOverlay: React.FC = () => {
       setDuration(0);
     }
     return () => clearInterval(interval);
-  }, [callState, startTime, duration]);
+  }, [callState, startTime]);
 
   // [SENIOR] Incoming Call Ringtone Logic (Web)
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
+
+  // [SENIOR] Calculate layout state for rebinding
+  const activeRemoteScreenShare = Object.entries(screenShares).find(([_, s]) => s.isSharing);
+  const someoneIsSharing = !!activeRemoteScreenShare || isLocalScreenSharing;
+
+  // [SENIOR] Force re-bind when layout switches (e.g. screen share start/stop)
+  useEffect(() => {
+    if (callState === "CONNECTED") {
+      console.log(`[Web-Call] 🔃 Layout changed (someoneIsSharing=${someoneIsSharing}). Re-binding tiles...`);
+      // Short delay to ensure DOM nodes are ready
+      const timer = setTimeout(() => {
+        rebindAllTiles();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [someoneIsSharing, callState, rebindAllTiles]);
 
   useEffect(() => {
     // Initialize audio instance once
@@ -232,24 +251,32 @@ const CallOverlay: React.FC = () => {
         reason,
       });
     }
-    try {
-      await api.post("/call/hangup", { conversationId, callId: activeCallId });
-    } catch (e) {
-      /* ignore */
+    if (activeCallId) {
+      try {
+        await api.post("/call/hangup", { conversationId, callId: activeCallId });
+      } catch (e) {
+        /* ignore */
+      }
     }
     await leaveCurrentSession("handleHangup-" + reason);
 
     // Switch to ENDED state for 4 seconds
-    useCallStore.getState().hangupCall();
+    hangupCall();
   };
+
+  // 0. Derived states (Move to top to avoid ReferenceError)
+  const displayStatus = ((): CallState => {
+    if (callState === "CONNECTED" && !isPeerJoined) return "JOINING";
+    return callState || "IDLE";
+  })();
 
   // 1. Logic Status thông minh hơn (Không phụ thuộc vào peerJoined nữa)
   const statusText = (() => {
-    if (callState === "JOINING" || callState === "CALLING")
+    if (displayStatus === "JOINING" || displayStatus === "CALLING")
       return "Đang gọi...";
-    if (callState === "RINGING") return "Đang đổ chuông...";
-    if (callState === "ENDED") return "Cuộc gọi đã kết thúc";
-    if (callState === "CONNECTED") return formatTime(duration);
+    if (displayStatus === "RINGING") return "Đang đổ chuông...";
+    if (displayStatus === "ENDED") return "Cuộc gọi đã kết thúc";
+    if (displayStatus === "CONNECTED") return formatTime(duration);
     return "...";
   })();
 
@@ -278,16 +305,15 @@ const CallOverlay: React.FC = () => {
         email: normalized,
         name: profile?.fullName || normalized.split("@")[0],
         avatar: profile?.avatarUrl || profile?.avatar || null,
-        // Participants start with ringing/calling status
-        // Only socket events (peer_joined, reject, timeout) update to connected/rejected/timeout
-        status:
+        status: (
           !isIncoming && callState === "CALLING"
             ? "ringing"
             : callState === "RINGING"
               ? "ringing"
               : callState === "CALLING"
                 ? "calling"
-                : "idle",
+                : "idle"
+        ) as "calling" | "ringing" | "connected" | "rejected" | "timeout" | "idle",
         attemptStartedAt:
           (!isIncoming && callState === "CALLING") ||
           callState === "RINGING" ||
@@ -299,83 +325,92 @@ const CallOverlay: React.FC = () => {
     setParticipants(list);
   }, [toEmail, toEmails, callState, userProfiles, isIncoming]);
 
-  // Update participant statuses from socket events
+  const onPeerJoined = useCallback((data: any) => {
+    const email = (
+      data?.toEmail ||
+      data?.fromEmail ||
+      data?.fromProfile?.email ||
+      data?.email ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+    if (!email) return;
+    setParticipants((prev) =>
+      prev.map((p) =>
+        p.email === email
+          ? { ...p, status: "connected", attemptStartedAt: null }
+          : p,
+      ),
+    );
+  }, []);
+
+  const onReject = useCallback((data: any) => {
+    const email = (
+      data?.toEmail ||
+      data?.fromEmail ||
+      data?.fromProfile?.email ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+    if (!email) return;
+    setParticipants((prev) =>
+      prev.map((p) =>
+        p.email === email
+          ? { ...p, status: "rejected", attemptStartedAt: null }
+          : p,
+      ),
+    );
+  }, []);
+
+  const onTimeout = useCallback((data: any) => {
+    const email = (
+      data?.toEmail ||
+      data?.fromEmail ||
+      data?.fromProfile?.email ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+    if (!email) return;
+    setParticipants((prev) =>
+      prev.map((p) =>
+        p.email === email
+          ? { ...p, status: "timeout", attemptStartedAt: null }
+          : p,
+      ),
+    );
+  }, []);
+
+  const onHangupEvent = useCallback((data: any) => {
+    console.log("[CallOverlay] call:hangup event received via socket", data);
+    handleHangup("Socket-hangup");
+  }, [handleHangup]);
+
   useEffect(() => {
     if (!socket) return;
-    const onPeerJoined = (data: any) => {
-      const email = (
-        data?.toEmail ||
-        data?.fromEmail ||
-        data?.fromProfile?.email ||
-        data?.email ||
-        ""
-      )
-        .trim()
-        .toLowerCase();
-      if (!email) return;
-      setParticipants((prev) =>
-        prev.map((p) =>
-          p.email === email
-            ? { ...p, status: "connected", attemptStartedAt: null }
-            : p,
-        ),
-      );
-    };
-
-    const onReject = (data: any) => {
-      const email = (
-        data?.toEmail ||
-        data?.fromEmail ||
-        data?.fromProfile?.email ||
-        ""
-      )
-        .trim()
-        .toLowerCase();
-      if (!email) return;
-      setParticipants((prev) =>
-        prev.map((p) =>
-          p.email === email
-            ? { ...p, status: "rejected", attemptStartedAt: null }
-            : p,
-        ),
-      );
-    };
-
-    const onTimeout = (data: any) => {
-      const email = (
-        data?.toEmail ||
-        data?.fromEmail ||
-        data?.fromProfile?.email ||
-        ""
-      )
-        .trim()
-        .toLowerCase();
-      if (!email) return;
-      setParticipants((prev) =>
-        prev.map((p) =>
-          p.email === email
-            ? { ...p, status: "timeout", attemptStartedAt: null }
-            : p,
-        ),
-      );
-    };
 
     socket.on("call:peer_joined", onPeerJoined);
     socket.on("call:accept", onPeerJoined);
     socket.on("call:reject", onReject);
     socket.on("call:timeout", onTimeout);
+    socket.on("call:hangup", onHangupEvent);
 
     return () => {
       socket.off("call:peer_joined", onPeerJoined);
       socket.off("call:accept", onPeerJoined);
       socket.off("call:reject", onReject);
       socket.off("call:timeout", onTimeout);
+      socket.off("call:hangup", onHangupEvent);
     };
-  }, [socket]);
+  }, [socket, onPeerJoined, onReject, onTimeout, onHangupEvent]);
+
+
 
   // Tick to update elapsed times for tooltips/spinners
   useEffect(() => {
-    const interval = setInterval(() => setTick((t) => t + 1), 1000);
+    const interval = setInterval(() => setParticipants(prev => [...prev]), 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -528,6 +563,14 @@ const CallOverlay: React.FC = () => {
     await toggleMicChime(next);
   };
 
+  const handleToggleScreenShare = async () => {
+    if (isLocalScreenSharing) {
+      await stopScreenShare();
+    } else {
+      await startScreenShare();
+    }
+  };
+
   const renderAudioLayout = () => (
     <div className="grow flex flex-col items-center justify-center relative overflow-hidden bg-linear-to-b from-[#0a0a0a] to-[#111118]">
       {/* Background Blur Effect dựa trên Avatar */}
@@ -587,97 +630,167 @@ const CallOverlay: React.FC = () => {
     </div>
   );
 
-  const renderVideoLayout = () => (
-    <div className="grow relative bg-[#0a0a0a] overflow-hidden">
-      {/* [Web-Chime] Remote Video Stage */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        {isRemoteCameraOn ? (
-          <video
-            ref={remoteVideoRef}
-            className="w-full h-full object-cover animate-in fade-in duration-700"
-            autoPlay
-            playsInline
-          />
-        ) : (
-          <div
-            className={`flex flex-col items-center gap-6 animate-in zoom-in duration-500 ${isMinimized ? "scale-50" : ""}`}
-          >
-            <div className="w-28 h-28 rounded-full bg-white/5 animate-pulse flex items-center justify-center border border-white/10 shadow-inner relative">
-              <div className="absolute inset-0 bg-blue-500/10 rounded-full blur-xl" />
-              {peer.avatar ? (
-                <img
-                  src={peer.avatar}
-                  className="w-full h-full object-cover rounded-full opacity-40 grayscale"
-                  alt=""
+  const renderVideoLayout = () => {
+    return (
+      <div className="grow relative bg-[#0a0a0a] overflow-hidden flex flex-col md:flex-row">
+        {/* Main Stage: Screen Share or Remote Video */}
+        <div className="grow relative flex items-center justify-center">
+          {someoneIsSharing ? (
+            <div className="absolute inset-0 z-10 bg-black flex flex-col items-center justify-center">
+              <video
+                id="main-stage-content"
+                ref={screenShareVideoRef}
+                className="w-full h-full object-contain"
+                autoPlay
+                playsInline
+              />
+              <div className="absolute top-4 left-4 px-4 py-2 bg-black/60 backdrop-blur-md border border-white/10 rounded-full flex items-center gap-2">
+                <Monitor size={16} className="text-blue-400" />
+                <span className="text-xs font-bold text-white/90">
+                  {isLocalScreenSharing ? "Bạn đang chia sẻ màn hình" : "Đang xem màn hình chia sẻ"}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <>
+              {isRemoteCameraOn ? (
+                <video
+                  id="main-stage-remote"
+                  ref={remoteVideoRef}
+                  className="w-full h-full object-cover animate-in fade-in duration-700"
+                  autoPlay
+                  playsInline
                 />
               ) : (
-                <User size={48} className="text-white/10 relative z-10" />
+                <div
+                  className={`flex flex-col items-center gap-6 animate-in zoom-in duration-500 ${isMinimized ? "scale-50" : ""}`}
+                >
+                  <div className="w-28 h-28 rounded-full bg-white/5 animate-pulse flex items-center justify-center border border-white/10 shadow-inner relative">
+                    <div className="absolute inset-0 bg-blue-500/10 rounded-full blur-xl" />
+                    {peer.avatar ? (
+                      <img
+                        src={peer.avatar}
+                        className="w-full h-full object-cover rounded-full opacity-40 grayscale"
+                        alt=""
+                      />
+                    ) : (
+                      <User size={48} className="text-white/10 relative z-10" />
+                    )}
+                  </div>
+                  {!isMinimized && (
+                    <div className="text-center">
+                      <p className="text-white/20 font-black uppercase tracking-[0.2em] text-[10px] mb-2 flex items-center justify-center gap-2">
+                        <CameraOff size={12} /> Camera Đang Tắt
+                      </p>
+                      <p className="text-white/40 font-bold text-xs">
+                        Đang chờ tín hiệu video từ {peer.fullName}...
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
+            </>
+          )}
+        </div>
+
+        {/* Camera Sidebar/Floating Tiles if sharing */}
+        {someoneIsSharing && !isMinimized && (
+          <div className="absolute bottom-24 right-8 flex flex-col gap-4 z-20">
+            {/* Remote Camera Mini Tile */}
+            <div className="w-48 aspect-video rounded-2xl bg-[#1c1c2e]/60 backdrop-blur-2xl overflow-hidden border border-white/10 shadow-2xl relative">
+              {isRemoteCameraOn ? (
+                <video
+                  id="sidebar-remote"
+                  ref={remoteVideoRef}
+                  className="w-full h-full object-cover"
+                  autoPlay
+                  playsInline
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-black/40">
+                   <User size={24} className="text-white/20" />
+                </div>
+              )}
+              <div className="absolute bottom-2 left-2 px-2 py-1 bg-black/40 rounded text-[9px] font-bold">
+                 {peer.fullName}
+              </div>
             </div>
-            {!isMinimized && (
-              <div className="text-center">
-                <p className="text-white/20 font-black uppercase tracking-[0.2em] text-[10px] mb-2 flex items-center justify-center gap-2">
-                  <CameraOff size={12} /> Camera Đang Tắt
-                </p>
-                <p className="text-white/40 font-bold text-xs">
-                  Đang chờ tín hiệu video từ {peer.fullName}...
+
+            {/* Local Camera Mini Tile */}
+            <div className="w-48 aspect-video rounded-2xl bg-[#1c1c2e]/60 backdrop-blur-2xl overflow-hidden border border-white/10 shadow-2xl relative">
+              {isCameraOn ? (
+                <video
+                  id="sidebar-local"
+                  ref={localVideoRef}
+                  className="w-full h-full object-cover scale-x-[-1]"
+                  autoPlay
+                  playsInline
+                  muted
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-black/40">
+                   <User size={24} className="text-white/20" />
+                </div>
+              )}
+              <div className="absolute bottom-2 left-2 px-2 py-1 bg-black/40 rounded text-[9px] font-bold">
+                 Bạn
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Local Mini Pip - Default behavior when not sharing */}
+        {!someoneIsSharing && !isMinimized && (
+          <div className="absolute top-8 right-8 w-64 aspect-video rounded-3xl bg-[#1c1c2e]/60 backdrop-blur-2xl overflow-hidden border border-white/10 shadow-2xl z-20 group transition-all hover:scale-105 hover:shadow-blue-500/10">
+            {isCameraOn ? (
+              <video
+                id="pip-local"
+                ref={localVideoRef}
+                className="w-full h-full object-cover scale-x-[-1]"
+                autoPlay
+                playsInline
+                muted
+              />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center bg-[#1c1c2e]/80">
+                <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
+                  <User size={24} className="text-white/20" />
+                </div>
+                <p className="text-[9px] font-black text-white/30 uppercase tracking-[0.2em]">
+                  Camera Của Bạn Đang Tắt
                 </p>
               </div>
             )}
+            <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-5">
+              <p className="text-[10px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Bạn
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!isMinimized && (
+          <div className="absolute inset-x-0 bottom-0 h-48 bg-linear-to-t from-black/90 to-transparent pointer-events-none" />
+        )}
+
+        {!someoneIsSharing && !isMinimized && (
+          <div className="absolute left-10 bottom-10 z-10">
+            <p className="text-white font-black text-3xl mb-2 tracking-tight">
+              {peer.fullName}
+            </p>
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-2 h-2 rounded-full ${callState === "CONNECTED" ? "bg-green-500" : "bg-yellow-500"} shadow-[0_0_8px_rgba(34,197,94,0.5)]`}
+              />
+              <p className="text-white/50 text-[11px] font-black uppercase tracking-[0.2em]">
+                {statusText}
+              </p>
+            </div>
           </div>
         )}
       </div>
-
-      {/* Local Mini Pip - Hidden in Global Minimized Mode */}
-      {!isMinimized && (
-        <div className="absolute top-8 right-8 w-64 aspect-video rounded-3xl bg-[#1c1c2e]/60 backdrop-blur-2xl overflow-hidden border border-white/10 shadow-2xl z-20 group transition-all hover:scale-105 hover:shadow-blue-500/10">
-          {isCameraOn ? (
-            <video
-              ref={localVideoRef}
-              className="w-full h-full object-cover scale-x-[-1]"
-              autoPlay
-              playsInline
-              muted
-            />
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center bg-[#1c1c2e]/80">
-              <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
-                <User size={24} className="text-white/20" />
-              </div>
-              <p className="text-[9px] font-black text-white/30 uppercase tracking-[0.2em]">
-                Camera Của Bạn Đang Tắt
-              </p>
-            </div>
-          )}
-          <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-5">
-            <p className="text-[10px] font-black text-white uppercase tracking-widest flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Bạn
-            </p>
-          </div>
-        </div>
-      )}
-
-      {!isMinimized && (
-        <div className="absolute inset-x-0 bottom-0 h-48 bg-linear-to-t from-black/90 to-transparent pointer-events-none" />
-      )}
-
-      {!isMinimized && (
-        <div className="absolute left-10 bottom-10 z-10">
-          <p className="text-white font-black text-3xl mb-2 tracking-tight">
-            {peer.fullName}
-          </p>
-          <div className="flex items-center gap-3">
-            <div
-              className={`w-2 h-2 rounded-full ${callState === "CONNECTED" ? "bg-green-500" : "bg-yellow-500"} shadow-[0_0_8px_rgba(34,197,94,0.5)]`}
-            />
-            <p className="text-white/50 text-[11px] font-black uppercase tracking-[0.2em]">
-              {statusText}
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    );
+  };
 
   return (
     <div
@@ -967,6 +1080,14 @@ const CallOverlay: React.FC = () => {
               ) : (
                 <Camera size={24} />
               )}
+            </button>
+
+            <button
+              onClick={handleToggleScreenShare}
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${isLocalScreenSharing ? "bg-blue-500 text-white shadow-[0_0_20px_rgba(59,130,246,0.4)]" : "bg-white/5 text-white/30 border border-white/5"}`}
+              title={isLocalScreenSharing ? "Dừng chia sẻ màn hình" : "Chia sẻ màn hình"}
+            >
+              <Monitor size={24} />
             </button>
 
             <div className="w-px h-8 bg-white/10 mx-2" />

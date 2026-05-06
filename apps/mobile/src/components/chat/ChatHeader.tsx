@@ -14,6 +14,7 @@ interface ChatHeaderProps {
   typingText: string;
   onStartCall: (type: 'audio' | 'video') => void;
   onOpenDetails?: () => void;
+  isBot?: boolean;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -26,6 +27,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   typingText,
   onStartCall,
   onOpenDetails,
+  isBot,
 }) => {
   return (
     <LinearGradient colors={["#0058bc", "#00418f"]} style={[styles.header, { paddingTop: insets.top }]}>
@@ -53,7 +55,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         <Text style={styles.headerSub}>{typingText}</Text>
       </View>
       <View style={styles.headerIcons}>
-        {selectedChat?.partner !== BOT_EMAIL && selectedChat?.id !== "CONV#SYSTEM" && (
+        {!isBot && selectedChat?.id !== "CONV#SYSTEM" && (
           <>
             <TouchableOpacity style={styles.headerIconButton} onPress={() => onStartCall('audio')}>
               <Text style={styles.headerIcon}>call</Text>

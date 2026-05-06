@@ -154,14 +154,19 @@ export class CallGateway {
     // 5. ✅ [GHOST HANGUP] Đặt Timer chờ 15s cho việc join
     const waitTimeout = setTimeout(() => {
       this.logger.warn(
-        `[GhostHangup] Call ${data.callId} accepted but no peer joined within 15s. Forcing hangup...`,
+        `[GhostHangup] Call ${data.callId} accepted but no peer joined within 30s. Forcing hangup...`,
       );
       this.handleHangup(
-        { convId: data.convId, toEmail: data.toEmail, callId: data.callId },
+        { 
+          convId: data.convId, 
+          toEmail: data.toEmail, 
+          callId: data.callId,
+          reason: "GHOST_HANGUP_TIMEOUT"
+        },
         client,
       );
       this.waitForJoinTimeouts.delete(data.callId);
-    }, 15000);
+    }, 30000);
     this.waitForJoinTimeouts.set(data.callId, waitTimeout);
   }
 
@@ -414,6 +419,7 @@ export class CallGateway {
       callId: string;
       duration?: number;
       callType?: "audio" | "video";
+      reason?: string;
     },
     @ConnectedSocket() client: Socket,
   ) {
@@ -447,12 +453,17 @@ export class CallGateway {
         this.server.to(targetRoom).emit("call:hangup", {
           convId: data.convId,
           callId: data.callId,
+          reason: (data as any).reason || "NORMAL",
         });
       });
     } else {
-      this.server.emit("call:hangup", {
+      // [CRITICAL FIX] Avoid global broadcast. Send only to the conversation room.
+      const roomId = data.convId.toLowerCase();
+      this.logger.warn(`[Hangup] No specific recipients found, emitting to room: ${roomId}`);
+      this.server.to(roomId).emit("call:hangup", {
         convId: data.convId,
         callId: data.callId,
+        reason: (data as any).reason || "ROOM_BROADCAST",
       });
     }
 

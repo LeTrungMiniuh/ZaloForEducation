@@ -137,6 +137,8 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   const isOnline = normalizedPartner
     ? userProfiles[normalizedPartner]?.status === "online"
     : false;
+  
+  const isBot = normalizedPartner === 'bot@zaloedu.system';
 
   const handleOpenProfile = () => {
     if (!partnerEmail) return;
@@ -216,22 +218,26 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               <Search size={20} />
             </button>
           )}
-          <button
-            onClick={() => startCall("video")}
-            disabled={activeChat.type === "system"}
-            title={activeChat.type === "group" ? "Gọi video nhóm" : "Gọi video"}
-            className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <Video size={20} />
-          </button>
-          <button
-            onClick={() => startCall("audio")}
-            disabled={activeChat.type === "system"}
-            title={activeChat.type === "group" ? "Gọi thoại nhóm" : "Gọi thoại"}
-            className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <Phone size={20} />
-          </button>
+          {!isBot && (
+            <>
+              <button
+                onClick={() => startCall("video")}
+                disabled={activeChat.type === "system"}
+                title={activeChat.type === "group" ? "Gọi video nhóm" : "Gọi video"}
+                className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <Video size={20} />
+              </button>
+              <button
+                onClick={() => startCall("audio")}
+                disabled={activeChat.type === "system"}
+                title={activeChat.type === "group" ? "Gọi thoại nhóm" : "Gọi thoại"}
+                className="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full transition-all text-on-surface-variant hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <Phone size={20} />
+              </button>
+            </>
+          )}
 
 
           {/* Active Call Indicator */}

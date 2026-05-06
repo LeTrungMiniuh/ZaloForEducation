@@ -34,19 +34,46 @@ const Sidebar: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const hasUnreadMessages = conversations.some(conv => isUnread(conv, user?.email));
+  const isBotConversation = (conv: any) => {
+    return Array.isArray(conv.members) && conv.members.some((m: any) => {
+      const normalized = String(m || "").toLowerCase();
+      return normalized === 'bot@zaloedu.system' || normalized.includes('bot@zaloedu.system');
+    });
+  };
+
+  const hasUnreadMessages = conversations.some(conv => !isBotConversation(conv) && isUnread(conv, user?.email));
+  const hasBotUnread = conversations.some(conv => isBotConversation(conv) && isUnread(conv, user?.email));
+  
+  const totalUnreadCount = conversations.reduce((acc, c) => {
+    if (isBotConversation(c)) return acc;
+    return acc + (c.unreadCount || 0);
+  }, 0);
+
+  const botUnreadCount = conversations.reduce((acc, c) => {
+    if (!isBotConversation(c)) return acc;
+    return acc + (c.unreadCount || 0);
+  }, 0);
 
   const navItems = [
-    { id: 'chat', icon: MessageSquare, label: 'Tin nhắn', path: '/chat', hasBadge: hasUnreadMessages },
+    { id: 'chat', icon: MessageSquare, label: 'Tin nhắn', path: '/chat', hasBadge: hasUnreadMessages, count: totalUnreadCount },
     { id: 'contacts', icon: Users, label: 'Danh bạ', path: '/contacts', hasBadge: false },
     { id: 'notifications', icon: Bell, label: 'Thông báo', path: '/notifications', hasBadge: false },
     { id: 'cloud', icon: Cloud, label: 'Cloud', path: '/cloud', hasBadge: false },
-    { id: 'bot', icon: Bot, label: 'AI Trợ lý', path: '/bot', hasBadge: false },
+    { id: 'bot', icon: Bot, label: 'AI Trợ lý', path: '/bot', hasBadge: hasBotUnread, count: botUnreadCount },
   ];
 
-  const handleNavClick = () => {
+  const handleNavClick = (id: string) => {
     setIsSearching(false);
     setSearchQuery('');
+    
+    // If going to main chat tab, and active conversation is the bot, clear it
+    if (id === 'chat') {
+      const { activeConvId, conversations, setActiveConversation } = useChatStore.getState();
+      const activeChat = conversations.find(c => c.id === activeConvId);
+      if (activeChat && isBotConversation(activeChat)) {
+        setActiveConversation(null);
+      }
+    }
   };
 
   return (
@@ -79,7 +106,7 @@ const Sidebar: React.FC = () => {
             <NavLink
               key={item.id}
               to={item.path}
-              onClick={handleNavClick}
+              onClick={() => handleNavClick(item.id)}
               className={({ isActive }) => `
                 rounded-2xl transition-all duration-300 p-3 scale-95 flex items-center justify-center relative group
                 ${isActive
@@ -98,8 +125,8 @@ const Sidebar: React.FC = () => {
                   />
                   {item.hasBadge && (
                     <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-error text-white text-[10px] font-bold rounded-full ring-2 ring-[#00418f] flex items-center justify-center px-1 animate-pulse">
-                      {item.id === 'chat' && conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0) > 0 
-                        ? (conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0) > 99 ? '99+' : conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0))
+                      {item.count && item.count > 0 
+                        ? (item.count > 99 ? '99+' : item.count)
                         : ''}
                     </span>
                   )}

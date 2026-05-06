@@ -193,9 +193,12 @@ const InboxList: React.FC = () => {
   };
 
   const filteredConversations = conversations.filter((conv: any) => {
-    // 0. Exclude Bot conversations
-    if (Array.isArray(conv.members) && conv.members.includes(BOT_EMAIL))
-      return false;
+    // 0. Exclude Bot conversations - AI Assistant should only be in its own tab
+    const hasBot = Array.isArray(conv.members) && conv.members.some(m => {
+      const normalized = String(m || "").toLowerCase();
+      return normalized === BOT_EMAIL || normalized.includes('bot@zaloedu.system');
+    });
+    if (hasBot) return false;
 
     // 1. Unread filter
     if (chatFilter === "unread" && !isUnread(conv, user?.email)) return false;

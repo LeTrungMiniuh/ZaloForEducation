@@ -16,6 +16,8 @@ import { BOT_EMAIL, BOT_AVATAR } from '../constants/bot';
 import { apiRequest } from '../utils/api';
 import SocketService from '../utils/socket';
 import { useAuth } from '../context/AuthContext';
+import { useChatStore } from '../store/chatStore';
+import { useIsFocused } from '@react-navigation/native';
 
 const TypingDots = () => {
   const dot1 = useRef(new Animated.Value(0.3)).current;
@@ -89,9 +91,11 @@ const chatPost = async (path, body) => {
 
 export default function BotChatScreen() {
   const { user } = useAuth();
+  const { setActiveConversation } = useChatStore();
   const [botMessages, setBotMessages] = useState([]);
   const [botInput, setBotInput] = useState('');
   const [botSending, setBotSending] = useState(false);
+  const isFocused = useIsFocused();
   const [botConvId, setBotConvId] = useState(null);
   const botScrollRef = useRef(null);
 
@@ -112,6 +116,16 @@ export default function BotChatScreen() {
     };
     if (user?.email) initBot();
   }, [user?.email]);
+
+  // Sync activeConvId for global notification logic
+  useEffect(() => {
+    if (isFocused && botConvId) {
+      setActiveConversation(botConvId);
+    } else {
+      setActiveConversation(null);
+    }
+    return () => setActiveConversation(null);
+  }, [isFocused, botConvId]);
 
   // Listen for bot messages via socket
   useEffect(() => {

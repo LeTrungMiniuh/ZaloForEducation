@@ -8,6 +8,11 @@ export type CallState =
   | "CONNECTED"
   | "ENDED";
 
+export type ScreenShareState = {
+  stream: MediaStream | null;
+  isSharing: boolean;
+};
+
 let callTimeout: any = null;
 let resetTimeout: any = null;
 const clearInternalTimeout = () => {
@@ -52,6 +57,11 @@ interface CallStore {
 
   pendingMeetingData: any | null; // ✅ THÊM
   pendingAttendeeData: any | null; // ✅ THÊM
+
+  // Screen Share states (SSOT)
+  screenShares: Record<string, ScreenShareState>;
+  isLocalScreenSharing: boolean;
+  localScreenShareStream: MediaStream | null;
 
   // Actions
   setCallState: (state: CallState) => void;
@@ -103,6 +113,12 @@ interface CallStore {
   setPeerJoined: (joined: boolean) => void;
   isMinimized: boolean;
   setMinimized: (minimized: boolean) => void;
+ 
+  // Screen Share Actions
+  setScreenShare: (attendeeId: string, state: ScreenShareState) => void;
+  removeScreenShare: (attendeeId: string) => void;
+  setLocalScreenSharing: (isSharing: boolean, stream: MediaStream | null) => void;
+  clearAllScreenShares: () => void;
 }
 
 export const useCallStore = create<CallStore>((set, get) => ({
@@ -132,6 +148,10 @@ export const useCallStore = create<CallStore>((set, get) => ({
   isMinimized: false,
   pendingMeetingData: null,
   pendingAttendeeData: null,
+
+  screenShares: {},
+  isLocalScreenSharing: false,
+  localScreenShareStream: null,
 
   setMinimized: (isMinimized) => set({ isMinimized }),
 
@@ -194,6 +214,8 @@ export const useCallStore = create<CallStore>((set, get) => ({
       callOffer: null,
       startTime: null,
     });
+
+    console.log(`[Store] initiateCall: ${activeCallId} (${callType}) to ${toEmail}`);
 
     // [SENIOR] Auto-timeout after 60s if not connected
     callTimeout = setTimeout(() => {
@@ -311,6 +333,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
   hangupCall: () => {
     clearInternalTimeout();
     // [SYSTEM] Nullify session IDs immediately to free up backend/signaling
+    console.log(`[Store] hangupCall called for: ${get().activeCallId}`);
     set({
       callState: "ENDED",
       activeCallId: null,
@@ -329,6 +352,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
 
   rejectCall: () => {
     clearInternalTimeout();
+    console.log(`[Store] rejectCall called for: ${get().activeCallId}`);
     set({
       callState: "ENDED",
       activeCallId: null,
@@ -381,6 +405,35 @@ export const useCallStore = create<CallStore>((set, get) => ({
       isPeerJoined: false,
       remoteTiles: [],
       isMinimized: false,
+      screenShares: {},
+      isLocalScreenSharing: false,
+      localScreenShareStream: null,
     });
+  },
+ 
+  // Screen Share Implementation
+  setScreenShare: (attendeeId, state) => {
+    set((s) => ({
+      screenShares: {
+        ...s.screenShares,
+        [attendeeId]: state,
+      },
+    }));
+  },
+ 
+  removeScreenShare: (attendeeId) => {
+    set((s) => {
+      const next = { ...s.screenShares };
+      delete next[attendeeId];
+      return { screenShares: next };
+    });
+  },
+ 
+  setLocalScreenSharing: (isLocalScreenSharing, localScreenShareStream) => {
+    set({ isLocalScreenSharing, localScreenShareStream });
+  },
+ 
+  clearAllScreenShares: () => {
+    set({ screenShares: {}, isLocalScreenSharing: false, localScreenShareStream: null });
   },
 }));

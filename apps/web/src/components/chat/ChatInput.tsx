@@ -61,6 +61,7 @@ interface ChatInputProps {
   onClearReply: () => void;
   onOpenPollModal?: () => void;
   onOpenReminderModal?: () => void;
+  isBot?: boolean;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -71,6 +72,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   onClearReply,
   onOpenPollModal,
   onOpenReminderModal,
+  isBot,
 }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -736,26 +738,27 @@ const ChatInput: React.FC<ChatInputProps> = ({
       {/* Main Input Bar */}
       <div className="relative z-[30] rounded-xl border border-outline-variant/25 bg-white dark:bg-surface-container shadow-sm overflow-visible">
         <div className="px-2 py-1.5 border-b border-outline-variant/20 flex flex-wrap items-center gap-1">
-          <div className="relative">
-            <button
-              onClick={() => {
-                setShowStickerPicker(!showStickerPicker);
-                setShowGifPicker(false);
-                setShowLocationMenu(false);
-              }}
-              className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors ${showStickerPicker ? "bg-primary/10 text-primary" : "text-primary hover:bg-primary/10"}`}
-              type="button"
-              title="Sticker"
-            >
-              <Sticker size={16} />
-            </button>
-            {showStickerPicker && (
-              <div className="absolute bottom-[115%] left-0 z-[500]">
-                <StickerPicker onSelect={handleStickerSelect} />
-              </div>
+            {!isBot && (
+              <>
+                <button
+                  onClick={() => {
+                    setShowStickerPicker(!showStickerPicker);
+                    setShowGifPicker(false);
+                    setShowLocationMenu(false);
+                  }}
+                  className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors ${showStickerPicker ? "bg-primary/10 text-primary" : "text-primary hover:bg-primary/10"}`}
+                  type="button"
+                  title="Sticker"
+                >
+                  <Sticker size={16} />
+                </button>
+                {showStickerPicker && (
+                  <div className="absolute bottom-[115%] left-0 z-[500]">
+                    <StickerPicker onSelect={handleStickerSelect} />
+                  </div>
+                )}
+              </>
             )}
-          </div>
-
           <button
             onClick={() => imageInputRef.current?.click()}
             className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
@@ -772,115 +775,123 @@ const ChatInput: React.FC<ChatInputProps> = ({
           >
             <Paperclip size={16} />
           </button>
-          <button
-            onClick={openContactPicker}
-            className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
-            type="button"
-            title="Gửi danh thiếp liên hệ"
-          >
-            <Contact size={16} />
-          </button>
-          <div className="relative">
+          {!isBot && (
             <button
-              onClick={() => setShowLocationMenu((prev) => !prev)}
-              className={`w-8 h-8 rounded-md flex items-center justify-center ${isLiveSharing ? "text-rose-600 bg-rose-50" : "text-primary hover:bg-primary/10"}`}
+              onClick={openContactPicker}
+              className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
               type="button"
-              title="Gửi vị trí"
+              title="Gửi danh thiếp liên hệ"
             >
-              <MapPin size={16} />
+              <Contact size={16} />
             </button>
-            {showLocationMenu && (
-              <div className="absolute bottom-[115%] left-0 z-[520] min-w-[220px] bg-white border border-outline-variant/20 rounded-xl shadow-lg p-1.5 space-y-1">
+          )}
+          {!isBot && (
+            <div className="relative">
+              <button
+                onClick={() => setShowLocationMenu((prev) => !prev)}
+                className={`w-8 h-8 rounded-md flex items-center justify-center ${isLiveSharing ? "text-rose-600 bg-rose-50" : "text-primary hover:bg-primary/10"}`}
+                type="button"
+                title="Gửi vị trí"
+              >
+                <MapPin size={16} />
+              </button>
+              {showLocationMenu && (
+                <div className="absolute bottom-[115%] left-0 z-[520] min-w-[220px] bg-white border border-outline-variant/20 rounded-xl shadow-lg p-1.5 space-y-1">
+                  <button
+                    type="button"
+                    onClick={sendCurrentLocation}
+                    className="w-full text-left h-9 px-3 rounded-lg hover:bg-surface-container-low text-[13px] font-semibold text-on-surface"
+                  >
+                    Gửi vị trí hiện tại
+                  </button>
+                  <button
+                    type="button"
+                    onClick={startLiveLocation}
+                    className="w-full text-left h-9 px-3 rounded-lg hover:bg-surface-container-low text-[13px] font-semibold text-on-surface"
+                  >
+                    Chia sẻ vị trí trực tiếp (15 phút)
+                  </button>
+                  {isLiveSharing && (
+                    <button
+                      type="button"
+                      onClick={stopLiveLocation}
+                      className="w-full text-left h-9 px-3 rounded-lg hover:bg-rose-50 text-[13px] font-semibold text-rose-600"
+                    >
+                      Dừng chia sẻ vị trí trực tiếp
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isBot && (
+            <>
+              <div className="w-px h-4 bg-outline-variant/35 mx-0.5" />
+
+              <button
+                type="button"
+                className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
+                title="Cắt ảnh (sắp có)"
+              >
+                <Crop size={16} />
+              </button>
+              <button
+                type="button"
+                className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
+                title="Ghi chú ảnh (sắp có)"
+              >
+                <PenTool size={16} />
+              </button>
+              <button
+                type="button"
+                className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
+                title="Tin nhắn nhanh (sắp có)"
+              >
+                <CreditCard size={16} />
+              </button>
+              <div className="relative">
                 <button
                   type="button"
-                  onClick={sendCurrentLocation}
-                  className="w-full text-left h-9 px-3 rounded-lg hover:bg-surface-container-low text-[13px] font-semibold text-on-surface"
+                  onClick={() => setShowMoreMenu(!showMoreMenu)}
+                  className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
+                  title="Thêm tùy chọn"
                 >
-                  Gửi vị trí hiện tại
+                  <MoreHorizontal size={16} />
                 </button>
-                <button
-                  type="button"
-                  onClick={startLiveLocation}
-                  className="w-full text-left h-9 px-3 rounded-lg hover:bg-surface-container-low text-[13px] font-semibold text-on-surface"
-                >
-                  Chia sẻ vị trí trực tiếp (15 phút)
-                </button>
-                {isLiveSharing && (
-                  <button
-                    type="button"
-                    onClick={stopLiveLocation}
-                    className="w-full text-left h-9 px-3 rounded-lg hover:bg-rose-50 text-[13px] font-semibold text-rose-600"
-                  >
-                    Dừng chia sẻ vị trí trực tiếp
-                  </button>
+                {showMoreMenu && (
+                  <div className="absolute bottom-full right-0 mb-2 bg-white dark:bg-surface-container rounded-lg shadow-lg border border-outline-variant/30 py-1 z-[400] min-w-48">
+                    {onOpenPollModal && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenPollModal();
+                          setShowMoreMenu(false);
+                        }}
+                        className="w-full px-4 py-2 flex items-center gap-3 hover:bg-surface-container-high text-on-surface text-sm font-medium transition-colors"
+                      >
+                        <BarChart3 size={16} className="text-primary" />
+                        <span>Tạo bình chọn</span>
+                      </button>
+                    )}
+                    {onOpenReminderModal && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenReminderModal();
+                          setShowMoreMenu(false);
+                        }}
+                        className="w-full px-4 py-2 flex items-center gap-3 hover:bg-surface-container-high text-on-surface text-sm font-medium transition-colors"
+                      >
+                        <Clock size={16} className="text-primary" />
+                        <span>Tạo nhắc hẹn</span>
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
-
-          <div className="w-px h-4 bg-outline-variant/35 mx-0.5" />
-
-          <button
-            type="button"
-            className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
-            title="Cắt ảnh (sắp có)"
-          >
-            <Crop size={16} />
-          </button>
-          <button
-            type="button"
-            className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
-            title="Ghi chú ảnh (sắp có)"
-          >
-            <PenTool size={16} />
-          </button>
-          <button
-            type="button"
-            className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10"
-            title="Tin nhắn nhanh (sắp có)"
-          >
-            <CreditCard size={16} />
-          </button>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowMoreMenu(!showMoreMenu)}
-              className="w-8 h-8 rounded-md flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
-              title="Thêm tùy chọn"
-            >
-              <MoreHorizontal size={16} />
-            </button>
-            {showMoreMenu && (
-              <div className="absolute bottom-full right-0 mb-2 bg-white dark:bg-surface-container rounded-lg shadow-lg border border-outline-variant/30 py-1 z-[400] min-w-48">
-                {onOpenPollModal && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenPollModal();
-                      setShowMoreMenu(false);
-                    }}
-                    className="w-full px-4 py-2 flex items-center gap-3 hover:bg-surface-container-high text-on-surface text-sm font-medium transition-colors"
-                  >
-                    <BarChart3 size={16} className="text-primary" />
-                    <span>Tạo bình chọn</span>
-                  </button>
-                )}
-                {onOpenReminderModal && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onOpenReminderModal();
-                      setShowMoreMenu(false);
-                    }}
-                    className="w-full px-4 py-2 flex items-center gap-3 hover:bg-surface-container-high text-on-surface text-sm font-medium transition-colors"
-                  >
-                    <Clock size={16} className="text-primary" />
-                    <span>Tạo nhắc hẹn</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
         <div className="px-2 py-1.5 flex items-end gap-1.5">
@@ -901,44 +912,48 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 handleSend();
               }
             }}
-            placeholder="Nhập @, tin nhắn tới đồng nghiệp"
+            placeholder={isBot ? "Nhập tin nhắn cho AI..." : "Nhập @, tin nhắn tới đồng nghiệp"}
             className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-[14px] font-medium py-0.5 px-0.5 resize-none max-h-28 hide-scrollbar text-on-surface placeholder:text-on-surface-variant/70 leading-relaxed transition-all"
           />
 
-          <div className="relative">
+          {!isBot && (
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowGifPicker(!showGifPicker);
+                  setShowStickerPicker(false);
+                  setShowLocationMenu(false);
+                }}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showGifPicker ? "bg-primary/10 text-primary" : "text-on-surface-variant hover:bg-surface-container-high hover:text-primary"}`}
+                type="button"
+                title="GIF/Emoji"
+              >
+                <Smile size={18} />
+              </button>
+              {showGifPicker && (
+                <div className="absolute bottom-[115%] right-0 z-[500]">
+                  <GifPicker onSelect={handleGifSelect} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isBot && (
             <button
               onClick={() => {
-                setShowGifPicker(!showGifPicker);
-                setShowStickerPicker(false);
-                setShowLocationMenu(false);
+                if (isRecording) {
+                  stopRecording();
+                } else {
+                  startRecording();
+                }
               }}
-              className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showGifPicker ? "bg-primary/10 text-primary" : "text-on-surface-variant hover:bg-surface-container-high hover:text-primary"}`}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isRecording ? "bg-rose-100 text-rose-600" : "text-on-surface-variant hover:bg-surface-container-high hover:text-primary"}`}
               type="button"
-              title="GIF/Emoji"
+              title={isRecording ? "Dừng thu âm" : "Tin nhắn thoại"}
             >
-              <Smile size={18} />
+              {isRecording ? <Square size={15} /> : <Mic size={16} />}
             </button>
-            {showGifPicker && (
-              <div className="absolute bottom-[115%] right-0 z-[500]">
-                <GifPicker onSelect={handleGifSelect} />
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={() => {
-              if (isRecording) {
-                stopRecording();
-              } else {
-                startRecording();
-              }
-            }}
-            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isRecording ? "bg-rose-100 text-rose-600" : "text-on-surface-variant hover:bg-surface-container-high hover:text-primary"}`}
-            type="button"
-            title={isRecording ? "Dừng thu âm" : "Tin nhắn thoại"}
-          >
-            {isRecording ? <Square size={15} /> : <Mic size={16} />}
-          </button>
+          )}
 
           {isRecording && (
             <div className="flex items-center gap-1 px-2 h-8 rounded-full bg-rose-50 text-rose-600 text-[11px] font-bold">
@@ -965,14 +980,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
               )}
             </button>
           ) : (
-            <button
-              onClick={handleQuickLike}
-              className="w-8 h-8 rounded-full flex items-center justify-center text-amber-500 hover:bg-amber-50"
-              type="button"
-              title="Thả like nhanh"
-            >
-              <ThumbsUp size={18} />
-            </button>
+            !isBot && (
+              <button
+                onClick={handleQuickLike}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-amber-500 hover:bg-amber-50"
+                type="button"
+                title="Thả like nhanh"
+              >
+                <ThumbsUp size={18} />
+              </button>
+            )
           )}
         </div>
       </div>

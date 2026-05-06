@@ -34,9 +34,18 @@ interface ChatInputProps {
   onTyping?: () => void;
   onOpenPollModal?: () => void;
   onOpenReminderModal?: () => void;
+  isBot?: boolean;
 }
 
-export default function ChatInput({ onSendMessage, replyTarget, onClearReply, onTyping, onOpenPollModal, onOpenReminderModal }: ChatInputProps) {
+export default function ChatInput({ 
+  onSendMessage, 
+  replyTarget, 
+  onClearReply, 
+  onTyping, 
+  onOpenPollModal, 
+  onOpenReminderModal,
+  isBot
+}: ChatInputProps) {
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<any[]>([]);
@@ -435,12 +444,14 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
       {showExtraTools && (
         <View style={styles.extraToolsMenu}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.extraToolsScroll}>
-            <TouchableOpacity style={styles.toolItem} onPress={startRecording}>
-              <View style={[styles.toolIconBox, { backgroundColor: '#fdf2f8' }]}>
-                <Text style={[styles.toolIcon, { color: '#db2777' }]}>mic</Text>
-              </View>
-              <Text style={styles.toolLabel}>Ghi âm</Text>
-            </TouchableOpacity>
+            {!isBot && (
+              <TouchableOpacity style={styles.toolItem} onPress={startRecording}>
+                <View style={[styles.toolIconBox, { backgroundColor: '#fdf2f8' }]}>
+                  <Text style={[styles.toolIcon, { color: '#db2777' }]}>mic</Text>
+                </View>
+                <Text style={styles.toolLabel}>Ghi âm</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity style={styles.toolItem} onPress={pickImages}>
               <View style={[styles.toolIconBox, { backgroundColor: '#e0f2fe' }]}>
@@ -456,33 +467,37 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
               <Text style={styles.toolLabel}>Tệp</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.toolItem} onPress={handleLocationSend}>
-              <View style={[styles.toolIconBox, { backgroundColor: '#fff1f2' }]}>
-                <Text style={[styles.toolIcon, { color: '#f43f5e' }]}>location_on</Text>
-              </View>
-              <Text style={styles.toolLabel}>Vị trí</Text>
-            </TouchableOpacity>
+            {!isBot && (
+              <>
+                <TouchableOpacity style={styles.toolItem} onPress={handleLocationSend}>
+                  <View style={[styles.toolIconBox, { backgroundColor: '#fff1f2' }]}>
+                    <Text style={[styles.toolIcon, { color: '#f43f5e' }]}>location_on</Text>
+                  </View>
+                  <Text style={styles.toolLabel}>Vị trí</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity style={styles.toolItem} onPress={() => setShowContactPicker(true)}>
-              <View style={[styles.toolIconBox, { backgroundColor: '#f5f3ff' }]}>
-                <Text style={[styles.toolIcon, { color: '#8b5cf6' }]}>contact_page</Text>
-              </View>
-              <Text style={styles.toolLabel}>Danh thiếp</Text>
-            </TouchableOpacity>
+                <TouchableOpacity style={styles.toolItem} onPress={() => setShowContactPicker(true)}>
+                  <View style={[styles.toolIconBox, { backgroundColor: '#f5f3ff' }]}>
+                    <Text style={[styles.toolIcon, { color: '#8b5cf6' }]}>contact_page</Text>
+                  </View>
+                  <Text style={styles.toolLabel}>Danh thiếp</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity style={styles.toolItem} onPress={() => { setShowExtraTools(false); onOpenPollModal?.(); }}>
-              <View style={[styles.toolIconBox, { backgroundColor: '#eff6ff' }]}>
-                <Text style={[styles.toolIcon, { color: Colors.primary }]}>bar_chart</Text>
-              </View>
-              <Text style={styles.toolLabel}>Bình chọn</Text>
-            </TouchableOpacity>
+                <TouchableOpacity style={styles.toolItem} onPress={() => { setShowExtraTools(false); onOpenPollModal?.(); }}>
+                  <View style={[styles.toolIconBox, { backgroundColor: '#eff6ff' }]}>
+                    <Text style={[styles.toolIcon, { color: Colors.primary }]}>bar_chart</Text>
+                  </View>
+                  <Text style={styles.toolLabel}>Bình chọn</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity style={styles.toolItem} onPress={() => { setShowExtraTools(false); onOpenReminderModal?.(); }}>
-              <View style={[styles.toolIconBox, { backgroundColor: '#fef3c7' }]}>
-                <Text style={[styles.toolIcon, { color: '#d97706' }]}>event_available</Text>
-              </View>
-              <Text style={styles.toolLabel}>Nhắc hẹn</Text>
-            </TouchableOpacity>
+                <TouchableOpacity style={styles.toolItem} onPress={() => { setShowExtraTools(false); onOpenReminderModal?.(); }}>
+                  <View style={[styles.toolIconBox, { backgroundColor: '#fef3c7' }]}>
+                    <Text style={[styles.toolIcon, { color: '#d97706' }]}>event_available</Text>
+                  </View>
+                  <Text style={styles.toolLabel}>Nhắc hẹn</Text>
+                </TouchableOpacity>
+              </>
+            )}
 
             <TouchableOpacity style={styles.toolItem} onPress={() => setShowExtraTools(false)}>
               <View style={[styles.toolIconBox, { backgroundColor: '#f1f5f9' }]}>
@@ -579,9 +594,11 @@ export default function ChatInput({ onSendMessage, replyTarget, onClearReply, on
                 maxLength={2000}
                 blurOnSubmit={false}
               />
-              <TouchableOpacity style={styles.stickerBtn} onPress={() => setShowStickers(!showStickers)}>
-                <Text style={[styles.stickerIcon, showStickers && { color: Colors.primary }]}>mood</Text>
-              </TouchableOpacity>
+              {!isBot && (
+                <TouchableOpacity style={styles.stickerBtn} onPress={() => setShowStickers(!showStickers)}>
+                  <Text style={[styles.stickerIcon, showStickers && { color: Colors.primary }]}>mood</Text>
+                </TouchableOpacity>
+              )}
             </>
           )}
         </View>

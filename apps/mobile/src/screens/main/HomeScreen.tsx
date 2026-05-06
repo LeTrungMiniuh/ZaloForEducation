@@ -29,6 +29,7 @@ import { ConversationList } from "../../components/home/ConversationList";
 import { MessageActionSheet } from "../../components/home/MessageActionSheet";
 import { ProfileTab } from "../../components/home/ProfileTab";
 import { Conversation, Message } from "../../store/types";
+import { BOT_EMAIL } from "../../constants/bot";
 
 const TAB_ALIAS: Record<string, string> = {
   messages: "chat",
@@ -133,6 +134,17 @@ export default function HomeScreen({
     fetchConversationsData();
   }, [fetchConversationsData]);
 
+  const filteredConversations = useMemo(() => {
+    return conversations.filter((conv) => {
+      // Hide conversations with the bot
+      const hasBot = Array.isArray(conv.members) && conv.members.some((m: string) => {
+        const normalized = String(m || "").toLowerCase();
+        return normalized === BOT_EMAIL || normalized.includes('bot@zaloedu.system');
+      });
+      return !hasBot;
+    });
+  }, [conversations]);
+
   const handleSelectChat = (chat: Conversation) => {
     if (chat.id === "CONV#SYSTEM") {
       navigation.navigate("SecurityAlerts");
@@ -168,7 +180,7 @@ export default function HomeScreen({
         <View style={styles.content}>
           {activeTab === "chat" && (
             <ConversationList 
-              conversations={conversations}
+              conversations={filteredConversations}
               loading={loadingConversations}
               currentUserEmail={user?.email || ""}
               userProfiles={userProfiles}

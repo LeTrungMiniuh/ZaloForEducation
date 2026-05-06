@@ -7,6 +7,11 @@ export type GroupCallState =
   | "JOINING"
   | "CONNECTED"
   | "ENDED";
+ 
+export type ScreenShareState = {
+  stream: MediaStream | null;
+  isSharing: boolean;
+};
 
 interface GroupCallStore {
   callState: GroupCallState;
@@ -27,6 +32,11 @@ interface GroupCallStore {
   activeCallForConv: any | null; // { callId, participants, participantCount }
   callType: 'audio' | 'video' | null;
   isMinimized: boolean;
+ 
+  // Screen Share states (SSOT)
+  screenShares: Record<string, ScreenShareState>;
+  isLocalScreenSharing: boolean;
+  localScreenShareStream: MediaStream | null;
 
   // Actions
   checkActiveCall: (convId: string) => Promise<void>;
@@ -45,6 +55,12 @@ interface GroupCallStore {
   setMicOn: (on: boolean) => void;
   joinMeeting: (convId: string, callId: string, type: string, userProfile?: any) => Promise<void>;
   toggleMinimized: (minimized?: boolean) => void;
+ 
+  // Screen Share Actions
+  setScreenShare: (attendeeId: string, state: ScreenShareState) => void;
+  removeScreenShare: (attendeeId: string) => void;
+  setLocalScreenSharing: (isSharing: boolean, stream: MediaStream | null) => void;
+  clearAllScreenShares: () => void;
 }
 
 export const useGroupCallStore = create<GroupCallStore>((set, get) => ({
@@ -64,6 +80,10 @@ export const useGroupCallStore = create<GroupCallStore>((set, get) => ({
   activeCallForConv: null,
   callType: null,
   isMinimized: false,
+ 
+  screenShares: {},
+  isLocalScreenSharing: false,
+  localScreenShareStream: null,
 
   setActiveCallForConv: (data) => set({ activeCallForConv: data }),
 
@@ -244,7 +264,39 @@ export const useGroupCallStore = create<GroupCallStore>((set, get) => ({
       groupAvatar: null,
       activeCallForConv: null,
       isMinimized: false,
+      screenShares: {},
+      isLocalScreenSharing: false,
+      localScreenShareStream: null,
     });
+  },
+
+  setScreenShare: (attendeeId, state) => {
+    set((s) => ({
+      screenShares: {
+        ...s.screenShares,
+        [attendeeId]: state,
+      },
+    }));
+  },
+
+  removeScreenShare: (attendeeId) => {
+    set((s) => {
+      const next = { ...s.screenShares };
+      delete next[attendeeId];
+      return { screenShares: next };
+    });
+  },
+
+  setLocalScreenSharing: (isLocalScreenSharing, localScreenShareStream) => {
+    set({ isLocalScreenSharing, localScreenShareStream });
+  },
+
+  clearAllScreenShares: () => {
+    const { localScreenShareStream } = get();
+    if (localScreenShareStream) {
+      localScreenShareStream.getTracks().forEach(t => t.stop());
+    }
+    set({ screenShares: {}, isLocalScreenSharing: false, localScreenShareStream: null });
   },
 
   toggleMinimized: (minimized) => {
