@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Colors } from '../../constants/Theme';
 import { useChatStore } from '../../store/chatStore';
 import { useCallStore } from "../../store/callStore";
 import { useGroupCallStore } from "../../store/groupCallStore";
@@ -71,6 +72,10 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
   const { width } = useWindowDimensions();
   const isLargeScreen = width > 768; // Tablet/Web Responsive
   const { conversationId, targetEmail, startCall, targetMessageId: paramTargetMessageId } = params || {};
+
+  useEffect(() => {
+    console.log("[ChatScreen] Params received:", { conversationId, targetEmail, startCall });
+  }, [conversationId, targetEmail, startCall]);
 
   // ZUSTAND STORE
   const {
@@ -256,11 +261,20 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     hasScrolledRef.current = false; // Reset lock when target changes
   }, [targetMessageId]);
 
-  // DERIVED
-  const selectedChat = useMemo(() => 
-    conversations.find(c => c.id === conversationId) || localConversation, 
-    [conversations, conversationId, localConversation]
-  );
+  const selectedChat = useMemo(() => {
+    if (conversationId) {
+      return conversations.find(c => c.id === conversationId) || localConversation;
+    }
+    if (targetEmail) {
+      const target = normalizeEmail(targetEmail);
+      return conversations.find(c => 
+        c.type === 'direct' && 
+        Array.isArray(c.members) && 
+        c.members.some((m: string) => normalizeEmail(m) === target)
+      ) || localConversation;
+    }
+    return localConversation;
+  }, [conversations, conversationId, targetEmail, localConversation, normalizeEmail]);
 
 
   const activePinnedMessages = useMemo(() => {
@@ -363,11 +377,14 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     const initChat = async () => {
       let activeId = conversationId;
       if (!activeId && targetEmail) {
+        console.log("[ChatScreen] Starting direct chat with:", targetEmail);
         setIsLoadingMetadata(true);
         activeId = await startDirectChat(targetEmail);
         setIsLoadingMetadata(false);
+        console.log("[ChatScreen] Got activeId from startDirectChat:", activeId);
       }
-
+      
+      console.log("[ChatScreen] activeId for init:", activeId);
       if (activeId) {
         setActiveConversation(activeId, paramTargetMessageId || null);
         
@@ -753,7 +770,14 @@ export default function ChatScreen({ onNavigate, goBack, params }: ChatScreenPro
     Alert.alert("Thông báo", getMuteLabel(nextMap[selectedChat.id]));
   };
 
-  if (!selectedChat) return <View style={styles.container}><ActivityIndicator color="#fff" /></View>;
+  if (!selectedChat) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ marginTop: 10, color: Colors.primary }}>Đang tải cuộc hội thoại...</Text>
+      </View>
+    );
+  }
 
   const partner = selectedChat.partner || (Array.isArray(selectedChat.members) ? selectedChat.members.find((m: string) => m !== user?.email) : undefined);
 

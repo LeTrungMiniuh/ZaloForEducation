@@ -18,6 +18,7 @@ import LoginOtpScreen from '../screens/auth/LoginOtpScreen';
 // Main Screens
 import HomeScreen from '../screens/main/HomeScreen';
 import ChatScreen from '../screens/main/ChatScreen';
+import BotChatScreen from '../screens/BotChatScreen';
 import SessionsScreen from '../screens/main/SessionsScreen';
 import NotificationScreen from '../screens/main/NotificationScreen';
 import SearchScreen from '../screens/main/SearchScreen';
@@ -40,11 +41,14 @@ const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 const AiChatWrapper = (props: any) => (
-  <ChatScreen 
-    {...props}
-    onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)}
-    params={{ targetEmail: BOT_EMAIL }} 
-  />
+  <View style={{ flex: 1 }}>
+    <ChatScreen 
+      {...props}
+      onNavigate={(s: string, p: any) => props.navigation.navigate(s, p)}
+      goBack={undefined} // No back in tab
+      params={{ targetEmail: BOT_EMAIL }} 
+    />
+  </View>
 );
 
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {

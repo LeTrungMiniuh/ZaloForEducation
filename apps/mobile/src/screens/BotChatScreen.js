@@ -23,7 +23,7 @@ const TypingDots = () => {
   const dot3 = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
-    const animate = (node: Animated.Value, delay: number) =>
+    const animate = (node, delay) =>
       Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
