@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { PhoneOff, Video, VideoOff, Mic, MicOff, Monitor } from 'lucide-react';
 import { useGroupCallStore } from '../../store/groupCallStore';
 import { useAuth } from '../../context/AuthContext';
@@ -20,6 +20,7 @@ const GroupCallOverlay: React.FC = () => {
     toggleMinimized,
     isLocalScreenSharing,
     screenShares,
+    resetGroupCall,
   } = useGroupCallStore();
 
   const { socket, user } = useAuth();
@@ -30,6 +31,10 @@ const GroupCallOverlay: React.FC = () => {
     toggleCamera, 
     startScreenShare, 
     stopScreenShare, 
+    setGroupLocalVideoRef,
+    setGroupRemoteVideoRef,
+    setGroupContentVideoRef,
+    rebindAllGroupTiles,
     session 
   } = useGroupChime();
   const ringbackRef = useRef<HTMLAudioElement | null>(null);
@@ -40,10 +45,14 @@ const GroupCallOverlay: React.FC = () => {
       ringbackRef.current.loop = true;
     }
 
+    // [SENIOR] Stop ringback as soon as the FIRST remote participant joins
+    const joinedCount = Object.values(participants).filter(p => p.status === 'connected').length;
+    const hasRemoteJoined = joinedCount > 0;
     const hasRinging = ringingEmails.length > 0;
     const isJoining = callState === 'JOINING';
     
-    if (isJoining || (callState === 'CONNECTED' && hasRinging)) {
+    // Play if we are connecting OR we are in the call but NO ONE has joined yet and there are pending invites
+    if (isJoining || (callState === 'CONNECTED' && !hasRemoteJoined && hasRinging)) {
       ringbackRef.current.play().catch(() => {});
     } else {
       if (ringbackRef.current) {
@@ -57,13 +66,26 @@ const GroupCallOverlay: React.FC = () => {
         ringbackRef.current.pause();
       }
     };
-  }, [callState, ringingEmails.length]);
+  }, [callState, ringingEmails.length, participants]);
 
   useEffect(() => {
     if (callState === 'JOINING' || (callState === 'CONNECTED' && !session)) {
       setupSession();
     }
   }, [callState]);
+
+  // [SENIOR] Auto-rebind on layout change (screen share)
+  const activeShare = Object.entries(screenShares).find(([_, s]) => s.isSharing);
+  const someoneIsSharing = !!activeShare || isLocalScreenSharing;
+
+  useEffect(() => {
+    if (callState === 'CONNECTED') {
+      const timer = setTimeout(() => {
+        rebindAllGroupTiles();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [someoneIsSharing, callState]);
 
   const handleHangup = async () => {
     if (!user?.email || !attendeeData?.AttendeeId) return;
@@ -126,7 +148,7 @@ const GroupCallOverlay: React.FC = () => {
         {isCameraOn && remoteTiles.length > 0 && (
           <div className="aspect-video bg-black relative">
             {/* Show a small preview of the first tile */}
-            <VideoTile item={remoteTiles[0]} session={session} isMinimized />
+            <VideoTile item={remoteTiles[0]} isMinimized />
             <div className="absolute inset-0 bg-black/20 pointer-events-none" />
           </div>
         )}
@@ -157,39 +179,32 @@ const GroupCallOverlay: React.FC = () => {
       </div>
  
       {/* Main Stage for Screen Share */}
-      {(() => {
-        const activeShare = Object.entries(screenShares).find(([_, s]) => s.isSharing);
-        const someoneIsSharing = !!activeShare || isLocalScreenSharing;
-        
-        if (!someoneIsSharing) return null;
-        
-        return (
-          <div className="mx-6 mb-6 aspect-video bg-black rounded-3xl overflow-hidden border border-white/10 relative shadow-2xl">
-            <video 
-              id="group-screen-share-video"
-              className="w-full h-full object-contain"
-              autoPlay
-              playsInline
-            />
-            <div className="absolute top-4 left-4 px-4 py-2 bg-black/60 backdrop-blur-md border border-white/10 rounded-full flex items-center gap-2">
-              <Monitor size={16} className="text-blue-400" />
-              <span className="text-xs font-bold text-white/90">
-                {isLocalScreenSharing ? "Bạn đang chia sẻ màn hình" : "Đang xem màn hình chia sẻ"}
-              </span>
-            </div>
-            
-            {/* [PRINCIPLE 10] Stop sharing button if local */}
-            {isLocalScreenSharing && (
-              <button 
-                onClick={stopScreenShare}
-                className="absolute bottom-4 right-4 px-4 py-2 bg-red-500 hover:bg-red-600 rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-lg"
-              >
-                Dừng chia sẻ
-              </button>
-            )}
+      {someoneIsSharing && (
+        <div className="mx-6 mb-6 aspect-video bg-black rounded-3xl overflow-hidden border border-white/10 relative shadow-2xl">
+          <video 
+            id="group-screen-share-video"
+            ref={setGroupContentVideoRef}
+            className="w-full h-full object-contain"
+            autoPlay
+            playsInline
+          />
+          <div className="absolute top-4 left-4 px-4 py-2 bg-black/60 backdrop-blur-md border border-white/10 rounded-full flex items-center gap-2">
+            <Monitor size={16} className="text-blue-400" />
+            <span className="text-xs font-bold text-white/90">
+              {isLocalScreenSharing ? "Bạn đang chia sẻ màn hình" : "Đang xem màn hình chia sẻ"}
+            </span>
           </div>
-        );
-      })()}
+          
+          {isLocalScreenSharing && (
+            <button 
+              onClick={stopScreenShare}
+              className="absolute bottom-4 right-4 px-4 py-2 bg-red-500 hover:bg-red-600 rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-lg"
+            >
+              Dừng chia sẻ
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Video Grid */}
       <div className="grow p-6 overflow-y-auto">
@@ -213,6 +228,7 @@ const GroupCallOverlay: React.FC = () => {
                 tileId: tile.tileId,
                 isVideoActive: tile.active,
                 isLocal: tile.isLocal,
+                isContent: tile.isContent, // NEW
                 status: 'connected'
               });
             });
@@ -251,7 +267,12 @@ const GroupCallOverlay: React.FC = () => {
             });
 
             return items.map((item, idx) => (
-              <VideoTile key={item.tileId || item.attendeeId || item.email || idx} item={item} session={session} />
+              <VideoTile 
+                key={item.tileId || item.attendeeId || item.email || idx} 
+                item={item} 
+                setLocalRef={setGroupLocalVideoRef}
+                setRemoteRef={setGroupRemoteVideoRef}
+              />
             ));
           })()}
 
@@ -283,10 +304,7 @@ const GroupCallOverlay: React.FC = () => {
         </button>
 
         <button 
-          onClick={() => {
-            if (isLocalScreenSharing) stopScreenShare();
-            else startScreenShare();
-          }}
+          onClick={() => startScreenShare()}
           className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${isLocalScreenSharing ? 'bg-blue-500 shadow-lg shadow-blue-500/20' : 'bg-white/10'}`}
           title="Chia sẻ màn hình"
         >
@@ -306,16 +324,28 @@ const GroupCallOverlay: React.FC = () => {
   );
 };
 
-const VideoTile: React.FC<{ item: any; session: any; isMinimized?: boolean }> = ({ item, session, isMinimized }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    if (videoRef.current && session && item.tileId !== undefined) {
-      session.audioVideo.bindVideoElement(item.tileId, videoRef.current);
+const VideoTile: React.FC<{ 
+  item: any; 
+  isMinimized?: boolean;
+  setLocalRef?: (node: HTMLVideoElement | null) => void;
+  setRemoteRef?: (tileId: number, node: HTMLVideoElement | null) => void;
+}> = ({ item, isMinimized, setLocalRef, setRemoteRef }) => {
+  const videoRef = useCallback((node: HTMLVideoElement | null) => {
+    if (item.isLocal) {
+      setLocalRef?.(node);
+    } else if (item.tileId !== undefined) {
+      setRemoteRef?.(item.tileId, node);
     }
-  }, [item.tileId, session, item.isVideoActive]);
+  }, [item.isLocal, item.tileId, setLocalRef, setRemoteRef]);
 
-  const displayName = item.isLocal ? 'Bạn' : (item.name || (item.email ? item.email.split('@')[0] : 'Người dùng'));
+  const displayName = item.isLocal 
+    ? (item.isContent ? 'Màn hình của bạn' : 'Bạn') 
+    : (item.name || (item.email ? item.email.split('@')[0] : 'Người dùng'));
+  
+  const finalName = item.isContent && !item.isLocal 
+    ? `${displayName} (Đang chia sẻ màn hình)` 
+    : displayName;
+
   const initials = (item.name || item.email || '?').charAt(0).toUpperCase();
 
   if (isMinimized) {
@@ -357,7 +387,7 @@ const VideoTile: React.FC<{ item: any; session: any; isMinimized?: boolean }> = 
             {initials}
           </div>
           <span className="mt-4 text-white/40 text-[10px] font-bold uppercase tracking-[0.2em] text-center px-4">
-            {item.status === 'ringing' ? 'Đang đổ chuông...' : 'Camera đang tắt'}
+            {item.status === 'ringing' ? 'Đang đổ chuông...' : (item.isContent ? 'Đang kết nối màn hình...' : 'Camera đang tắt')}
           </span>
         </div>
       )}
@@ -366,7 +396,7 @@ const VideoTile: React.FC<{ item: any; session: any; isMinimized?: boolean }> = 
       <div className="absolute bottom-4 left-4 px-3 py-1.5 bg-black/60 backdrop-blur-xl rounded-xl text-[13px] font-medium border border-white/10 flex items-center gap-2.5 max-w-[85%] transition-transform group-hover:translate-x-1">
         <div className={`w-2 h-2 rounded-full shrink-0 ${item.isVideoActive ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)]' : 'bg-white/20'}`} />
         <span className="truncate text-white/90">
-          {displayName}
+          {finalName}
         </span>
       </div>
 

@@ -215,6 +215,8 @@ export const useCallStore = create<CallStore>((set, get) => ({
       startTime: null,
     });
 
+    console.log(`[Store] initiateCall: ${activeCallId} (${callType}) to ${toEmail}`);
+
     // [SENIOR] Auto-timeout after 60s if not connected
     callTimeout = setTimeout(() => {
       console.log("[Store] Call timed out after 60s (Caller Side)");
@@ -331,6 +333,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
   hangupCall: () => {
     clearInternalTimeout();
     // [SYSTEM] Nullify session IDs immediately to free up backend/signaling
+    console.log(`[Store] hangupCall called for: ${get().activeCallId}`);
     set({
       callState: "ENDED",
       activeCallId: null,
@@ -349,6 +352,7 @@ export const useCallStore = create<CallStore>((set, get) => ({
 
   rejectCall: () => {
     clearInternalTimeout();
+    console.log(`[Store] rejectCall called for: ${get().activeCallId}`);
     set({
       callState: "ENDED",
       activeCallId: null,

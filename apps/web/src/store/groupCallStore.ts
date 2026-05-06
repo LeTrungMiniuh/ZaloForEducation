@@ -292,6 +292,10 @@ export const useGroupCallStore = create<GroupCallStore>((set, get) => ({
   },
 
   clearAllScreenShares: () => {
+    const { localScreenShareStream } = get();
+    if (localScreenShareStream) {
+      localScreenShareStream.getTracks().forEach(t => t.stop());
+    }
     set({ screenShares: {}, isLocalScreenSharing: false, localScreenShareStream: null });
   },
 

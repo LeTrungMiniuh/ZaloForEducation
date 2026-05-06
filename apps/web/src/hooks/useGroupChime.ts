@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   DefaultDeviceController,
   DefaultMeetingSession,
@@ -9,12 +9,20 @@ import {
 import { useGroupCallStore } from '../store/groupCallStore';
 import { useAuth } from '../context/AuthContext';
 
+/**
+ * [Web-Chime] Normalize Chime attendee IDs (strips modality suffix like #1, #content)
+ */
+const normalizeAttendeeId = (id?: string | null): string | null => {
+  if (!id) return null;
+  return id.split('#')[0];
+};
+
 export const useGroupChime = () => {
   const { user, socket } = useAuth();
-  const { 
-    meetingData, 
-    attendeeData, 
-    activeCallId, 
+  const {
+    meetingData,
+    attendeeData,
+    activeCallId,
     conversationId,
     addRemoteTile,
     removeRemoteTile,
@@ -31,16 +39,136 @@ export const useGroupChime = () => {
   const sessionRef = useRef<DefaultMeetingSession | null>(null);
   const heartbeatIntervalRef = useRef<any>(null);
 
+  // [SENIOR] Physical video element singletons for group
+  const groupLocalVideoRef = useRef<HTMLVideoElement | null>(null);
+  const groupRemoteVideoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
+  const groupContentVideoRef = useRef<HTMLVideoElement | null>(null);
+  const contentTileIdRef = useRef<number | null>(null);
+
+  // [FIX #4] Dùng ref để tránh stale closure trong onended handler
+  const stopScreenShareRef = useRef<() => Promise<void>>(async () => { });
+
+  // ─────────────────────────────────────────────
+  // [FIX #2] Helper cleanup stream độc lập với session
+  // Đảm bảo stream luôn được stop dù session null hay không
+  // ─────────────────────────────────────────────
+  const cleanupScreenShareStream = () => {
+    const store = useGroupCallStore.getState();
+
+    if (store.localScreenShareStream) {
+      store.localScreenShareStream.getTracks().forEach(t => t.stop());
+    }
+    store.setLocalScreenSharing(false, null);
+
+    if (attendeeData?.AttendeeId) {
+      const myId = normalizeAttendeeId(attendeeData.AttendeeId)?.toLowerCase();
+      if (myId) {
+        store.setScreenShare(myId, { stream: null, isSharing: false });
+      }
+    }
+  };
+
+  // ─────────────────────────────────────────────
+  // [FIX #1] Event-driven content share start, không dùng setTimeout magic number
+  // Dùng double requestAnimationFrame để nhường SDK flush 1 tick
+  // ─────────────────────────────────────────────
+  const startContentShareWhenReady = (stream: MediaStream) => {
+    const s = sessionRef.current;
+    if (!s) return;
+
+    const tryStart = () => {
+      s.audioVideo.startContentShare(stream).catch((e: Error) => {
+        console.error('[GroupChime] startContentShare failed:', e);
+        cleanupScreenShareStream();
+      });
+    };
+
+    requestAnimationFrame(() => requestAnimationFrame(tryStart));
+  };
+
+  // ─────────────────────────────────────────────
+  // [FIX #6] Retry binding content tile với exponential backoff
+  // Xử lý trường hợp React ref chưa mount tại thời điểm tile update
+  // ─────────────────────────────────────────────
+  const tryBindContentTile = (tileId: number, attempt = 0) => {
+    if (groupContentVideoRef.current && sessionRef.current) {
+      sessionRef.current.audioVideo.bindVideoElement(tileId, groupContentVideoRef.current);
+      console.log(`[GroupChime] ✅ Content tile=${tileId} bound on attempt ${attempt}`);
+    } else if (attempt < 5) {
+      setTimeout(() => tryBindContentTile(tileId, attempt + 1), 100 * (attempt + 1));
+    } else {
+      console.error(`[GroupChime] ❌ Content tile=${tileId} bind failed after 5 attempts`);
+    }
+  };
+
+  // ─────────────────────────────────────────────
+  // Video ref setters
+  // ─────────────────────────────────────────────
+  const setGroupLocalVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    groupLocalVideoRef.current = node;
+    const store = useGroupCallStore.getState();
+    const localTile = store.remoteTiles.find(t => t.isLocal);
+    if (node && sessionRef.current && localTile) {
+      sessionRef.current.audioVideo.bindVideoElement(localTile.tileId, node);
+    }
+  }, []);
+
+  const setGroupRemoteVideoRef = useCallback((tileId: number, node: HTMLVideoElement | null) => {
+    groupRemoteVideoRefs.current[tileId] = node;
+    if (node && sessionRef.current) {
+      sessionRef.current.audioVideo.bindVideoElement(tileId, node);
+    }
+  }, []);
+
+  const setGroupContentVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    groupContentVideoRef.current = node;
+    if (node && sessionRef.current && contentTileIdRef.current) {
+      const tid = contentTileIdRef.current;
+      console.log(`[GroupChime] 🖥️ Binding Content Ref to tile=${tid}`);
+      sessionRef.current.audioVideo.bindVideoElement(tid, node);
+    }
+  }, []);
+
+  const rebindAllGroupTiles = () => {
+    const s = sessionRef.current;
+    if (!s) return;
+
+    const store = useGroupCallStore.getState();
+
+    // 1. Bind Local
+    const localTile = store.remoteTiles.find(t => t.isLocal);
+    if (localTile && groupLocalVideoRef.current) {
+      s.audioVideo.bindVideoElement(localTile.tileId, groupLocalVideoRef.current);
+    }
+
+    // 2. Bind Remotes
+    store.remoteTiles.forEach(tile => {
+      if (tile.isLocal) return;
+      const el = groupRemoteVideoRefs.current[tile.tileId];
+      if (el) {
+        s.audioVideo.bindVideoElement(tile.tileId, el);
+      }
+    });
+
+    // 3. Bind Content
+    if (contentTileIdRef.current && groupContentVideoRef.current) {
+      console.log(`[GroupChime] 🔗 Re-binding CONTENT tile=${contentTileIdRef.current}`);
+      s.audioVideo.bindVideoElement(contentTileIdRef.current, groupContentVideoRef.current);
+    }
+  };
+
+  // ─────────────────────────────────────────────
+  // Setup Session
+  // ─────────────────────────────────────────────
   const setupSession = async () => {
     if (!meetingData || !attendeeData || sessionRef.current) return;
 
-    const logger = new ConsoleLogger('GroupChime', LogLevel.INFO);
+    const logger = new ConsoleLogger('GroupChime', LogLevel.ERROR);
     const deviceController = new DefaultDeviceController(logger);
     const configuration = new MeetingSessionConfiguration(meetingData, attendeeData);
 
-    // Correct order: configuration, logger, deviceController
     const newSession = new DefaultMeetingSession(configuration, logger, deviceController);
-    
+
     sessionRef.current = newSession;
     setSession(newSession);
 
@@ -57,14 +185,14 @@ export const useGroupChime = () => {
       audioVideoDidStart: () => {
         console.log('[GroupChime] ✅ AudioVideo Started successfully');
         setConnected();
-        
+
         // [SENIOR] Start Heartbeat (15s)
         if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = setInterval(() => {
           if (socket && activeCallId) {
             socket.emit('group-call:heartbeat', {
               callId: activeCallId,
-              attendeeId: attendeeData.AttendeeId
+              attendeeId: attendeeData.AttendeeId,
             });
           }
         }, 15000);
@@ -88,58 +216,102 @@ export const useGroupChime = () => {
               name: user.fullName || user.email,
               avatar: user.avatarUrl,
               joinedAt: new Date().toISOString(),
-              lastSeenAt: Date.now()
-            }
+              lastSeenAt: Date.now(),
+            },
           });
         }
 
         // Initialize mic/camera state from store
         syncMediaState(newSession);
-      },
-      videoTileDidUpdate: (tileState: any) => {
-        console.log('[GroupChime] 📺 Video Tile Update:', tileState);
-        
-        // [SENIOR] For local tile, boundAttendeeId might be null initially
-        const attendeeId = tileState.localTile 
-          ? attendeeData?.AttendeeId?.toLowerCase() 
-          : tileState.boundAttendeeId?.toLowerCase();
 
+        // [SENIOR] Add Content Share Observer
+        newSession.audioVideo.addContentShareObserver({
+          contentShareDidStart: () => {
+            console.log('[GroupChime] 🖥️ Content Share Started');
+          },
+          contentShareDidStop: () => {
+            console.log('[GroupChime] 🖥️ Content Share Stopped');
+            const store = useGroupCallStore.getState();
+            store.clearAllScreenShares();
+            store.setLocalScreenSharing(false, null);
+            setTimeout(() => rebindAllGroupTiles(), 200);
+          },
+        });
+      },
+
+      videoTileDidUpdate: (tileState: any) => {
+        const rawAttendeeId = tileState.localTile
+          ? attendeeData?.AttendeeId
+          : tileState.boundAttendeeId;
+
+        const attendeeId = normalizeAttendeeId(rawAttendeeId)?.toLowerCase();
         if (!attendeeId) return;
 
         if (tileState.isContent) {
+          contentTileIdRef.current = tileState.tileId;
+          console.log(`[GroupChime] 🖥️ CONTENT TILE UPDATE: id=${tileState.tileId} attendee=${attendeeId} active=${tileState.active}`);
+
           const store = useGroupCallStore.getState();
+          
+          if (!tileState.active) {
+            console.log('[GroupChime] 🖥️ Content tile inactive. Cleaning up...');
+            contentTileIdRef.current = null;
+            store.clearAllScreenShares();
+            setTimeout(() => rebindAllGroupTiles(), 200);
+            return;
+          }
+
           if (!store.screenShares[attendeeId]) {
-            console.log(`[GroupChime] 🖥️ Screen Share detected: ${attendeeId}`);
             store.setScreenShare(attendeeId, { stream: null, isSharing: true });
           }
-          const screenEl = document.getElementById("group-screen-share-video") as HTMLVideoElement;
-          if (screenEl) sessionRef.current?.audioVideo.bindVideoElement(tileState.tileId, screenEl);
+
+          addRemoteTile({
+            tileId: tileState.tileId,
+            attendeeId,
+            active: true,
+            isLocal: tileState.localTile,
+            isContent: true,
+          });
+
+          // [FIX #6] Dùng retry thay vì bind trực tiếp một lần
+          tryBindContentTile(tileState.tileId);
           return;
         }
 
         addRemoteTile({
           tileId: tileState.tileId,
-          attendeeId: attendeeId,
+          attendeeId,
           active: tileState.active,
-          isLocal: tileState.localTile
+          isLocal: tileState.localTile,
         });
-      },
-      videoTileDidRemove: (tileId: number) => {
-        removeRemoteTile(tileId);
-        
-        // [PRINCIPLE 9] Cleanup screen shares if the content tile is removed
-        const store = useGroupCallStore.getState();
-        if (Object.values(store.screenShares).some(s => s.isSharing)) {
-           store.clearAllScreenShares();
+
+        if (tileState.localTile && groupLocalVideoRef.current) {
+          sessionRef.current?.audioVideo.bindVideoElement(tileState.tileId, groupLocalVideoRef.current);
+        } else {
+          const el = groupRemoteVideoRefs.current[tileState.tileId];
+          if (el) sessionRef.current?.audioVideo.bindVideoElement(tileState.tileId, el);
         }
       },
+
+      videoTileDidRemove: (tileId: number) => {
+        removeRemoteTile(tileId);
+        delete groupRemoteVideoRefs.current[tileId];
+
+        if (contentTileIdRef.current === tileId) {
+          contentTileIdRef.current = null;
+          const store = useGroupCallStore.getState();
+          store.clearAllScreenShares();
+          setTimeout(() => rebindAllGroupTiles(), 100);
+        }
+      },
+
       audioVideoDidStop: (sessionStatus: any) => {
         console.log('[GroupChime] AudioVideo Stopped', sessionStatus);
         if (heartbeatIntervalRef.current) {
           clearInterval(heartbeatIntervalRef.current);
           heartbeatIntervalRef.current = null;
         }
-      }
+      },
     };
 
     newSession.audioVideo.addObserver(observer);
@@ -183,27 +355,42 @@ export const useGroupChime = () => {
     }
   };
 
+  // ─────────────────────────────────────────────
+  // [FIX #5] leaveSession — await content share stop đúng thứ tự
+  // ─────────────────────────────────────────────
   const leaveSession = async () => {
-    if (sessionRef.current) {
-      console.log('[WebChime] 🛑 Stopping session and releasing hardware');
-      try {
-        // Explicitly stop inputs to release camera/mic lights in browser
-        await sessionRef.current.audioVideo.stopVideoInput();
-        await sessionRef.current.audioVideo.stopAudioInput();
-        sessionRef.current.audioVideo.stop();
-      } catch (error) {
-        console.error('[WebChime] Error leaving session:', error);
-      }
- 
-      // [PRINCIPLE 9] Cleanup screen share on leave
+    if (!sessionRef.current) return;
+
+    console.log('[GroupChime] 🛑 Stopping session');
+    const sessionToStop = sessionRef.current;
+    sessionRef.current = null;
+    setSession(null);
+
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+
+    try {
       const store = useGroupCallStore.getState();
-      if (store.localScreenShareStream) {
-        store.localScreenShareStream.getTracks().forEach(t => t.stop());
+
+      // [FIX #5] Stop content share TRƯỚC, nhường 1 tick cho SDK xử lý
+      if (store.isLocalScreenSharing) {
+        sessionToStop.audioVideo.stopContentShare();
+        await new Promise(res => setTimeout(res, 200));
+        cleanupScreenShareStream();
       }
-      store.clearAllScreenShares();
- 
-      sessionRef.current = null;
-      setSession(null);
+
+      // Stop media devices song song
+      await Promise.allSettled([
+        sessionToStop.audioVideo.stopVideoInput(),
+        sessionToStop.audioVideo.stopAudioInput(),
+      ]);
+
+      // Stop session sau cùng
+      sessionToStop.audioVideo.stop();
+    } catch (error) {
+      console.error('[GroupChime] Error leaving session:', error);
     }
   };
 
@@ -230,95 +417,99 @@ export const useGroupChime = () => {
     }
     setCameraOn(on);
   };
- 
-  /**
-   * Bật chia sẻ màn hình (Screen Share)
-   */
+
+  // ─────────────────────────────────────────────
+  // [FIX #2 + #3] stopScreenShare — cleanup luôn chạy, không bị chặn bởi session guard
+  // ─────────────────────────────────────────────
+  const stopScreenShare = async () => {
+    try {
+      // Gọi SDK nếu session vẫn còn, nhưng KHÔNG early return nếu null
+      sessionRef.current?.audioVideo.stopContentShare();
+    } catch (e) {
+      console.error('[GroupChime] stopContentShare error:', e);
+    } finally {
+      // [FIX #2] Cleanup stream LUÔN chạy bất kể session state
+      cleanupScreenShareStream();
+    }
+  };
+
+  // ─────────────────────────────────────────────
+  // [FIX #3 + #1] startScreenShare — block thay vì clear state người khác
+  // ─────────────────────────────────────────────
   const startScreenShare = async () => {
     if (!sessionRef.current) return;
-    
+
     const store = useGroupCallStore.getState();
-    if (store.isLocalScreenSharing) return;
- 
-    // [PRINCIPLE 7] Check if someone else is already sharing
-    if (Object.values(store.screenShares).some(s => s.isSharing)) {
-      console.warn("[GroupChime] Someone else is already sharing");
+
+    // [FIX #3] Nếu mình đang share → toggle off
+    if (store.isLocalScreenSharing) {
+      await stopScreenShare();
       return;
     }
- 
+
+    // [FIX #3] Nếu người KHÁC đang share → block, không xóa state của họ
+    const someoneElseIsSharing = Object.values(store.screenShares).some(s => s.isSharing);
+    if (someoneElseIsSharing) {
+      alert("Đang có người khác chia sẻ màn hình. Bạn không thể chia sẻ lúc này.");
+      return;
+    }
+
     try {
-      console.log("[GroupChime] Starting Screen Capture...");
-      // [PRINCIPLE 12] 720p
+      console.log('[GroupChime] 🚀 Starting Screen Capture...');
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 15 }
-        },
-        audio: false
+        video: true,
+        audio: false, // [SENIOR] Disable audio to stabilize negotiation
       });
- 
-      // [PRINCIPLE 5] onended listener
-      const track = stream.getVideoTracks()[0];
-      track.onended = () => {
-        console.log("[GroupChime] Screen share track ended");
-        stopScreenShare();
+
+      // [FIX #4] Dùng ref để tránh stale closure
+      stream.getVideoTracks()[0].onended = () => {
+        stopScreenShareRef.current();
       };
- 
-      await sessionRef.current.audioVideo.startContentShare(stream);
+
       store.setLocalScreenSharing(true, stream);
+
+      // [FIX #1] Dùng event-driven thay vì setTimeout 500ms
+      startContentShareWhenReady(stream);
     } catch (e: any) {
-      console.error("[GroupChime] startScreenShare failed:", e);
-      if (e.name === "NotAllowedError") alert("Bạn đã từ chối quyền chia sẻ màn hình.");
-    }
-  };
- 
-  /**
-   * Tắt chia sẻ màn hình
-   */
-  const stopScreenShare = async () => {
-    if (!sessionRef.current) return;
-    
-    const store = useGroupCallStore.getState();
-    try {
-      sessionRef.current.audioVideo.stopContentShare();
-      if (store.localScreenShareStream) {
-        store.localScreenShareStream.getTracks().forEach(t => t.stop());
-      }
+      console.error('[GroupChime] startScreenShare failed:', e);
       store.setLocalScreenSharing(false, null);
-    } catch (e) {
-      console.error("[GroupChime] stopScreenShare error:", e);
+      if (e.name === 'NotAllowedError') {
+        alert('Bạn đã từ chối quyền chia sẻ màn hình.');
+      }
     }
   };
+
+  // [FIX #4] Giữ stopScreenShareRef luôn trỏ đến version mới nhất của stopScreenShare
+  useEffect(() => {
+    stopScreenShareRef.current = stopScreenShare;
+  });
 
   // Automatically setup session when data is available
   useEffect(() => {
     if (meetingData && attendeeData && !sessionRef.current) {
       setupSession();
     }
-    return () => {
-      // Don't leave session automatically on every re-render, 
-      // but if the component unmounts and we are not in a persistent call state
-    };
   }, [meetingData, attendeeData]);
 
   // Handle unmount
   useEffect(() => {
     return () => {
-      // If we want the call to persist, we might NOT want to stop here
-      // But typically hooks are cleaned up on unmount.
-      // If the caller UI is what unmounts, the call should probably stop.
+      // Uncomment nếu muốn tự động leave khi component unmount:
       // leaveSession();
     };
   }, []);
 
-  return { 
-    setupSession, 
-    leaveSession, 
-    toggleMic, 
-    toggleCamera, 
+  return {
+    setupSession,
+    leaveSession,
+    toggleMic,
+    toggleCamera,
     startScreenShare,
     stopScreenShare,
-    session 
+    setGroupLocalVideoRef,
+    setGroupRemoteVideoRef,
+    setGroupContentVideoRef,
+    rebindAllGroupTiles,
+    session,
   };
 };
