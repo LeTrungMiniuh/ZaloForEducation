@@ -40,7 +40,7 @@ export class AiService {
 
   constructor(private readonly configService: ConfigService) {
     this.apiKey = this.configService.get<string>('OPENROUTER_API_KEY') || '';
-    this.model = this.configService.get<string>('AI_MODEL') || 'google/gemini-flash-1.5';
+    this.model = this.configService.get<string>('AI_MODEL') || 'google/gemini-2.5-flash';
   }
 
   async chat(messages: ChatMessage[]): Promise<AiResponse> {
