@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { DynamoDBService } from '../../infrastructure/dynamodb.service';
-import { AiService, ChatMessage, ContentPart } from '../../infrastructure/ai/ai.service';
+import { AiService, ContentPart } from '../../infrastructure/ai/ai.service';
 import { ChatGateway } from '../chat/chat.gateway';
 import { MessageService } from '../chat/message.service';
 import { ChatService } from '../chat/chat.service';
@@ -8,12 +8,20 @@ import { FriendshipService } from '../chat/friendship.service';
 import { GetCommand, PutCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { RedisService } from '../../infrastructure/redis.service';
 import { BotContextBuilder } from './bot.context';
-import { PDFParse } from 'pdf-parse';
+import { RagService } from './rag.service';
 import { BOT_EMAIL, BOT_NAME, BOT_AVATAR } from '@zalo-edu/shared';
+import { StringOutputParser } from '@langchain/core/output_parsers';
+import {
+  BaseMessage,
+  HumanMessage,
+  AIMessage,
+  SystemMessage,
+} from '@langchain/core/messages';
 
 @Injectable()
 export class BotService {
   private readonly logger = new Logger(BotService.name);
+  private readonly outputParser = new StringOutputParser();
 
   constructor(
     private readonly db: DynamoDBService,
@@ -23,6 +31,7 @@ export class BotService {
     private readonly chatService: ChatService,
     private readonly redisService: RedisService,
     private readonly chatGateway: ChatGateway,
+    private readonly ragService: RagService,
   ) {
     this.contextBuilder = new BotContextBuilder(db, friendshipService, chatService);
   }
@@ -191,44 +200,22 @@ export class BotService {
       // 1. Fetch user context from DynamoDB
       const userContext = await this.contextBuilder.build(userEmail);
 
-      // 2. Fetch recent chat history (last 10 messages) for conversation continuity
-      const recentMessages = await this.messageService.getMessages(convId, userEmail, 10);
-      const historyMessages: ChatMessage[] = recentMessages.messages
-        .filter((m: any) => !m.recalled)
-        .map((m: any) => {
-          const role = (m.senderId === BOT_EMAIL ? 'assistant' : 'user') as 'user' | 'assistant';
-          // Include media/files from history messages so AI knows what was discussed
-          const content = this.buildHistoryContent(role, m);
-          return { role, content };
-        })
-        .reverse();
+      // 2. Build LangChain messages array
+      const messages = await this.buildMessages(convId, userEmail, userContext, userMessage, media, files);
 
-      // Remove the last message (it's the current user message, we'll add it fresh)
-      if (historyMessages.length > 0 && historyMessages[historyMessages.length - 1].role === 'user') {
-        historyMessages.pop();
-      }
+      // 3. Invoke LangChain chain: model → string output parser
+      const chain = this.aiService.getModel().pipe(this.outputParser);
+      const responseText = await chain.invoke(messages);
 
-      // 3. Build user message content (multimodal: text + images + files)
-      const userContent = await this.buildUserContent(userMessage, media, files);
-
-      const messages: ChatMessage[] = [
-        { role: 'system', content: this.buildSystemPrompt(userContext) },
-        ...historyMessages.slice(-8), // Keep last 8 messages for context window
-        { role: 'user', content: userContent },
-      ];
-
-      // 4. Call AI
-      const aiResponse = await this.aiService.chat(messages);
-
-      // 5. Save bot response as a message in DynamoDB
+      // 4. Save bot response as a message in DynamoDB
       const botMessage = await this.messageService.sendMessage(
         convId,
         BOT_EMAIL,
-        aiResponse.text,
+        responseText,
         'text',
       );
 
-      // 6. Emit via WebSocket
+      // 5. Emit via WebSocket
       this.emitBotMessage(convId, userEmail, botMessage);
 
       return botMessage;
@@ -253,13 +240,71 @@ export class BotService {
   }
 
   /**
+   * Build the full LangChain message array: system + history + user.
+   */
+  private async buildMessages(
+    convId: string,
+    userEmail: string,
+    userContext: string,
+    userMessage: string,
+    media?: any[],
+    files?: any[],
+  ): Promise<BaseMessage[]> {
+    const messages: BaseMessage[] = [];
+
+    // System prompt
+    messages.push(new SystemMessage(this.buildSystemPrompt(userContext)));
+
+    // Chat history (last 8 messages, excluding current)
+    const historyMsgs = await this.buildHistoryMessages(convId, userEmail);
+    messages.push(...historyMsgs);
+
+    // Current user message (text or multimodal)
+    const userContent = await this.buildUserContent(userMessage, media, files);
+    if (typeof userContent === 'string') {
+      messages.push(new HumanMessage(userContent));
+    } else {
+      messages.push(new HumanMessage({ content: userContent }));
+    }
+
+    return messages;
+  }
+
+  /**
+   * Fetch recent chat history and convert to LangChain BaseMessage[].
+   * Returns last 8 messages, excluding the most recent user message.
+   */
+  private async buildHistoryMessages(convId: string, userEmail: string): Promise<BaseMessage[]> {
+    const recentMessages = await this.messageService.getMessages(convId, userEmail, 10);
+    const history = recentMessages.messages
+      .filter((m: any) => !m.recalled)
+      .reverse();
+
+    // Remove the last message (it's the current user message being processed)
+    if (history.length > 0 && history[history.length - 1].senderId !== BOT_EMAIL) {
+      history.pop();
+    }
+
+    return history
+      .slice(-8)
+      .map((m: any) => {
+        const isBot = m.senderId === BOT_EMAIL;
+        if (isBot) return new AIMessage(m.content || '');
+
+        const content = this.buildHistoryContent(m);
+        if (typeof content === 'string') return new HumanMessage(content);
+        return new HumanMessage({ content });
+      });
+  }
+
+  /**
    * Build content for a history message. Includes media/files from previous
    * messages so the AI can distinguish old attachments from the current one.
    * Only includes images (skip heavy PDFs in history to save tokens).
    */
-  private buildHistoryContent(role: 'user' | 'assistant', msg: any): string | ContentPart[] {
-    // Assistant messages are always text
-    if (role === 'assistant') return msg.content || '';
+  private buildHistoryContent(msg: any): string | ContentPart[] {
+    // Bot/assistant messages are always text
+    if (msg.senderId === BOT_EMAIL) return msg.content || '';
 
     // User message with no attachments
     const msgMedia = msg.media || [];
@@ -335,9 +380,15 @@ export class BotService {
           // Image files: send as image_url
           parts.push({ type: 'image_url', image_url: { url } });
         } else if (mimeType === 'application/pdf' || url.toLowerCase().endsWith('.pdf')) {
-          // PDFs: extract text, fallback to note
-          const extractedText = await this.extractPdfText(url, fileName);
-          parts.push({ type: 'text', text: extractedText });
+          // PDFs: use LangChain RAG pipeline (load → split → format)
+          try {
+            const result = await this.ragService.processPdf(url, fileName);
+            const formatted = this.ragService.formatForPrompt(fileName, result);
+            parts.push({ type: 'text', text: formatted });
+          } catch (err) {
+            this.logger.warn(`RAG PDF processing failed for ${fileName}: ${err.message}`);
+            parts.push({ type: 'text', text: `[PDF đính kèm: ${fileName}] — không thể đọc nội dung tự động.` });
+          }
         } else {
           // Other file types: text note
           parts.push({ type: 'text', text: `[Tệp đính kèm: ${fileName}] — định dạng chưa hỗ trợ đọc tự động.` });
@@ -346,51 +397,6 @@ export class BotService {
     }
 
     return parts;
-  }
-
-  /**
-   * Download PDF from URL and extract text.
-   * Returns extracted text on success, fallback note on failure.
-   */
-  private async extractPdfText(url: string, fileName: string): Promise<string> {
-    let parser: PDFParse | null = null;
-    try {
-      this.logger.log(`Attempting to download PDF for extraction: ${url}`);
-      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (!response.ok) {
-        this.logger.warn(`Failed to download PDF: ${url} (status ${response.status})`);
-        return `[PDF đính kèm: ${fileName}] — không thể tải tệp (Lỗi ${response.status}).`;
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      // Limit: skip PDFs larger than 5MB
-      if (buffer.length > 5 * 1024 * 1024) {
-        return `[PDF đính kèm: ${fileName}] — tệp quá lớn (>5MB), không thể đọc tự động.`;
-      }
-
-      parser = new PDFParse({ data: new Uint8Array(buffer) });
-      const result = await parser.getText();
-      const text = result.text?.trim();
-
-      if (!text || text.length < 20) {
-        return `[PDF đính kèm: ${fileName}] — PDF có thể là dạng ảnh quét, không thể trích xuất văn bản.`;
-      }
-
-      // Truncate if very long (keep ~3000 chars to stay within token limits)
-      const maxLen = 3000;
-      const truncated = text.length > maxLen
-        ? text.substring(0, maxLen) + '\n\n[... PDF còn lại đã được cắt bớt ...]'
-        : text;
-
-      return `[Nội dung PDF: ${fileName}]\n${truncated}`;
-    } catch (error) {
-      this.logger.warn(`PDF text extraction failed for ${url}: ${error.message}`);
-      return `[PDF đính kèm: ${fileName}] — không thể đọc nội dung tự động.`;
-    } finally {
-      await parser?.destroy().catch(() => {});
-    }
   }
 
   /**

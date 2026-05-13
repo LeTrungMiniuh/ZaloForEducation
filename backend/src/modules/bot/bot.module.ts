@@ -1,13 +1,14 @@
 import { forwardRef, Module, OnModuleInit } from '@nestjs/common';
 import { BotService } from './bot.service';
 import { BotController } from './bot.controller';
+import { RagService } from './rag.service';
 import { AuthModule } from '../auth/auth.module';
 import { ChatModule } from '../chat/chat.module';
 
 @Module({
   imports: [forwardRef(() => AuthModule), forwardRef(() => ChatModule)],
   controllers: [BotController],
-  providers: [BotService],
+  providers: [BotService, RagService],
   exports: [BotService],
 })
 export class BotModule implements OnModuleInit {
